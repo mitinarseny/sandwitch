@@ -1,0 +1,13 @@
+[package]
+name = "sandwitch"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+futures = { version = "0.3" }
+web3 = { version = "0.18", default-features = false, features = ["ws-tokio", "ws-tls-tokio"] }
+ethabi = { version = "17.1" }
+hex = { version = "0.4" }
