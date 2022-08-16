@@ -1,0 +1,13 @@
+url = "wss://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
+
+buffer_size = 3
+
+[pancake_swap]
+token_pairs = [
+	# WBNB <-> BUSD
+	["0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56"],
+	# WBNB <-> CORGI
+	["0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", "0x450dcf93160a30be156a4600802c91bf64dffd2e"],
+	# WBNB <-> USDT
+	["0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "0x55d398326f99059fF775485246999027B3197955"],
+]
