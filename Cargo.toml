@@ -17,3 +17,4 @@ lazy_static = { version = "1.4" }
 toml = { version = "0.5" }
 serde = { version = "1", features = ["derive"] }
 clap = { version = "3.2", features = ["derive"] }
+hex-literal = { version = "0.3" }

@@ -12,6 +12,10 @@ impl<T> UnorderedPair<T> {
     {
         [&self.0, &self.1].into_iter().any(move |i| *i == item)
     }
+
+    pub fn into_inner(self) -> (T, T) {
+        (self.0, self.1)
+    }
 }
 
 impl<T> From<(T, T)> for UnorderedPair<T> {
