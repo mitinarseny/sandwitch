@@ -1,28 +1,18 @@
-#![feature(iterator_try_collect)]
-mod contracts;
-mod pairs;
-// mod pancake_swap;
+#![feature(iterator_try_collect, result_option_inspect)]
+mod monitors;
 
 use anyhow::Context;
-use futures::TryFutureExt;
+use futures::{FutureExt, TryFutureExt};
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::future;
-use web3::contract::tokens::Detokenize;
-use web3::contract::Options;
-use web3::ethabi::Uint;
 
-use futures::stream::{StreamExt, TryStreamExt};
+use futures::stream::{Stream, StreamExt};
 use web3::transports::WebSocket;
-use web3::types::{Address, Transaction, TransactionId, H160, U256};
+use web3::types::{Transaction, TransactionId};
 use web3::{DuplexTransport, Transport, Web3};
 
-use pairs::UnorderedPairs;
-
-use self::contracts::pancake_swap::{
-    RouterV2SwapExactETHForTokensInputs, PAIR, ROUTER_V2_SWAP_EXACT_ETH_FOR_TOKENS,
-};
-use self::pairs::UnorderedPair;
+use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
+use self::monitors::{Monitor, MultiMonitor};
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -31,12 +21,12 @@ pub struct Config {
     #[serde(default)]
     pub buffer_size: usize,
 
-    pub pancake_swap: PancakeSwapConfig,
+    pub monitors: MonitorsConfig,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct PancakeSwapConfig {
-    pub token_pairs: UnorderedPairs<Address>,
+pub struct MonitorsConfig {
+    pub pancake_swap: PancakeSwapConfig,
 }
 
 pub struct App<T>
@@ -44,10 +34,8 @@ where
     T: DuplexTransport,
 {
     web3: Web3<T>,
-    pancake_swap_router_v2: web3::contract::Contract<T>,
-    pancake_swap_factory_v2: web3::contract::Contract<T>,
     buffer_size: usize,
-    pair_contracts: HashMap<UnorderedPair<Address>, Address>,
+    monitors: Box<MultiMonitor<Transaction>>,
 }
 
 impl App<WebSocket> {
@@ -59,112 +47,46 @@ impl App<WebSocket> {
 
 impl<T> App<T>
 where
-    T: DuplexTransport + Send + Sync,
+    T: DuplexTransport + Send + Sync + 'static,
     <T as DuplexTransport>::NotificationStream: Send,
     <T as Transport>::Out: Send,
 {
     async fn from_transport(transport: T, config: Config) -> anyhow::Result<Self> {
-        let web3 = web3::Web3::new(transport);
-        let eth = web3.eth();
-        let pancake_swap_factory_v2 = web3::contract::Contract::new(
-            eth.clone(),
-            contracts::pancake_swap::FACTORY_V2_ADDRESS,
-            contracts::pancake_swap::FACTORY_V2.clone(),
-        );
-
-        let pair_contracts = futures::stream::iter(config.pancake_swap.token_pairs)
-            .then(|p| {
-                pancake_swap_factory_v2
-                    .query::<(Address,), _, _, _>(
-                        "getPair",
-                        p.clone().into_inner(),
-                        None,
-                        Options::default(),
-                        None,
-                    )
-                    .map_ok(move |(a,)| (p, a))
-            })
-            .try_collect()
-            .await?;
+        let web3 = web3::Web3::new(transport.clone());
 
         Ok(Self {
-            web3,
-            pancake_swap_router_v2: web3::contract::Contract::new(
-                eth,
-                contracts::pancake_swap::ROUTER_V2_ADDRESS,
-                contracts::pancake_swap::ROUTER_V2.clone(),
-            ),
-            pancake_swap_factory_v2,
+            web3: web3.clone(),
             buffer_size: config.buffer_size,
-            pair_contracts,
+            monitors: MultiMonitor::new(vec![Box::new(
+                PancakeSwap::from_config(web3, config.monitors.pancake_swap).await?,
+            )]),
         })
     }
 
-    pub async fn run(&mut self) -> anyhow::Result<()> {
-        let mut tx_stream =
-            self.web3
-                .eth_subscribe()
-                .subscribe_new_pending_transactions()
-                .await
-                .with_context(|| "failed to subscribe to new pending transactions")?
-                .filter_map(|r| future::ready(r.ok()))
-                .map({
-                    let eth = self.web3.eth();
-                    move |h| eth.transaction(TransactionId::Hash(h))
-                })
-                .buffered(self.buffer_size)
-                .filter_map(|r| future::ready(r.unwrap_or(None)))
-                .filter_map(|tx: Transaction| {
-                    future::ready(
-                        (tx.to
-                            .map_or(false, |h| h == contracts::pancake_swap::ROUTER_V2_ADDRESS)
-                            && tx.input.0.starts_with(
-                                &ROUTER_V2_SWAP_EXACT_ETH_FOR_TOKENS.short_signature(),
-                            ))
-                        .then(|| {
-                            ROUTER_V2_SWAP_EXACT_ETH_FOR_TOKENS
-                                .decode_input(&tx.input.0[4..])
-                                .ok()
-                                .and_then(|v| {
-                                    <(U256, Vec<Address>, Address, U256)>::from_tokens(v).ok()
-                                })
-                        })
-                        .flatten()
-                        .map(move |inputs| (tx, inputs)),
-                    )
-                })
-                .flat_map(
-                    |(tx, (_, path, ..)): (Transaction, (_, Vec<Address>, _, _))| {
-                        futures::stream::iter(
-                            path.windows(2)
-                                .map(|p| UnorderedPair(p[0], p[1]))
-                                .filter_map(|p| self.pair_contracts.get(&p).cloned())
-                                .map(move |c| (tx.clone(), c))
-                                .collect::<Vec<_>>(),
-                        )
-                    },
-                )
-                .inspect(|(tx, c)| println!("{:?}: {c:?}", tx.hash))
-                .filter_map(|(tx, c)| {
-                    let pair = web3::contract::Contract::new(self.web3.eth(), c, PAIR.clone());
-                    async move {
-                        pair.query::<(Uint, Uint, Uint), _, _, _>(
-                            "getReserves",
-                            (),
-                            None,
-                            Options::default(),
-                            None,
-                        )
-                        .await
-                        .map(move |r| (tx, r))
-                        .ok()
-                    }
-                })
-                .boxed();
-        while let Some((tx, reserves)) = tx_stream.next().await {
-            println!("{:?}: {:?}", tx.hash, reserves);
-        }
-
+    pub async fn run(self) -> anyhow::Result<()> {
+        let txs = self.subscribe_pending_transactions().await?;
+        println!("sibscribed new pending transactions");
+        self.monitors.process(Box::pin(txs)).await;
         Ok(())
+    }
+
+    async fn subscribe_pending_transactions(
+        &self,
+    ) -> anyhow::Result<impl Stream<Item = Transaction>> {
+        self.web3
+            .eth_subscribe()
+            .subscribe_new_pending_transactions()
+            .map(|r| r.with_context(|| "failed to subscribe to new pending transactions"))
+            .map_ok(|s| {
+                s.filter_map(|r| future::ready(r.inspect_err(|e| println!("{e:?}")).ok()))
+                    // TODO: filter unique tx hashes
+                    .map({
+                        let eth = self.web3.eth();
+                        move |h| eth.transaction(TransactionId::Hash(h))
+                    })
+                    .buffered(self.buffer_size)
+                    .filter_map(|r| future::ready(r.unwrap_or(None)))
+            })
+            .await
     }
 }
