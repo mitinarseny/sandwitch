@@ -67,14 +67,14 @@ impl<T: Transport> Token<T> {
     pub async fn decimals(&self) -> web3::contract::Result<u8> {
         self.contract
             .query("decimals", (), None, Options::default(), None)
-            .map_ok(|(d,)| d)
             .await
+            .map(|(d,)| d)
     }
 
     pub async fn name(&self) -> web3::contract::Result<String> {
         self.contract
             .query("name", (), None, Options::default(), None)
-            .map_ok(|(s,)| s)
             .await
+            .map(|(s,)| s)
     }
 }

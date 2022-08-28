@@ -2,27 +2,35 @@
 mod monitors;
 mod types;
 
+use std::future;
+use std::sync::Arc;
+
 use anyhow::Context;
 use serde::Deserialize;
-use std::future;
 
-use futures::stream::{Stream, StreamExt};
-use web3::transports::WebSocket;
-use web3::types::{Transaction, TransactionId};
+use monitors::Monitor;
+
+use futures::stream::{Stream, StreamExt, TryStream, TryStreamExt};
+use web3::transports::{Http, WebSocket};
+use web3::types::{Transaction, TransactionId, H256};
 use web3::{DuplexTransport, Transport, Web3};
 
-use self::monitors::logger::Logger;
+// use self::monitors::logger::Logger;
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-use self::monitors::{Monitor, MultiMonitor};
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    pub url: String,
+    pub core: CoreConfig,
+    pub monitors: MonitorsConfig,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct CoreConfig {
+    pub wss: String,
+    pub http: String,
 
     #[serde(default)]
     pub buffer_size: usize,
-
-    pub monitors: MonitorsConfig,
 }
 
 #[derive(Deserialize, Debug)]
@@ -30,63 +38,91 @@ pub struct MonitorsConfig {
     pub pancake_swap: PancakeSwapConfig,
 }
 
-pub struct App<T>
+pub struct App<ST, RT>
 where
-    T: DuplexTransport,
+    ST: DuplexTransport,
+    RT: Transport,
 {
-    web3: Web3<T>,
+    streaming: Web3<ST>,
+    requesting: Web3<RT>,
     buffer_size: usize,
-    monitors: Box<MultiMonitor<Transaction, ()>>,
+    monitor: Arc<PancakeSwap<RT>>,
 }
 
-impl App<WebSocket> {
+impl App<WebSocket, Http> {
     pub async fn from_config(config: Config) -> anyhow::Result<Self> {
-        let transport = web3::transports::WebSocket::new(&config.url).await?;
-        Self::from_transport(transport, config).await
+        Self::from_transports(
+            web3::transports::WebSocket::new(&config.core.wss).await?,
+            web3::transports::Http::new(&config.core.http)?,
+            config,
+        )
+        .await
     }
 }
 
-impl<T> App<T>
+impl<ST, RT> App<ST, RT>
 where
-    T: DuplexTransport + Send + Sync + 'static,
-    <T as DuplexTransport>::NotificationStream: Send,
-    <T as Transport>::Out: Send,
+    ST: DuplexTransport,
+    RT: Transport,
 {
-    async fn from_transport(transport: T, config: Config) -> anyhow::Result<Self> {
-        let web3 = web3::Web3::new(transport.clone());
-
+    async fn from_transports(
+        streaming: ST,
+        requesting: RT,
+        config: Config,
+    ) -> anyhow::Result<Self> {
+        let requesting = Web3::new(requesting);
+        let pancake =
+            PancakeSwap::from_config(requesting.eth(), config.monitors.pancake_swap).await?;
         Ok(Self {
-            web3: web3.clone(),
-            buffer_size: config.buffer_size,
-            monitors: MultiMonitor::new(vec![
-                Box::new(PancakeSwap::from_config(web3, config.monitors.pancake_swap).await?),
-                // Box::new(Logger::new()),
-            ]),
+            streaming: Web3::new(streaming),
+            requesting,
+            buffer_size: config.core.buffer_size,
+            monitor: Arc::new(pancake),
         })
-    }
-
-    pub async fn run(self) -> anyhow::Result<()> {
-        let txs = self.subscribe_pending_transactions().await?;
-        println!("monitors started");
-        self.monitors.process(Box::pin(txs)).await;
-        Ok(())
     }
 
     async fn subscribe_pending_transactions(
         &self,
-    ) -> anyhow::Result<impl Stream<Item = Transaction>> {
+    ) -> anyhow::Result<impl Stream<Item = Transaction> + '_> {
         Ok(self
-            .web3
+            .streaming
             .eth_subscribe()
             .subscribe_new_pending_transactions()
             .await
             .with_context(|| "failed to subscribe to new pending transactions")?
             .filter_map(|r| future::ready(r.ok()))
-            // TODO: filter unique tx hashes
-            .then({
-                let eth = self.web3.eth();
+            .map({
+                let eth = self.requesting.eth();
                 move |h| eth.transaction(TransactionId::Hash(h))
             })
+            .buffer_unordered(self.buffer_size)
             .filter_map(|r| future::ready(r.unwrap_or(None))))
+    }
+}
+
+impl<ST, RT> App<ST, RT>
+where
+    ST: DuplexTransport + Send + Sync + 'static,
+    <ST as DuplexTransport>::NotificationStream: Send,
+    <ST as Transport>::Out: Send,
+    RT: Transport + Send + Sync + 'static,
+    <RT as Transport>::Out: Send,
+{
+    pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
+        let mut tx_hashes = self.subscribe_pending_transactions().await?.boxed();
+
+        println!("run");
+
+        while let Some(tx) = tx_hashes.next().await {
+            println!("{:#x}", tx.hash);
+            // let s = self.clone();
+            tokio::spawn(self.monitor.clone().process(tx));
+        }
+
+        Ok(())
+    }
+
+    async fn process(self: Arc<Self>, tx: Transaction) -> anyhow::Result<()> {
+        self.monitor.clone().process(tx).await.map_err(Into::into)
     }
 }

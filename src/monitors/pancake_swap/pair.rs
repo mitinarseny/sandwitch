@@ -72,7 +72,7 @@ impl<T: Transport> Display for Pair<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} -> {:#x} -> {}",
+            "{} -> {} -> {}",
             self.tokens.0,
             self.address(),
             self.tokens.1

@@ -5,6 +5,7 @@ use web3::Transport;
 use super::contracts;
 use super::factory::Factory;
 
+#[derive(Clone)]
 pub struct Router<T: Transport> {
     contract: contracts::Router<T>,
     factory: Factory<T>,

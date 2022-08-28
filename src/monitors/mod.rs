@@ -1,71 +1,51 @@
+use std::future;
+use std::sync::Arc;
+
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, FuturesUnordered};
-use futures::{FutureExt, Stream, StreamExt, TryStreamExt};
-use std::convert::Infallible;
-use std::future;
+use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
 pub mod logger;
 pub mod pancake_swap;
 
-pub trait Monitor {
-    type Item;
+pub trait Monitor<Item> {
     type Error;
 
-    fn process(
-        self: Box<Self>,
-        stream: BoxStream<'_, Self::Item>,
-    ) -> BoxFuture<'_, Result<(), Self::Error>>;
+    fn process(self: Arc<Self>, item: Item) -> BoxFuture<'static, Result<(), Self::Error>>;
 }
 
-pub struct MultiMonitor<T, E> {
-    monitors: Vec<Box<dyn Monitor<Item = T, Error = E> + Send + Sync>>,
+pub struct MultiMonitor<Item, E> {
+    monitors: Vec<Arc<dyn Monitor<Item, Error = E> + Send + Sync>>,
 }
 
-impl<T: Clone, E> MultiMonitor<T, E> {
-    pub fn new(monitors: Vec<Box<dyn Monitor<Item = T, Error = E> + Send + Sync>>) -> Box<Self> {
-        Box::new(Self { monitors })
+impl<Item, E> MultiMonitor<Item, E> {
+    pub fn new(monitors: Vec<Arc<dyn Monitor<Item, Error = E> + Send + Sync>>) -> Self {
+        Self { monitors }
     }
 }
 
-impl<T, E> Monitor for MultiMonitor<T, E>
+pub enum MultiError<E> {
+    JoinError(tokio::task::JoinError),
+    Monitor(E),
+}
+
+impl<Item, E> Monitor<Item> for MultiMonitor<Item, E>
 where
-    T: Clone + Send + 'static,
-    E: Clone + Send + 'static,
+    Item: Clone + Send + 'static,
+    E: Send + 'static,
 {
-    type Item = T;
-    type Error = E;
+    type Error = MultiError<E>;
 
-    fn process(
-        self: Box<Self>,
-        mut stream: BoxStream<'_, Self::Item>,
-    ) -> BoxFuture<'_, Result<(), Self::Error>> {
-        Box::pin(async move {
-            let (tx, _) = broadcast::channel(1);
-
-            let monitors: FuturesUnordered<_> = (*self)
-                .monitors
-                .into_iter()
-                .map(|m| {
-                    tokio::spawn({
-                        let stream = BroadcastStream::new(tx.subscribe())
-                            .filter_map(|r| future::ready(r.ok())); // log
-                        m.process(Box::pin(stream))
-                    })
-                })
-                .collect();
-
-            println!("started monitors");
-
-            // stream.map(|r| Ok(r)).forward(&mut tx);
-
-            while let Some(v) = stream.next().await {
-                tx.send(v); // TODO: unwrap
-            }
-
-            monitors.try_collect::<Vec<Result<(), E>>>().await; // TODO: join error?
-            Ok(())
-        })
+    fn process(self: Arc<Self>, item: Item) -> BoxFuture<'static, Result<(), Self::Error>> {
+        self.clone().monitors
+            .iter()
+            .map(|m| tokio::spawn(m.clone().process(item.clone()).map_err(|err| MultiError::Monitor(err))))
+            .collect::<FuturesUnordered<_>>()
+            .map_err(|err| MultiError::JoinError(err))
+            .try_collect::<Vec<Result<(), MultiError<E>>>>()
+            .map_ok(|_| ())
+            .boxed()
     }
 }

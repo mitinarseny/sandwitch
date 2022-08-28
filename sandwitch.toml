@@ -1,8 +1,10 @@
-url = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+[core]
+wss = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+http = "https://rpc.ankr.com/bsc/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
 # url = "wss://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
 # url = "wss://bsc-mainnet.nodereal.io/ws/v1/ea16a1827ea944ceb4464da4beb88cd1"
 
-buffer_size = 50
+buffer_size = 100
 
 [monitors.pancake_swap]
 router = "0x10ed43c718714eb63d5aa57b78b54704e256024e"
@@ -523,10 +525,4 @@ token_pairs = [
         "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
         "0xd4a50ae7c607c361f2a6e9f928eb3b580eefb4be"
     ],
-	# # WBNB <-> BUSD
-	# ["0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56"],
-	# # WBNB <-> CORGI
-	# ["0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", "0x450dcf93160a30be156a4600802c91bf64dffd2e"],
-	# # WBNB <-> USDT
-	# ["0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "0x55d398326f99059fF775485246999027B3197955"],
 ]

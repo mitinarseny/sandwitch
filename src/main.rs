@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Context;
 use sandwitch::*;
@@ -23,8 +24,13 @@ async fn main() -> anyhow::Result<()> {
             .with_context(|| format!("failed to read config file '{}'", args.config.display()))?
             .as_str(),
     )
-    .with_context(|| format!("failed to parse TOML config file '{}'", args.config.display()))?;
+    .with_context(|| {
+        format!(
+            "failed to parse TOML config file '{}'",
+            args.config.display()
+        )
+    })?;
 
-    let mut app = App::from_config(config).await?;
-    app.run().await
+    let app = App::from_config(config).await?;
+    Arc::new(app).run().await
 }

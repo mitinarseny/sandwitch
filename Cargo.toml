@@ -9,8 +9,8 @@ edition = "2021"
 anyhow = { version = "1" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-futures = { version = "0.3" }
-web3 = { version = "0.18", default-features = false, features = ["ws-tokio", "ws-tls-tokio"] }
+futures = { version = "0.3.23" }
+web3 = { version = "0.18", features = ["ws-tokio", "ws-tls-tokio"] }
 hex = { version = "0.4" }
 lazy_static = { version = "1.4" }
 toml = { version = "0.5" }

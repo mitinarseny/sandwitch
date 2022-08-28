@@ -62,7 +62,7 @@ impl<T: Transport> Factory<T> {
     pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> web3::contract::Result<Address> {
         self.contract
             .query("getPair", (t0, t1), None, Options::default(), None)
-            .map_ok(|(a,)| a)
             .await
+            .map(|(a,)| a)
     }
 }

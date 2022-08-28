@@ -69,6 +69,7 @@ lazy_static! {
     };
 }
 
+#[derive(Clone)]
 pub struct Router<T: Transport> {
     contract: contract::Contract<T>,
 }
