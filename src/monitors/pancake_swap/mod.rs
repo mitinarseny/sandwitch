@@ -1,29 +1,36 @@
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
-use itertools::Itertools;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::future;
+use std::time::Duration;
 use web3::contract::tokens::Detokenize;
-use web3::contract::Options;
 use web3::types::{Address, Transaction, U256};
 use web3::Transport;
 
-use super::Monitor;
-
 mod contracts;
+mod factory;
+mod pair;
+mod router;
+mod token;
 
-pub struct PancakeSwap<T: Transport> {
-    web3: web3::Web3<T>,
-    router_v2: web3::contract::Contract<T>,
-    pair_contracts: HashMap<(Address, Address), Address>,
-    token_decimals: HashMap<Address, u8>,
-}
+use self::pair::Pair;
+use self::router::Router;
+use super::super::types;
+
+use super::Monitor;
 
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
+    pub router: Address,
     pub token_pairs: Vec<(Address, Address)>,
+}
+
+pub struct PancakeSwap<T: Transport> {
+    router: Router<T>,
+    pair_contracts: HashMap<(Address, Address), Pair<T>>,
+    // tokens: HashMap<Address, Token<T>>,
 }
 
 impl<T: Transport> PancakeSwap<T> {
@@ -31,47 +38,19 @@ impl<T: Transport> PancakeSwap<T> {
         web3: web3::Web3<T>,
         config: PancakeSwapConfig,
     ) -> web3::contract::Result<Self> {
-        let router_v2 = web3::contract::Contract::new(
-            web3.eth(),
-            contracts::router_v2::ADDRESS,
-            contracts::router_v2::ROUTER_V2.clone(),
-        );
-        let factory_v2 = web3::contract::Contract::new(
-            web3.eth(),
-            contracts::factory_v2::ADDRESS,
-            contracts::factory_v2::FACTORY_V2.clone(),
-        );
-        Ok(Self {
-            web3: web3.clone(),
-            router_v2,
-            pair_contracts: futures::stream::iter(config.token_pairs.iter().cloned())
-                .map(|p| {
-                    factory_v2
-                        .query::<(Address,), _, _, _>("getPair", p, None, Options::default(), None)
-                        .map_ok(move |(a,)| (p, a))
-                })
-                .buffered(10) // TODO
-                .try_collect()
-                .await?,
-            token_decimals: futures::stream::iter(
-                config
-                    .token_pairs
-                    .into_iter()
-                    .flat_map(|(t0, t1)| [t0, t1].into_iter()),
-            )
-            .map(|t| {
-                let token =
-                    web3::contract::Contract::new(web3.eth(), t, contracts::token::TOKEN.clone());
-                async move {
-                    token
-                        .query::<(u8,), _, _, _>("decimals", (), None, Options::default(), None)
-                        .map_ok(move |(c,)| (t, c))
-                        .await
-                }
-            })
-            .buffered(10) // TODO
+        let router = Router::new(web3.eth(), config.router).await?;
+        let factory = router.factory();
+
+        let pair_contracts = futures::stream::iter(config.token_pairs)
+            .map(|ts| Pair::new(web3.eth(), factory, ts.clone()).map_ok(move |p| (ts, p)))
+            .buffer_unordered(50) // TODO
+            .inspect_ok(|pair| println!("{:?}", pair.0))
             .try_collect()
-            .await?,
+            .await?;
+
+        Ok(Self {
+            router,
+            pair_contracts,
         })
     }
 }
@@ -80,7 +59,7 @@ impl<T> PancakeSwap<T>
 where
     T: Transport + Sync + Send,
 {
-    async fn process_transactions<S>(self, txs: S)
+    async fn process_transactions<S>(self, txs: S) -> Result<(), ()>
     where
         S: Stream<Item = Transaction> + Unpin + Send,
         <T as web3::Transport>::Out: Send,
@@ -89,16 +68,16 @@ where
             .filter(|tx| {
                 future::ready(
                     !tx.value.is_zero()
-                        && tx.to.map_or(false, |h| h == self.router_v2.address())
+                        && tx.to.map_or(false, |h| h == self.router.address())
                         && tx.input.0.starts_with(
-                            &contracts::router_v2::SWAP_EXACT_ETH_FOR_TOKENS.short_signature(), // TODO:
-                                                                                                // calculate signature before
+                            &contracts::SWAP_EXACT_ETH_FOR_TOKENS.short_signature(), // TODO:
+                                                                                     // calculate signature before
                         ),
                 )
             })
             .filter_map(|tx| {
                 future::ready(
-                    contracts::router_v2::SWAP_EXACT_ETH_FOR_TOKENS
+                    contracts::SWAP_EXACT_ETH_FOR_TOKENS
                         .decode_input(&tx.input.0[4..])
                         .ok()
                         .map(<(U256, Vec<Address>, Address, U256)>::from_tokens)
@@ -109,37 +88,44 @@ where
                         }),
                 )
             })
-            .flat_map_unordered(None, |(tx, (amount_out_min, path, ..))| {
-                futures::stream::iter(
-                    path.into_iter()
-                        .tuple_windows()
-                        .filter_map(|p| self.pair_contracts.get(&p).cloned().map(|pair| (p, pair))),
+            // filter only path[2] swaps
+            .filter_map(|(tx, (amount_out_min, path, deadline))| {
+                future::ready(
+                    (path.len() == 2)
+                        .then(move || (tx, (amount_out_min, (path[0], path[1]), deadline))),
                 )
-                .filter_map(|((t0, t1), pair)| {
-                    self.get_reserves(pair)
-                        .map_ok(move |(mut r0, mut r1, _)| {
-                            if t1 < t0 {
-                                // sort by hash value
-                                (r0, r1) = (r1, r0);
-                            }
-                            ((t0, t1), (r0, r1), pair)
-                        })
-                        .map(|r| r.ok())
-                })
-                .map(move |token_pools| (tx.clone(), amount_out_min, token_pools))
-                .boxed()
             })
+            .filter_map(|(tx, (amount_out_min, (t0, t1), deadline))| {
+                future::ready(self.pair_contracts.get(&(t0, t1)).map(move |pair| {
+                    let amount_in = pair.tokens().0.as_decimals(types::big_num::U256(tx.value));
+                    let amount_out_min = pair
+                        .tokens()
+                        .1
+                        .as_decimals(types::big_num::U256(amount_out_min));
+                    (tx, (amount_in, amount_out_min, (t0, t1), pair, deadline))
+                }))
+            })
+            .filter_map(
+                |(tx, (amount_in, amount_out_min, (t0, t1), pair, deadline))| {
+                    pair.get_reserves()
+                        .map_ok(move |(r0, r1, _)| {
+                            (
+                                tx,
+                                (amount_in, amount_out_min, (t0, t1), (r0, r1), deadline),
+                            )
+                        })
+                        .map(Result::ok)
+                },
+            )
             .boxed();
-        while let Some((tx, amount_out_min, token_pools)) = s.next().await {
-            println!("{:#x}, {amount_out_min:?}, {token_pools:?}", tx.hash);
+        while let Some((tx, (amount_in, amount_out_min, (t0, t1), (r0, r1), deadline))) = s.next().await {
+            println!(
+                "{:#x}, {amount_in}, {amount_out_min}, ({t0:?}, {t1:?}), ({r0:?}, {r1:?}), {deadline}",
+                tx.hash
+            );
         }
-    }
-
-    async fn get_reserves(&self, pair: Address) -> web3::contract::Result<(u128, u128, u32)> {
-        let pair =
-            web3::contract::Contract::new(self.web3.eth(), pair, contracts::pair::PAIR.clone());
-        pair.query::<(u128, u128, u32), _, _, _>("getReserves", (), None, Options::default(), None)
-            .await
+        println!("end");
+        Ok(())
     }
 }
 
@@ -149,8 +135,12 @@ where
     <T as web3::Transport>::Out: Send,
 {
     type Item = Transaction;
+    type Error = ();
 
-    fn process(self: Box<Self>, stream: BoxStream<'_, Self::Item>) -> BoxFuture<'_, ()> {
+    fn process(
+        self: Box<Self>,
+        stream: BoxStream<'_, Self::Item>,
+    ) -> BoxFuture<'_, Result<(), Self::Error>> {
         Box::pin((*self).process_transactions(stream))
     }
 }

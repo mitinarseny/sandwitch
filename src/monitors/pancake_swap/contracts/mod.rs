@@ -1,15 +1,9 @@
-macro_rules! address {
-    ($name:ident, $addr:literal) => {
-        const $name: web3::types::Address = web3::ethabi::ethereum_types::H160(hex_literal::hex!($addr));
-    };
-    (pub $name:ident, $addr:literal) => {
-        pub const $name: web3::types::Address = web3::ethabi::ethereum_types::H160(hex_literal::hex!($addr));
-    };
+mod factory_v2;
+mod pair;
+mod router_v2;
+mod token;
 
-}
-
-
-pub mod factory_v2;
-pub mod router_v2;
-pub mod pair;
-pub mod token;
+pub use factory_v2::Factory;
+pub use pair::Pair;
+pub use router_v2::{Router, SWAP_EXACT_ETH_FOR_TOKENS};
+pub use token::Token;

@@ -1117,6 +1117,7 @@ name = "sandwitch"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "byte-slice-cast",
  "clap",
  "futures",
  "hex",

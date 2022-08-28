@@ -1,10 +1,15 @@
 use std::collections::BTreeMap;
 
+use futures::TryFutureExt;
 use lazy_static::lazy_static;
-use web3::ethabi::{Contract, Function, Param, ParamType, StateMutability};
+use web3::api::Eth;
+use web3::contract::{self, Options};
+use web3::ethabi::{self, Function, Param, ParamType, StateMutability};
+use web3::types::Address;
+use web3::Transport;
 
 lazy_static! {
-    pub static ref FACTORY_V2: Contract = Contract {
+    static ref FACTORY_V2: ethabi::Contract = ethabi::Contract {
         constructor: None,
         functions: BTreeMap::from([(
             "getPair".to_string(),
@@ -38,4 +43,26 @@ lazy_static! {
     };
 }
 
-address!(pub ADDRESS, "cA143Ce32Fe78f1f7019d7d551a6402fC5350c73");
+#[derive(Clone)]
+pub struct Factory<T: Transport> {
+    contract: contract::Contract<T>,
+}
+
+impl<T: Transport> Factory<T> {
+    pub fn new(eth: Eth<T>, address: Address) -> Self {
+        Self {
+            contract: contract::Contract::new(eth, address, FACTORY_V2.clone()),
+        }
+    }
+
+    pub fn address(&self) -> Address {
+        self.contract.address()
+    }
+
+    pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> web3::contract::Result<Address> {
+        self.contract
+            .query("getPair", (t0, t1), None, Options::default(), None)
+            .map_ok(|(a,)| a)
+            .await
+    }
+}

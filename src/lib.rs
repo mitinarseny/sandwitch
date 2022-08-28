@@ -1,8 +1,8 @@
-#![feature(iterator_try_collect, result_option_inspect)]
+#![feature(iterator_try_collect, result_option_inspect, future_join)]
 mod monitors;
+mod types;
 
 use anyhow::Context;
-use futures::{FutureExt, TryFutureExt};
 use serde::Deserialize;
 use std::future;
 
@@ -11,6 +11,7 @@ use web3::transports::WebSocket;
 use web3::types::{Transaction, TransactionId};
 use web3::{DuplexTransport, Transport, Web3};
 
+use self::monitors::logger::Logger;
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
 use self::monitors::{Monitor, MultiMonitor};
 
@@ -35,7 +36,7 @@ where
 {
     web3: Web3<T>,
     buffer_size: usize,
-    monitors: Box<MultiMonitor<Transaction>>,
+    monitors: Box<MultiMonitor<Transaction, ()>>,
 }
 
 impl App<WebSocket> {
@@ -57,15 +58,16 @@ where
         Ok(Self {
             web3: web3.clone(),
             buffer_size: config.buffer_size,
-            monitors: MultiMonitor::new(vec![Box::new(
-                PancakeSwap::from_config(web3, config.monitors.pancake_swap).await?,
-            )]),
+            monitors: MultiMonitor::new(vec![
+                Box::new(PancakeSwap::from_config(web3, config.monitors.pancake_swap).await?),
+                // Box::new(Logger::new()),
+            ]),
         })
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
         let txs = self.subscribe_pending_transactions().await?;
-        println!("sibscribed new pending transactions");
+        println!("monitors started");
         self.monitors.process(Box::pin(txs)).await;
         Ok(())
     }
@@ -73,20 +75,18 @@ where
     async fn subscribe_pending_transactions(
         &self,
     ) -> anyhow::Result<impl Stream<Item = Transaction>> {
-        self.web3
+        Ok(self
+            .web3
             .eth_subscribe()
             .subscribe_new_pending_transactions()
-            .map(|r| r.with_context(|| "failed to subscribe to new pending transactions"))
-            .map_ok(|s| {
-                s.filter_map(|r| future::ready(r.inspect_err(|e| println!("{e:?}")).ok()))
-                    // TODO: filter unique tx hashes
-                    .map({
-                        let eth = self.web3.eth();
-                        move |h| eth.transaction(TransactionId::Hash(h))
-                    })
-                    .buffered(self.buffer_size)
-                    .filter_map(|r| future::ready(r.unwrap_or(None)))
-            })
             .await
+            .with_context(|| "failed to subscribe to new pending transactions")?
+            .filter_map(|r| future::ready(r.ok()))
+            // TODO: filter unique tx hashes
+            .then({
+                let eth = self.web3.eth();
+                move |h| eth.transaction(TransactionId::Hash(h))
+            })
+            .filter_map(|r| future::ready(r.unwrap_or(None))))
     }
 }

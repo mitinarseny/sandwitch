@@ -1,7 +1,11 @@
 use std::collections::BTreeMap;
 
 use lazy_static::lazy_static;
-use web3::ethabi::{Contract, Function, Param, ParamType, StateMutability};
+use web3::api::Eth;
+use web3::contract::{self, Options};
+use web3::ethabi::{self, Function, Param, ParamType, StateMutability};
+use web3::types::Address;
+use web3::Transport;
 
 lazy_static! {
     pub static ref SWAP_EXACT_ETH_FOR_TOKENS: Function = Function {
@@ -36,12 +40,28 @@ lazy_static! {
         }],
         constant: false,
     };
-    pub static ref ROUTER_V2: Contract = Contract {
+    static ref ROUTER_V2: ethabi::Contract = ethabi::Contract {
         constructor: None,
-        functions: BTreeMap::from([(
-            SWAP_EXACT_ETH_FOR_TOKENS.name.clone(),
-            vec![SWAP_EXACT_ETH_FOR_TOKENS.clone()]
-        )]),
+        functions: BTreeMap::from([
+            (
+                SWAP_EXACT_ETH_FOR_TOKENS.name.clone(),
+                vec![SWAP_EXACT_ETH_FOR_TOKENS.clone()]
+            ),
+            (
+                "factory".to_string(),
+                vec![Function {
+                    name: "factory".to_string(),
+                    state_mutability: StateMutability::Pure,
+                    inputs: vec![],
+                    outputs: vec![Param {
+                        name: "".to_string(),
+                        kind: ParamType::Address,
+                        internal_type: None,
+                    }],
+                    constant: true,
+                }],
+            )
+        ]),
         events: BTreeMap::new(),
         errors: BTreeMap::new(),
         receive: false,
@@ -49,4 +69,25 @@ lazy_static! {
     };
 }
 
-address!(pub ADDRESS, "10ED43C718714eb63d5aA57B78B54704E256024E");
+pub struct Router<T: Transport> {
+    contract: contract::Contract<T>,
+}
+
+impl<T: Transport> Router<T> {
+    pub fn new(eth: Eth<T>, address: Address) -> Self {
+        Self {
+            contract: contract::Contract::new(eth, address, ROUTER_V2.clone()),
+        }
+    }
+
+    pub fn address(&self) -> Address {
+        self.contract.address()
+    }
+
+    pub async fn factory(&self) -> web3::contract::Result<Address> {
+        self.contract
+            .query("factory", (), None, Options::default(), None)
+            .await
+            .map(|(a,)| a)
+    }
+}
