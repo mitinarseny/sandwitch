@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use anyhow::Context;
 use lazy_static::lazy_static;
 use web3::api::Eth;
 use web3::contract::{self, Options};
@@ -57,10 +58,11 @@ impl<T: Transport> Factory<T> {
         }
     }
 
-    pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> web3::contract::Result<Address> {
+    pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> anyhow::Result<Address> {
         self.contract
             .query("getPair", (t0, t1), None, Options::default(), None)
             .await
             .map(|(a,)| a)
+            .with_context(|| format!("({:#x}, {:#x})", t0, t1))
     }
 }

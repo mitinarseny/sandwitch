@@ -1,8 +1,7 @@
+use super::contracts;
 use web3::api::Eth;
 use web3::types::Address;
 use web3::Transport;
-
-use super::contracts;
 
 #[derive(Clone)]
 pub struct Factory<T: Transport> {
@@ -16,7 +15,7 @@ impl<T: Transport> Factory<T> {
         }
     }
 
-    pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> web3::contract::Result<Address> {
+    pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> anyhow::Result<Address> {
         self.contract.get_pair((t0, t1)).await
     }
 }

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use anyhow::Context;
 use lazy_static::lazy_static;
 use web3::api::Eth;
 use web3::contract::{self, Options};
@@ -69,17 +70,19 @@ impl<T: Transport> Token<T> {
         self.contract.address()
     }
 
-    pub async fn decimals(&self) -> web3::contract::Result<u8> {
+    pub async fn decimals(&self) -> anyhow::Result<u8> {
         self.contract
             .query("decimals", (), None, Options::default(), None)
             .await
             .map(|(d,)| d)
+            .with_context(|| format!("{:#x}", self.address()))
     }
 
-    pub async fn name(&self) -> web3::contract::Result<String> {
+    pub async fn name(&self) -> anyhow::Result<String> {
         self.contract
             .query("name", (), None, Options::default(), None)
             .await
             .map(|(s,)| s)
+            .with_context(|| format!("{:#x}", self.address()))
     }
 }

@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use anyhow::Context;
 use futures::try_join;
 use num::rational::Ratio;
 use num::BigUint;
@@ -17,7 +18,7 @@ pub struct Token<T: Transport> {
 }
 
 impl<T: Transport> Token<T> {
-    pub async fn new(eth: Eth<T>, address: Address) -> web3::contract::Result<Self> {
+    pub async fn new(eth: Eth<T>, address: Address) -> anyhow::Result<Self> {
         let contract = contracts::Token::new(eth, address);
         let (name, decimals) = try_join!(contract.name(), contract.decimals())?;
         Ok(Self {

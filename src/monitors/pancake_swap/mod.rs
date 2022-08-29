@@ -1,8 +1,6 @@
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use num::rational::Ratio;
-use num::{BigUint, ToPrimitive};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::future;
@@ -34,23 +32,25 @@ pub struct PancakeSwap<T: Transport> {
 }
 
 impl<T: Transport> PancakeSwap<T> {
-    pub async fn from_config(
-        eth: Eth<T>,
-        config: PancakeSwapConfig,
-    ) -> web3::contract::Result<Self> {
+    pub async fn from_config(eth: Eth<T>, config: PancakeSwapConfig) -> anyhow::Result<Self> {
         let router = Router::new(eth.clone(), config.router).await?;
         let factory = router.factory();
 
-        let pair_contracts = config
-            .token_pairs
-            .into_iter()
+        let pair_contracts = futures::stream::iter(config.token_pairs)
             .map(move |(t0, t1)| {
                 Pair::new(eth.clone(), factory, (t0, t1)).map_ok(move |pair| ((t0, t1), pair))
             })
-            .collect::<FuturesUnordered<_>>()
-            // .inspect_ok(|(_, pair)| println!("{pair}"))
-            .try_collect()
-            .await?;
+            .buffer_unordered(50)
+            .filter_map(|r| {
+                future::ready(
+                    r.inspect_err(|err| {
+                        dbg!(err);
+                    })
+                    .ok(),
+                )
+            })
+            .collect()
+            .await;
 
         dbg!("finish");
 
@@ -157,6 +157,7 @@ where
                     t0.address(),
                     t1.address(),
                     pair.address(),
+                    // calculate_max_amount(r0, r1, amount_in, amount_out_min),
                 );
             }
             Ok(())
@@ -165,25 +166,10 @@ where
     }
 }
 
-fn calculate_max_amount<A, B, C, D>(
-    pool_a: A,
-    pool_b: B,
-    his_value_a: C,
-    his_value_min_b: D,
-) -> Ratio<BigUint>
-where
-    A: Into<Ratio<BigUint>>,
-    B: Into<Ratio<BigUint>>,
-    C: Into<Ratio<BigUint>>,
-    D: Into<Ratio<BigUint>>,
-{
-    let (pool_a, pool_b, his_value_a, his_value_min_b) = (
-        pool_a.into(),
-        pool_b.into(),
-        his_value_a.into(),
-        his_value_min_b.into(),
-    );
-    ((his_value_a.clone()
-        * (pool_a * pool_b * BigUint::from(4u8) + his_value_a * his_value_min_b.clone()))
-        / his_value_min_b)
+fn calculate_max_amount(pool_a: f64, pool_b: f64, his_value_a: f64, his_value_min_b: f64) -> f64 {
+    0.5 * (((his_value_a * (4.0 * pool_a * pool_b + his_value_a * his_value_min_b))
+        / his_value_min_b
+        - 2.0 * pool_a
+        - his_value_a)
+        .sqrt())
 }

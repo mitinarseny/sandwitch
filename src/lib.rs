@@ -103,13 +103,14 @@ where
             .subscribe_new_pending_transactions()
             .await
             .with_context(|| "failed to subscribe to new pending transactions")?
+            // .inspect(|tx| println!("{:?}", tx))
             .map_ok({
                 let eth = self.requesting.eth();
                 move |h| eth.transaction(TransactionId::Hash(h))
             })
             .try_buffer_unordered(self.buffer_size)
             .filter_map(|r| future::ready(r.unwrap_or(None)))
-            // .inspect(|tx| println!("{:#x}", tx.hash))
+            // .inspect(|tx| println!("{:#?}", tx))
             .boxed();
 
         dbg!("run");

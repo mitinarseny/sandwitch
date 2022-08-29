@@ -21,11 +21,8 @@ impl<T: Transport> Pair<T> {
     pub async fn new(
         eth: Eth<T>,
         factory: &Factory<T>,
-        (mut t0, mut t1): (Address, Address),
-    ) -> web3::contract::Result<Self> {
-        if t0 > t1 {
-            (t0, t1) = (t1, t0);
-        }
+        (t0, t1): (Address, Address),
+    ) -> anyhow::Result<Self> {
         let (t0, t1, pair) = try_join!(
             Token::new(eth.clone(), t0),
             Token::new(eth.clone(), t1),
