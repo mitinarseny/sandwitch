@@ -45,9 +45,7 @@ impl<T: Transport> Pair<T> {
         &self.tokens
     }
 
-    pub async fn get_reserves(
-        &self,
-    ) -> web3::contract::Result<(Ratio<BigUint>, Ratio<BigUint>, u32)> {
+    pub async fn get_reserves(&self) -> web3::contract::Result<(f64, f64, u32)> {
         self.contract
             .get_reserves()
             .await

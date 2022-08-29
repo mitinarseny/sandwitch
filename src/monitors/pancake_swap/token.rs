@@ -35,8 +35,8 @@ impl<T: Transport> Token<T> {
         &self.name
     }
 
-    pub fn as_decimals(&self, v: impl Into<BigUint>) -> Ratio<BigUint> {
-        Ratio::new(v.into(), BigUint::from(10u8).pow(self.decimals as u32))
+    pub fn as_decimals(&self, v: impl Into<u128>) -> f64 {
+        v.into() as f64 / 10f64.powi(self.decimals as i32)
     }
 
     pub fn to_decimals(&self, v: impl Into<Ratio<BigUint>>) -> BigUint {

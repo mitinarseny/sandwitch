@@ -109,9 +109,10 @@ where
             })
             .try_buffer_unordered(self.buffer_size)
             .filter_map(|r| future::ready(r.unwrap_or(None)))
+            // .inspect(|tx| println!("{:#x}", tx.hash))
             .boxed();
 
-        println!("run");
+        dbg!("run");
 
         self.monitors.process(tx_hashes).await.map_err(Into::into)
     }
