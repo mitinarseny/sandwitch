@@ -5,7 +5,6 @@
     result_flattening
 )]
 mod monitors;
-mod types;
 
 use std::future;
 

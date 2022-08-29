@@ -1,8 +1,6 @@
 use std::fmt::Display;
 
 use futures::try_join;
-use num::rational::Ratio;
-use num::BigUint;
 use web3::api::Eth;
 use web3::types::Address;
 use web3::Transport;

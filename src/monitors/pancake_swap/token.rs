@@ -1,9 +1,6 @@
 use std::fmt::Display;
 
-use anyhow::Context;
 use futures::try_join;
-use num::rational::Ratio;
-use num::BigUint;
 use web3::api::Eth;
 use web3::types::Address;
 use web3::Transport;
@@ -38,10 +35,6 @@ impl<T: Transport> Token<T> {
 
     pub fn as_decimals(&self, v: impl Into<u128>) -> f64 {
         v.into() as f64 / 10f64.powi(self.decimals as i32)
-    }
-
-    pub fn to_decimals(&self, v: impl Into<Ratio<BigUint>>) -> BigUint {
-        (v.into() * BigUint::from(10u8).pow(self.decimals as u32)).to_integer()
     }
 }
 
