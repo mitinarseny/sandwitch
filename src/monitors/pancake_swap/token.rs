@@ -1,8 +1,8 @@
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 
+use futures::try_join;
 use num::rational::Ratio;
 use num::BigUint;
-use futures::try_join;
 use web3::api::Eth;
 use web3::types::Address;
 use web3::Transport;
@@ -31,8 +31,8 @@ impl<T: Transport> Token<T> {
         self.contract.address()
     }
 
-    pub fn name(&self) -> String {
-        self.name.clone()
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn as_decimals(&self, v: impl Into<BigUint>) -> Ratio<BigUint> {
@@ -58,7 +58,7 @@ impl<T: Transport> PartialOrd for Token<T> {
 
 impl<T: Transport> Display for Token<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.name, self.address())
+        write!(f, "{} ({})", self.name(), self.address())
     }
 }
 

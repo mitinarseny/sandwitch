@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use futures::TryFutureExt;
 use lazy_static::lazy_static;
 use web3::api::Eth;
 use web3::contract::{self, Options};
@@ -14,31 +13,37 @@ lazy_static! {
         functions: BTreeMap::from([
             (
                 "decimals".to_string(),
-                vec![Function {
-                    name: "decimals".to_string(),
-                    state_mutability: StateMutability::View,
-                    inputs: vec![],
-                    outputs: vec![Param {
-                        name: "".to_string(),
-                        kind: ParamType::Uint(8),
-                        internal_type: Some("uint8".to_string()),
-                    }],
-                    constant: true,
-                }],
+                vec![
+                    #[allow(deprecated)]
+                    Function {
+                        name: "decimals".to_string(),
+                        state_mutability: StateMutability::View,
+                        inputs: vec![],
+                        outputs: vec![Param {
+                            name: "".to_string(),
+                            kind: ParamType::Uint(8),
+                            internal_type: Some("uint8".to_string()),
+                        }],
+                        constant: true,
+                    }
+                ],
             ),
             (
                 "name".to_string(),
-                vec![Function {
-                    name: "name".to_string(),
-                    state_mutability: StateMutability::View,
-                    inputs: vec![],
-                    outputs: vec![Param {
-                        name: "".to_string(),
-                        kind: ParamType::String,
-                        internal_type: None,
-                    }],
-                    constant: true,
-                }],
+                vec![
+                    #[allow(deprecated)]
+                    Function {
+                        name: "name".to_string(),
+                        state_mutability: StateMutability::View,
+                        inputs: vec![],
+                        outputs: vec![Param {
+                            name: "".to_string(),
+                            kind: ParamType::String,
+                            internal_type: None,
+                        }],
+                        constant: true,
+                    }
+                ],
             )
         ]),
         events: BTreeMap::new(),

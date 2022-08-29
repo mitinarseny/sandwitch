@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::Context;
 use sandwitch::*;
@@ -31,6 +30,6 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
 
-    let app = App::from_config(config).await?;
-    Arc::new(app).run().await
+    let mut app = App::from_config(config).await?;
+    app.run().await
 }

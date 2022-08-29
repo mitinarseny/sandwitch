@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use futures::TryFutureExt;
 use lazy_static::lazy_static;
 use web3::api::Eth;
 use web3::contract::{self, Options};
@@ -13,28 +12,31 @@ lazy_static! {
         constructor: None,
         functions: BTreeMap::from([(
             "getPair".to_string(),
-            vec![Function {
-                name: "getPair".to_string(),
-                state_mutability: StateMutability::View,
-                inputs: vec![
-                    Param {
+            vec![
+                #[allow(deprecated)]
+                Function {
+                    name: "getPair".to_string(),
+                    state_mutability: StateMutability::View,
+                    inputs: vec![
+                        Param {
+                            name: "".to_string(),
+                            kind: ParamType::Address,
+                            internal_type: Some("address".to_string()),
+                        },
+                        Param {
+                            name: "".to_string(),
+                            kind: ParamType::Address,
+                            internal_type: Some("address".to_string()),
+                        }
+                    ],
+                    outputs: vec![Param {
                         name: "".to_string(),
                         kind: ParamType::Address,
                         internal_type: Some("address".to_string()),
-                    },
-                    Param {
-                        name: "".to_string(),
-                        kind: ParamType::Address,
-                        internal_type: Some("address".to_string()),
-                    }
-                ],
-                outputs: vec![Param {
-                    name: "".to_string(),
-                    kind: ParamType::Address,
-                    internal_type: Some("address".to_string()),
-                }],
-                constant: true,
-            }],
+                    }],
+                    constant: true,
+                }
+            ],
         )]),
         events: BTreeMap::new(),
         errors: BTreeMap::new(),
@@ -53,10 +55,6 @@ impl<T: Transport> Factory<T> {
         Self {
             contract: contract::Contract::new(eth, address, FACTORY_V2.clone()),
         }
-    }
-
-    pub fn address(&self) -> Address {
-        self.contract.address()
     }
 
     pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> web3::contract::Result<Address> {

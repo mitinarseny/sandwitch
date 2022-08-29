@@ -8,7 +8,8 @@ use web3::types::Address;
 use web3::Transport;
 
 lazy_static! {
-    pub static ref SWAP_EXACT_ETH_FOR_TOKENS: Function = Function {
+    pub static ref SWAP_EXACT_ETH_FOR_TOKENS: Function = #[allow(deprecated)]
+    Function {
         name: "swapExactETHForTokens".to_string(),
         state_mutability: StateMutability::Payable,
         inputs: vec![
@@ -49,17 +50,20 @@ lazy_static! {
             ),
             (
                 "factory".to_string(),
-                vec![Function {
-                    name: "factory".to_string(),
-                    state_mutability: StateMutability::Pure,
-                    inputs: vec![],
-                    outputs: vec![Param {
-                        name: "".to_string(),
-                        kind: ParamType::Address,
-                        internal_type: None,
-                    }],
-                    constant: true,
-                }],
+                vec![
+                    #[allow(deprecated)]
+                    Function {
+                        name: "factory".to_string(),
+                        state_mutability: StateMutability::Pure,
+                        inputs: vec![],
+                        outputs: vec![Param {
+                            name: "".to_string(),
+                            kind: ParamType::Address,
+                            internal_type: None,
+                        }],
+                        constant: true,
+                    }
+                ],
             )
         ]),
         events: BTreeMap::new(),

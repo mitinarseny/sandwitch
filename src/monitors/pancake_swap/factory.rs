@@ -16,10 +16,6 @@ impl<T: Transport> Factory<T> {
         }
     }
 
-    pub fn address(&self) -> Address {
-        self.contract.address()
-    }
-
     pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> web3::contract::Result<Address> {
         self.contract.get_pair((t0, t1)).await
     }
