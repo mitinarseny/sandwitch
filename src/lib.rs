@@ -5,10 +5,13 @@
     result_flattening
 )]
 mod monitors;
+mod timed;
 
 use std::future;
+use std::time::SystemTime;
 
 use anyhow::Context;
+use futures::TryFutureExt;
 use serde::Deserialize;
 
 use monitors::Monitor;
@@ -17,6 +20,8 @@ use futures::stream::{StreamExt, TryStreamExt};
 use web3::transports::{Http, WebSocket};
 use web3::types::{Transaction, TransactionId};
 use web3::{DuplexTransport, Transport, Web3};
+
+use crate::timed::Timed;
 
 use self::monitors::MultiMonitor;
 // use self::monitors::logger::Logger;
@@ -50,7 +55,7 @@ where
     streaming: Web3<ST>,
     requesting: Web3<RT>,
     buffer_size: usize,
-    monitors: Box<MultiMonitor<Transaction, web3::contract::Error>>,
+    monitors: Box<MultiMonitor<Timed<Transaction>, web3::contract::Error>>,
 }
 
 impl App<WebSocket, Http> {
@@ -105,7 +110,11 @@ where
             // .inspect(|tx| println!("{:?}", tx))
             .map_ok({
                 let eth = self.requesting.eth();
-                move |h| eth.transaction(TransactionId::Hash(h))
+                move |h| {
+                    let at = SystemTime::now();
+                    eth.transaction(TransactionId::Hash(h))
+                        .map_ok(move |r| r.map(move |tx| Timed::with(tx, at)))
+                }
             })
             .try_buffer_unordered(self.buffer_size)
             .filter_map(|r| future::ready(r.unwrap_or(None)))

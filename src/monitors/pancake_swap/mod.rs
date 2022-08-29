@@ -15,6 +15,8 @@ mod pair;
 mod router;
 mod token;
 
+use crate::timed::Timed;
+
 use self::pair::Pair;
 use self::router::Router;
 
@@ -95,7 +97,7 @@ impl<T: Transport> PancakeSwap<T> {
             .map(|(amount_out_min, path, ..)| (amount_out_min, (path[0], path[1])))
     }
 
-    async fn filter_map(&self, tx: Transaction) -> Option<Swap<'_, T>> {
+    async fn filter_map(&self, tx: Timed<Transaction>) -> Option<Timed<Swap<'_, T>>> {
         if !self.check_swap_exact_eth_for_tokens(&tx) {
             return None;
         }
@@ -105,7 +107,7 @@ impl<T: Transport> PancakeSwap<T> {
         let pair = self.pair_contracts.get(&(t0, t1))?;
         let (t0, t1) = pair.tokens();
 
-        Some(Swap {
+        let sw = Swap {
             tx_hash: tx.hash,
             gas: tx.gas.as_u128(),
             gas_price: t0.as_decimals(tx.gas_price?.low_u128()),
@@ -113,7 +115,9 @@ impl<T: Transport> PancakeSwap<T> {
             amount_out_min: t1.as_decimals(amount_out_min),
             reserves: pair.get_reserves().await.ok().map(|(r0, r1, _)| (r0, r1))?,
             pair,
-        })
+        };
+
+        Some(tx.map(|_| sw))
     }
 }
 
@@ -127,7 +131,7 @@ struct Swap<'a, T: Transport> {
     pair: &'a Pair<T>,
 }
 
-impl<T> Monitor<Transaction> for PancakeSwap<T>
+impl<T> Monitor<Timed<Transaction>> for PancakeSwap<T>
 where
     T: Transport + Send + Sync + 'static,
     <T as Transport>::Out: Send,
@@ -136,7 +140,7 @@ where
 
     fn process<'a>(
         &'a mut self,
-        stream: BoxStream<'a, Transaction>,
+        stream: BoxStream<'a, Timed<Transaction>>,
     ) -> BoxFuture<'a, Result<(), Self::Error>> {
         let mut stream = stream
             .map(|tx| self.filter_map(tx))
@@ -147,27 +151,31 @@ where
         async move {
             while let Some(sw) = stream.next().await {
                 // dbg!("{:#x}", tx.hash);
-                let (t0, t1) = sw.pair.tokens();
-                println!(
-                    "{:#x}, {}, {}, {}, {}, {:#x}, {:#x}, {}, {}, {:#x}, {:?}",
-                    sw.tx_hash,
-                    sw.gas,
-                    sw.gas_price,
-                    sw.amount_in,
-                    sw.amount_out_min,
-                    t0.address(),
-                    t1.address(),
+                if let Some((we_buy, our_min_b)) = calculate_amounts_in_and_out_min(
                     sw.reserves.0,
                     sw.reserves.1,
-                    sw.pair.address(),
-                    calculate_amounts_in_and_out_min(
-                        sw.reserves.0,
-                        sw.reserves.1,
+                    sw.amount_in,
+                    sw.amount_out_min,
+                    3.0,
+                ) {
+                    let (t0, t1) = sw.pair.tokens();
+                    println!(
+                        "{:#x}, {}, {}, {}, {}, {:#x}, {:#x}, {}, {}, {:#x}, {}, {}, {}",
+                        sw.tx_hash,
+                        sw.gas,
+                        sw.gas_price,
                         sw.amount_in,
                         sw.amount_out_min,
-                        3.0
-                    ),
-                );
+                        t0.address(),
+                        t1.address(),
+                        sw.reserves.0,
+                        sw.reserves.1,
+                        sw.pair.address(),
+                        we_buy,
+                        our_min_b,
+                        sw.unix().as_millis()
+                    );
+                }
             }
             Ok(())
         }
