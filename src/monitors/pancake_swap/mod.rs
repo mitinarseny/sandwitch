@@ -1,6 +1,5 @@
-use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures::{StreamExt, TryFutureExt};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::future;
@@ -53,8 +52,6 @@ impl<T: Transport> PancakeSwap<T> {
             })
             .collect()
             .await;
-
-        dbg!("finish");
 
         Ok(Self {
             router,
@@ -136,21 +133,17 @@ where
     T: Transport + Send + Sync + 'static,
     <T as Transport>::Out: Send,
 {
-    type Error = web3::contract::Error;
+    type Output = Result<Vec<Transaction>, web3::contract::Error>;
 
     fn process<'a>(
         &'a mut self,
         stream: BoxStream<'a, Timed<Transaction>>,
-    ) -> BoxFuture<'a, Result<(), Self::Error>> {
-        let mut stream = stream
+    ) -> BoxStream<'a, Self::Output> {
+        stream
             .map(|tx| self.filter_map(tx))
             .buffer_unordered(10)
             .filter_map(future::ready)
-            .boxed();
-
-        async move {
-            while let Some(sw) = stream.next().await {
-                // dbg!("{:#x}", tx.hash);
+            .inspect(|sw| {
                 if let Some((we_buy, our_min_b)) = calculate_amounts_in_and_out_min(
                     sw.reserves.0,
                     sw.reserves.1,
@@ -176,10 +169,9 @@ where
                         sw.unix().as_millis()
                     );
                 }
-            }
-            Ok(())
-        }
-        .boxed()
+            })
+            .map(|_| Ok(Vec::new()))
+            .boxed()
     }
 }
 

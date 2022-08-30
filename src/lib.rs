@@ -55,7 +55,8 @@ where
     streaming: Web3<ST>,
     requesting: Web3<RT>,
     buffer_size: usize,
-    monitors: Box<MultiMonitor<Timed<Transaction>, web3::contract::Error>>,
+    monitors:
+        Box<MultiMonitor<Timed<Transaction>, Result<Vec<Transaction>, web3::contract::Error>>>,
 }
 
 impl App<WebSocket, Http> {
@@ -118,11 +119,18 @@ where
             })
             .try_buffer_unordered(self.buffer_size)
             .filter_map(|r| future::ready(r.unwrap_or(None)))
-            // .inspect(|tx| println!("{:#?}", tx))
+            .inspect(|tx| println!("{:#?}", tx.hash))
             .boxed();
 
         dbg!("run");
 
-        self.monitors.process(tx_hashes).await.map_err(Into::into)
+        let mut send_txs = self.monitors.process(tx_hashes);
+
+        while let Some(txs) = send_txs.next().await {
+            for tx in txs? {
+                println!("send tx: {tx:?}");
+            }
+        }
+        Ok(())
     }
 }

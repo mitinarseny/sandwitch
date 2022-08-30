@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::Future;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Timed<T> {
     inner: T,
     at: SystemTime,

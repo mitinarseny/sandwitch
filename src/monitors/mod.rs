@@ -1,29 +1,21 @@
-use std::future;
-
-use futures::future::{try_join, BoxFuture};
-use futures::stream::{BoxStream, FuturesUnordered};
-use futures::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
+use async_broadcast::broadcast;
+use futures::stream::{select_all, BoxStream, StreamExt};
 
 pub mod pancake_swap;
 
-pub trait Monitor<Item> {
-    type Error;
+pub trait Monitor<Input> {
+    type Output;
 
-    fn process<'a>(
-        &'a mut self,
-        stream: BoxStream<'a, Item>,
-    ) -> BoxFuture<'a, Result<(), Self::Error>>;
+    fn process<'a>(&'a mut self, stream: BoxStream<'a, Input>) -> BoxStream<'a, Self::Output>;
 }
 
-pub struct MultiMonitor<Item, E> {
+pub struct MultiMonitor<In, Out> {
     buffer_size: usize,
-    monitors: Vec<Box<dyn Monitor<Item, Error = E>>>,
+    monitors: Vec<Box<dyn Monitor<In, Output = Out>>>,
 }
 
-impl<Item, E> MultiMonitor<Item, E> {
-    pub fn new(buffer_size: usize, monitors: Vec<Box<dyn Monitor<Item, Error = E>>>) -> Self {
+impl<In, Out> MultiMonitor<In, Out> {
+    pub fn new(buffer_size: usize, monitors: Vec<Box<dyn Monitor<In, Output = Out>>>) -> Self {
         Self {
             buffer_size,
             monitors,
@@ -31,46 +23,27 @@ impl<Item, E> MultiMonitor<Item, E> {
     }
 }
 
-impl<Item, E> Monitor<Item> for MultiMonitor<Item, E>
+impl<In, Out> Monitor<In> for MultiMonitor<In, Out>
 where
-    Item: Clone + Send + 'static,
-    E: Send + 'static,
+    In: Clone + Send + Sync,
 {
-    type Error = E;
+    type Output = Out;
 
-    fn process<'a>(
-        &'a mut self,
-        mut stream: BoxStream<'a, Item>,
-    ) -> BoxFuture<'a, Result<(), Self::Error>> {
-        let (tx, _) = broadcast::channel(self.buffer_size);
+    fn process<'a>(&'a mut self, mut stream: BoxStream<'a, In>) -> BoxStream<'a, Self::Output> {
+        let (tx, rx) = broadcast(self.buffer_size);
 
-        let monitors = self
-            .monitors
-            .iter_mut()
-            .map(|m| {
-                m.process(
-                    BroadcastStream::new(tx.subscribe())
-                        .filter_map(|r| future::ready(r.ok())) // TODO: err?
-                        .boxed(),
-                )
-            })
-            .collect::<FuturesUnordered<_>>()
-            .try_collect::<Vec<_>>()
-            .map_ok(|_| ())
-            .boxed();
-
-        try_join(
-            async move {
-                while let Some(v) = stream.next().await {
-                    if tx.send(v).is_err() {
-                        break;
-                    }
-                }
-                Ok(())
-            },
-            monitors,
+        select_all(
+            self.monitors
+                .iter_mut()
+                .map(|m| m.process(rx.clone().boxed())),
         )
-        .map_ok(|_| ())
+        .take_until(async move {
+            while let Some(v) = stream.next().await {
+                if !tx.broadcast(v).await.is_ok() {
+                    break;
+                }
+            }
+        })
         .boxed()
     }
 }
