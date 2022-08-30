@@ -24,11 +24,13 @@ use super::Monitor;
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
     pub router: Address,
+    pub bnb_limit: f64,
     pub token_pairs: Vec<(Address, Address)>,
 }
 
 pub struct PancakeSwap<T: Transport> {
     router: Router<T>,
+    bnb_limit: f64,
     pair_contracts: HashMap<(Address, Address), Pair<T>>,
 }
 
@@ -55,6 +57,7 @@ impl<T: Transport> PancakeSwap<T> {
 
         Ok(Self {
             router,
+            bnb_limit: config.bnb_limit,
             pair_contracts,
         })
     }
@@ -149,7 +152,7 @@ where
                     sw.reserves.1,
                     sw.amount_in,
                     sw.amount_out_min,
-                    3.0,
+                    self.bnb_limit,
                 ) {
                     let (t0, t1) = sw.pair.tokens();
                     println!(
