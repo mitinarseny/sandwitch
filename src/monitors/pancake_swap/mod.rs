@@ -25,12 +25,16 @@ use super::Monitor;
 pub struct PancakeSwapConfig {
     pub router: Address,
     pub bnb_limit: f64,
+    pub gas_price: f64,
+    pub gas_limit: f64,
     pub token_pairs: Vec<(Address, Address)>,
 }
 
 pub struct PancakeSwap<T: Transport> {
     router: Router<T>,
     bnb_limit: f64,
+    gas_price: f64,
+    gas_limit: f64,
     pair_contracts: HashMap<(Address, Address), Pair<T>>,
 }
 
@@ -58,6 +62,8 @@ impl<T: Transport> PancakeSwap<T> {
         Ok(Self {
             router,
             bnb_limit: config.bnb_limit,
+            gas_price: config.gas_price,
+            gas_limit: config.gas_limit,
             pair_contracts,
         })
     }
@@ -119,6 +125,33 @@ impl<T: Transport> PancakeSwap<T> {
 
         Some(tx.map(|_| sw))
     }
+
+    fn tx_fee(&self) -> f64 {
+        self.gas_price * self.gas_limit
+    }
+
+    fn calculate_amounts_in_and_out_min(
+        &self,
+        pool_a: f64,
+        pool_b: f64,
+        his_value_a: f64,
+        his_value_min_b: f64,
+        our_limit_a: f64,
+    ) -> Option<(f64, f64)> {
+        let we_buy = calculate_max_amount(pool_a, pool_b, his_value_a, his_value_min_b);
+        if we_buy <= 0.0 {
+            return None;
+        }
+        let we_buy = we_buy.min(our_limit_a);
+        let we_get = (pool_b * we_buy) / (pool_a + we_buy);
+        let (g1, g2) = (self.tx_fee(), self.tx_fee()); // TODO: gas price
+        let our_min_b =
+            (g1 + g2 + we_buy) * (pool_b - his_value_min_b) / (his_value_a + pool_a + we_buy);
+        if we_get <= our_min_b {
+            return None;
+        }
+        Some((we_buy, our_min_b))
+    }
 }
 
 struct Swap<'a, T: Transport> {
@@ -147,7 +180,7 @@ where
             .buffer_unordered(10)
             .filter_map(future::ready)
             .inspect(|sw| {
-                if let Some((we_buy, our_min_b)) = calculate_amounts_in_and_out_min(
+                if let Some((we_buy, our_min_b)) = self.calculate_amounts_in_and_out_min(
                     sw.reserves.0,
                     sw.reserves.1,
                     sw.amount_in,
@@ -184,26 +217,4 @@ fn calculate_max_amount(pool_a: f64, pool_b: f64, his_value_a: f64, his_value_mi
         .sqrt()
         - 2.0 * pool_a
         - his_value_a)
-}
-
-fn calculate_amounts_in_and_out_min(
-    pool_a: f64,
-    pool_b: f64,
-    his_value_a: f64,
-    his_value_min_b: f64,
-    our_limit_a: f64,
-) -> Option<(f64, f64)> {
-    let we_buy = calculate_max_amount(pool_a, pool_b, his_value_a, his_value_min_b);
-    if we_buy <= 0.0 {
-        return None;
-    }
-    let we_buy = we_buy.min(our_limit_a);
-    let we_get = (pool_b * we_buy) / (pool_a + we_buy);
-    let (g1, g2) = (0.0009, 0.0009); // TODO: gas price
-    let our_min_b =
-        (g1 + g2 + we_buy) * (pool_b - his_value_min_b) / (his_value_a + pool_a + we_buy);
-    if we_get <= our_min_b {
-        return None;
-    }
-    Some((we_buy, our_min_b))
 }

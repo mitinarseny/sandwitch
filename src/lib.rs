@@ -108,7 +108,9 @@ where
             .subscribe_new_pending_transactions()
             .await
             .with_context(|| "failed to subscribe to new pending transactions")?
-            // .inspect(|tx| println!("{:?}", tx))
+            .inspect_ok(|tx_hash| {
+                dbg!(tx_hash);
+            })
             .map_ok({
                 let eth = self.requesting.eth();
                 move |h| {

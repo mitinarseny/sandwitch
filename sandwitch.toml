@@ -9,6 +9,8 @@ buffer_size = 100
 [monitors.pancake_swap]
 router = "0x10ed43c718714eb63d5aa57b78b54704e256024e"
 bnb_limit = 10
+gas_price = 0.000000005
+gas_limit = 170_000
 token_pairs = [
   [
     "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
