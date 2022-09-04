@@ -58,6 +58,10 @@ impl<T: Transport> Factory<T> {
         }
     }
 
+    pub fn address(&self) -> Address {
+        self.contract.address()
+    }
+
     pub async fn get_pair(&self, (t0, t1): (Address, Address)) -> anyhow::Result<Address> {
         self.contract
             .query("getPair", (t0, t1), None, Options::default(), None)

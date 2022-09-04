@@ -3,6 +3,7 @@ use futures::{StreamExt, TryFutureExt};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::future;
+use tracing::{info, warn};
 use web3::api::Eth;
 use web3::contract::tokens::Detokenize;
 use web3::types::{Address, Transaction, H256, U256};
@@ -39,25 +40,31 @@ pub struct PancakeSwap<T: Transport> {
 }
 
 impl<T: Transport> PancakeSwap<T> {
+    #[tracing::instrument(skip_all)]
     pub async fn from_config(eth: Eth<T>, config: PancakeSwapConfig) -> anyhow::Result<Self> {
         let router = Router::new(eth.clone(), config.router).await?;
         let factory = router.factory();
+        info!(router = ?router.address(), factory = ?factory.address());
 
-        let pair_contracts = futures::stream::iter(config.token_pairs)
-            .map(move |(t0, t1)| {
-                Pair::new(eth.clone(), factory, (t0, t1)).map_ok(move |pair| ((t0, t1), pair))
-            })
-            .buffer_unordered(50)
-            .filter_map(|r| {
-                future::ready(
-                    r.inspect_err(|err| {
-                        dbg!(err);
-                    })
-                    .ok(),
-                )
-            })
-            .collect()
-            .await;
+        info!(
+            total = config.token_pairs.len(),
+            "collecting pair contracts..."
+        );
+        let pair_contracts: HashMap<(Address, Address), Pair<T>> =
+            futures::stream::iter(config.token_pairs)
+                .map(move |p| Pair::new(eth.clone(), factory, p).map_ok(move |pair| (p, pair)))
+                .buffer_unordered(50)
+                .filter_map(|r| {
+                    future::ready(
+                        r.inspect_err(|err| {
+                            warn!(%err, "failed to initialize pair, skipping...");
+                        })
+                        .ok(),
+                    )
+                })
+                .collect()
+                .await;
+        info!(collected = pair_contracts.len(), "collected pair contracts");
 
         Ok(Self {
             router,
@@ -169,7 +176,7 @@ where
     T: Transport + Send + Sync + 'static,
     <T as Transport>::Out: Send,
 {
-    type Output = Result<Vec<Transaction>, web3::contract::Error>;
+    type Output = Transaction;
 
     fn process<'a>(
         &'a mut self,
@@ -206,7 +213,7 @@ where
                     );
                 }
             })
-            .map(|_| Ok(Vec::new()))
+            .filter_map(|_| future::ready(None))
             .boxed()
     }
 }

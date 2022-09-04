@@ -9,9 +9,10 @@ mod timed;
 
 use std::future;
 use std::time::SystemTime;
+use tracing::{error, info, trace};
 
 use anyhow::Context;
-use futures::TryFutureExt;
+use futures::{try_join, TryFutureExt};
 use serde::Deserialize;
 
 use monitors::Monitor;
@@ -21,11 +22,12 @@ use web3::transports::{Http, WebSocket};
 use web3::types::{Transaction, TransactionId};
 use web3::{DuplexTransport, Transport, Web3};
 
+use anyhow::anyhow;
+
 use crate::timed::Timed;
 
-use self::monitors::MultiMonitor;
-// use self::monitors::logger::Logger;
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
+use self::monitors::MultiMonitor;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -55,14 +57,15 @@ where
     streaming: Web3<ST>,
     requesting: Web3<RT>,
     buffer_size: usize,
-    monitors:
-        Box<MultiMonitor<Timed<Transaction>, Result<Vec<Transaction>, web3::contract::Error>>>,
+    monitors: MultiMonitor<Timed<Transaction>, Transaction>,
 }
 
 impl App<WebSocket, Http> {
     pub async fn from_config(config: Config) -> anyhow::Result<Self> {
         Self::from_transports(
-            web3::transports::WebSocket::new(&config.core.wss).await?,
+            web3::transports::WebSocket::new(&config.core.wss)
+                .await
+                .inspect(|_| info!("web socket created"))?,
             web3::transports::Http::new(&config.core.http)?,
             config,
         )
@@ -79,17 +82,26 @@ where
     where
         <RT as Transport>::Out: Send,
     {
+        let streaming = Web3::new(streaming);
         let requesting = Web3::new(requesting);
+
+        let (streaming_net, requesting_net) =
+            try_join!(streaming.net().version(), requesting.net().version())?;
+
+        if streaming_net != requesting_net {
+            return Err(anyhow!(
+                "mismatching network IDs: streaming: {streaming_net}, requesting: {requesting_net}"
+            ));
+        }
+        info!(network_id = streaming_net);
+
         let pancake =
             PancakeSwap::from_config(requesting.eth(), config.monitors.pancake_swap).await?;
         Ok(Self {
-            streaming: Web3::new(streaming),
+            streaming,
             requesting,
             buffer_size: config.core.buffer_size,
-            monitors: Box::new(MultiMonitor::new(
-                config.core.buffer_size,
-                vec![Box::new(pancake)],
-            )),
+            monitors: MultiMonitor::new(config.core.buffer_size, vec![Box::new(pancake)]),
         })
     }
 }
@@ -102,38 +114,38 @@ where
     <RT as Transport>::Out: Send,
 {
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        let tx_hashes = self
+        let pending_tx_hashes = self
             .streaming
             .eth_subscribe()
             .subscribe_new_pending_transactions()
             .await
-            .with_context(|| "failed to subscribe to new pending transactions")?
-            .inspect_ok(|tx_hash| {
-                dbg!(tx_hash);
-            })
+            .with_context(|| "failed to subscribe to new pending transactions")?;
+
+        info!("subscribed to new pending transactions");
+
+        let pending_txs = pending_tx_hashes
+            .inspect_err(|err| error!(%err, "error while fetching new pending transactions"))
+            .inspect_ok(|tx_hash| trace!(?tx_hash, "new pending transaction hash"))
             .map_ok({
                 let eth = self.requesting.eth();
                 move |h| {
                     let at = SystemTime::now();
                     eth.transaction(TransactionId::Hash(h))
-                        .map_ok(move |r| r.map(move |tx| Timed::with(tx, at)))
+                        .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
+                        .map_ok(move |r| {
+                            r.inspect(|tx| trace!(?tx.hash, "pending transaction resolved"))
+                                .map(move |tx| Timed::with(tx, at))
+                        })
                 }
             })
             .try_buffer_unordered(self.buffer_size)
             .filter_map(|r| future::ready(r.unwrap_or(None)))
-            .inspect(|tx| {
-                dbg!(tx.hash);
-            })
             .boxed();
 
-        dbg!("run");
+        let mut send_txs = self.monitors.process(pending_txs);
 
-        let mut send_txs = self.monitors.process(tx_hashes);
-
-        while let Some(txs) = send_txs.next().await {
-            for tx in txs? {
-                println!("send tx: {tx:?}");
-            }
+        while let Some(tx) = send_txs.next().await {
+            info!(?tx, "send tx");
         }
         Ok(())
     }
