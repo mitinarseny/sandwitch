@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use sandwitch::*;
 
-use clap::{Parser, ValueHint};
+use clap::{value_parser, Parser, ValueHint};
 use tokio::{fs, main};
 use tracing::info;
 use tracing::metadata::LevelFilter;
@@ -17,8 +17,8 @@ struct Args {
     #[clap(default_value_os_t = PathBuf::from("./sandwitch.toml"), short, long, value_parser, value_hint = ValueHint::FilePath, value_name = "FILE")]
     config: PathBuf,
 
-    // increase verbosity
-    #[clap(short, long, action = clap::ArgAction::Count)]
+    // increase verbosity (error (deafult) -> warn -> info -> debug -> trace)
+    #[clap(short, long, action = clap::ArgAction::Count, value_parser = value_parser!(u8).range(..5))]
     verbose: u8,
 }
 
@@ -43,7 +43,16 @@ async fn main() -> anyhow::Result<()> {
         Registry::default().with(
             tracing_subscriber::fmt::layer().with_filter(
                 tracing_subscriber::EnvFilter::new("h2=info,hyper=info,tokio_util=info")
-                    .add_directive(LevelFilter::TRACE.into()),
+                    .add_directive(
+                        [
+                            LevelFilter::ERROR,
+                            LevelFilter::WARN,
+                            LevelFilter::INFO,
+                            LevelFilter::DEBUG,
+                            LevelFilter::TRACE,
+                        ][args.verbose as usize]
+                            .into(),
+                    ),
             ),
         ),
     )?;
