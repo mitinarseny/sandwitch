@@ -98,15 +98,18 @@ where
         let streaming = Web3::new(streaming);
         let requesting = Web3::new(requesting);
 
-        let (streaming_net, requesting_net) =
-            try_join!(streaming.net().version(), requesting.net().version())?;
-
-        if streaming_net != requesting_net {
-            return Err(anyhow!(
-                "mismatching network IDs: streaming: {streaming_net}, requesting: {requesting_net}"
-            ));
-        }
-        info!(network_id = streaming_net);
+        let network_id = {
+            let (streaming_net, requesting_net) =
+                try_join!(streaming.net().version(), requesting.net().version())?;
+            if streaming_net != requesting_net {
+                return Err(anyhow!(
+                    "mismatching network IDs: streaming: {streaming_net}, requesting: {requesting_net}"
+                ));
+            }
+            streaming_net
+        };
+        info!(network_id);
+        register_counter!("sandwitch_info", "network_id" => network_id).absolute(1);
 
         let pancake =
             PancakeSwap::from_config(requesting.eth(), config.monitors.pancake_swap).await?;
