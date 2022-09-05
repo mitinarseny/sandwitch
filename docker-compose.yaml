@@ -1,6 +1,8 @@
 services:
   sandwitch:
     build: .
+    command:
+      - '-vv' # info log level
     healthcheck:
       disable: true
 

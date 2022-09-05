@@ -2,6 +2,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
+use metrics::register_counter;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use sandwitch::*;
 
@@ -61,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
     PrometheusBuilder::new()
         .install()
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
+    register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
     info!("initializing");
     let mut app = App::from_config(config).await?;
