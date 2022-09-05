@@ -1,0 +1,8 @@
+apiVersion: 1
+
+providers:
+  - name: 'sandwitch'
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards

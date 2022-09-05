@@ -7,27 +7,24 @@
 mod monitors;
 mod timed;
 
-use std::future;
-use std::time::SystemTime;
-use tracing::{error, info, trace};
-
-use anyhow::Context;
-use futures::{try_join, TryFutureExt};
-use serde::Deserialize;
-
-use monitors::Monitor;
-
-use futures::stream::{StreamExt, TryStreamExt};
-use web3::transports::{Http, WebSocket};
-use web3::types::{Transaction, TransactionId};
-use web3::{DuplexTransport, Transport, Web3};
-
-use anyhow::anyhow;
+use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
+use self::monitors::MultiMonitor;
 
 use crate::timed::Timed;
 
-use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-use self::monitors::MultiMonitor;
+use anyhow::anyhow;
+use anyhow::Context;
+use futures::stream::{StreamExt, TryStreamExt};
+use futures::{try_join, TryFutureExt};
+use metrics::{register_counter, Counter};
+use monitors::Monitor;
+use serde::Deserialize;
+use std::future;
+use std::time::SystemTime;
+use tracing::{error, info, trace};
+use web3::transports::{Http, WebSocket};
+use web3::types::{Transaction, TransactionId};
+use web3::{DuplexTransport, Transport, Web3};
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -58,6 +55,22 @@ where
     requesting: Web3<RT>,
     buffer_size: usize,
     monitors: MultiMonitor<Timed<Transaction>, Transaction>,
+
+    metrics: Metrics,
+}
+
+struct Metrics {
+    seen_txs: Counter,
+    resolved_txs: Counter,
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            seen_txs: register_counter!("sandwitch_seen_txs"),
+            resolved_txs: register_counter!("sandwitch_resolved_txs"),
+        }
+    }
 }
 
 impl App<WebSocket, Http> {
@@ -102,6 +115,7 @@ where
             requesting,
             buffer_size: config.core.buffer_size,
             monitors: MultiMonitor::new(config.core.buffer_size, vec![Box::new(pancake)]),
+            metrics: Metrics::new(),
         })
     }
 }
@@ -125,16 +139,23 @@ where
 
         let pending_txs = pending_tx_hashes
             .inspect_err(|err| error!(%err, "error while fetching new pending transactions"))
-            .inspect_ok(|tx_hash| trace!(?tx_hash, "new pending transaction hash"))
             .map_ok({
                 let eth = self.requesting.eth();
-                move |h| {
+                let metrics = &self.metrics;
+                move |tx_hash| {
+                    metrics.seen_txs.increment(1);
+                    trace!(?tx_hash, "new pending transaction hash");
+
                     let at = SystemTime::now();
-                    eth.transaction(TransactionId::Hash(h))
+                    eth.transaction(TransactionId::Hash(tx_hash))
                         .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
                         .map_ok(move |r| {
-                            r.inspect(|tx| trace!(?tx.hash, "pending transaction resolved"))
-                                .map(move |tx| Timed::with(tx, at))
+                            r.map(move |tx| {
+                                metrics.resolved_txs.increment(1);
+                                trace!(?tx.hash, "pending transaction resolved");
+
+                                Timed::with(tx, at)
+                            })
                         })
                 }
             })

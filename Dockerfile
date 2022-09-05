@@ -22,4 +22,9 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
 
 COPY --from=builder /app/target/release/sandwitch /usr/local/bin/
 COPY ./sandwitch.toml /etc/sandwitch/
+
 ENTRYPOINT ["/usr/local/bin/sandwitch", "--config", "/etc/sandwitch/sandwitch.toml"]
+
+EXPOSE 9000/tcp
+HEALTHCHECK --interval=15s --timeout=5s \
+  CMD curl -sf http://127.0.0.1:9000/metrics || exit 1

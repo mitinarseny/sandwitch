@@ -2,9 +2,10 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use sandwitch::*;
 
-use clap::{value_parser, Parser, ValueHint};
+use clap::{Parser, ValueHint};
 use tokio::{fs, main};
 use tracing::info;
 use tracing::metadata::LevelFilter;
@@ -17,8 +18,8 @@ struct Args {
     #[clap(default_value_os_t = PathBuf::from("./sandwitch.toml"), short, long, value_parser, value_hint = ValueHint::FilePath, value_name = "FILE")]
     config: PathBuf,
 
-    // increase verbosity (error (deafult) -> warn -> info -> debug -> trace)
-    #[clap(short, long, action = clap::ArgAction::Count, value_parser = value_parser!(u8).range(..5))]
+    /// Increase verbosity (error (deafult) -> warn -> info -> debug -> trace)
+    #[clap(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 }
 
@@ -50,12 +51,16 @@ async fn main() -> anyhow::Result<()> {
                             LevelFilter::INFO,
                             LevelFilter::DEBUG,
                             LevelFilter::TRACE,
-                        ][args.verbose as usize]
+                        ][(args.verbose % 5) as usize]
                             .into(),
                     ),
             ),
         ),
     )?;
+
+    PrometheusBuilder::new()
+        .install()
+        .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
 
     info!("initializing");
     let mut app = App::from_config(config).await?;

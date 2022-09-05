@@ -10,12 +10,9 @@ futures = "0.3"
 hex = "0.4"
 itertools = "0.10"
 lazy_static = "1.4"
+metrics = "0.20"
 toml = "0.5"
 tracing = "0.1"
-
-[dependencies.tracing-subscriber]
-version = "0.3"
-features = ["env-filter"]
 
 [dependencies.clap]
 version = "3.2"
@@ -25,6 +22,11 @@ features = ["derive"]
 version = "1"
 features = ["derive"]
 
+[dependencies.metrics-exporter-prometheus]
+version = "0.11"
+default-features = false
+features = ["http-listener"]
+
 [dependencies.tokio]
 version = "1"
 features = ["full"]
@@ -32,6 +34,10 @@ features = ["full"]
 [dependencies.tokio-stream]
 version = "0.1"
 features = ["sync"]
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["env-filter"]
 
 [dependencies.web3]
 version = "0.18"

@@ -1,5 +1,6 @@
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryFutureExt};
+use metrics::{register_counter, Counter};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::future;
@@ -37,6 +38,23 @@ pub struct PancakeSwap<T: Transport> {
     gas_price: f64,
     gas_limit: f64,
     pair_contracts: HashMap<(Address, Address), Pair<T>>,
+    metrics: Metrics,
+}
+
+struct Metrics {
+    to_router: Counter,
+    swap_exact_eth_for_tokens: Counter,
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            to_router: register_counter!("sandwitch_pancake_swap_to_router"),
+            swap_exact_eth_for_tokens: register_counter!(
+                "sandwitch_pancake_swap_swap_exact_eth_for_tokens"
+            ),
+        }
+    }
 }
 
 impl<T: Transport> PancakeSwap<T> {
@@ -72,6 +90,7 @@ impl<T: Transport> PancakeSwap<T> {
             gas_price: config.gas_price,
             gas_limit: config.gas_limit,
             pair_contracts,
+            metrics: Metrics::new(),
         })
     }
 }
