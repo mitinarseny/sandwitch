@@ -11,11 +11,14 @@ pub trait Monitor<Input> {
 
 pub struct MultiMonitor<In, Out> {
     buffer_size: usize,
-    monitors: Vec<Box<dyn Monitor<In, Output = Out>>>,
+    monitors: Vec<Box<dyn Monitor<In, Output = Out> + Send>>,
 }
 
 impl<In, Out> MultiMonitor<In, Out> {
-    pub fn new(buffer_size: usize, monitors: Vec<Box<dyn Monitor<In, Output = Out>>>) -> Self {
+    pub fn new(
+        buffer_size: usize,
+        monitors: Vec<Box<dyn Monitor<In, Output = Out> + Send>>,
+    ) -> Self {
         Self {
             buffer_size,
             monitors,

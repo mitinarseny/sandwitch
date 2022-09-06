@@ -71,7 +71,7 @@ impl<T: Transport> PancakeSwap<T> {
         let pair_contracts: HashMap<(Address, Address), Pair<T>> =
             futures::stream::iter(config.token_pairs)
                 .map(move |p| Pair::new(eth.clone(), factory, p).map_ok(move |pair| (p, pair)))
-                .buffer_unordered(50)
+                .buffer_unordered(5)
                 .filter_map(|r| {
                     future::ready(
                         r.inspect_err(|err| {

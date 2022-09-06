@@ -1,12 +1,15 @@
-#![feature(result_option_inspect)]
+#![feature(result_option_inspect, result_flattening)]
 use std::path::PathBuf;
 
 use anyhow::Context;
+use futures::FutureExt;
 use metrics::register_counter;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use sandwitch::*;
 
 use clap::{Parser, ValueHint};
+use sandwitch::shutdown::{CancelFutureExt, CancelToken, Cancelled};
+use tokio::signal::ctrl_c;
 use tokio::{fs, main};
 use tracing::info;
 use tracing::metadata::LevelFilter;
@@ -52,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
                             LevelFilter::INFO,
                             LevelFilter::DEBUG,
                             LevelFilter::TRACE,
-                        ][(args.verbose % 5) as usize]
+                        ][(args.verbose.min(4)) as usize]
                             .into(),
                     ),
             ),
@@ -64,9 +67,29 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
-    info!("initializing");
-    let mut app = App::from_config(config).await?;
+    let (cancel, close) = CancelToken::new();
 
-    info!("run");
-    app.run().await
+    let app_handle = tokio::spawn(async move {
+        info!("initializing");
+        let mut app = App::from_config(config)
+            .boxed()
+            .with_cancel(cancel.clone())
+            .await
+            .map_err(Into::into)
+            .flatten()?;
+
+        info!("run");
+        app.run(cancel).await
+    });
+
+    ctrl_c()
+        .await
+        .expect("unable to listen for shutdown signal");
+    info!("shutting down...");
+    drop(close);
+
+    match app_handle.await.map_err(Into::into).flatten() {
+        Err(err) if err.is::<Cancelled>() => Ok(()),
+        v => v,
+    }
 }

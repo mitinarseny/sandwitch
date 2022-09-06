@@ -1,6 +1,11 @@
-FROM rustlang/rust:nightly AS chef
-RUN cargo install cargo-chef
+FROM rustlang/rust:nightly AS env
+ARG RUST_TOOLCHAIN=nightly-2022-09-01
+RUN rustup toolchain install --profile minimal ${RUST_TOOLCHAIN}
 WORKDIR /app
+
+
+FROM env AS chef
+RUN cargo install cargo-chef
 
 
 FROM chef AS planner

@@ -5,25 +5,26 @@
     result_flattening
 )]
 mod monitors;
+pub mod shutdown;
 mod timed;
 
+use crate::shutdown::CancelFutureExt;
+
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-use self::monitors::MultiMonitor;
+use self::monitors::{Monitor, MultiMonitor};
+use self::shutdown::CancelToken;
+use self::timed::Timed;
 
-use crate::timed::Timed;
-
-use anyhow::anyhow;
-use anyhow::Context;
-use futures::stream::{StreamExt, TryStreamExt};
-use futures::{try_join, TryFutureExt};
+use anyhow::{anyhow, Context};
+use futures::{stream::StreamExt, try_join, TryFutureExt};
+use futures::{FutureExt, Stream};
 use metrics::{register_counter, Counter};
-use monitors::Monitor;
 use serde::Deserialize;
 use std::future;
 use std::time::SystemTime;
 use tracing::{error, info, trace};
 use web3::transports::{Http, WebSocket};
-use web3::types::{Transaction, TransactionId};
+use web3::types::{Transaction, TransactionId, H256};
 use web3::{DuplexTransport, Transport, Web3};
 
 #[derive(Deserialize, Debug)]
@@ -59,6 +60,7 @@ where
     metrics: Metrics,
 }
 
+#[derive(Clone)]
 struct Metrics {
     seen_txs: Counter,
     resolved_txs: Counter,
@@ -126,49 +128,76 @@ where
 impl<ST, RT> App<ST, RT>
 where
     ST: DuplexTransport + Send + Sync,
+    <ST as Transport>::Out: Send,
     <ST as DuplexTransport>::NotificationStream: Send,
     RT: Transport + Send,
     <RT as Transport>::Out: Send,
 {
-    pub async fn run(&mut self) -> anyhow::Result<()> {
+    pub async fn run(&mut self, cancel: CancelToken) -> anyhow::Result<()> {
         let pending_tx_hashes = self
             .streaming
             .eth_subscribe()
             .subscribe_new_pending_transactions()
-            .await
+            .boxed()
+            .with_cancel(cancel)
+            .await?
             .with_context(|| "failed to subscribe to new pending transactions")?;
 
         info!("subscribed to new pending transactions");
 
-        let pending_txs = pending_tx_hashes
-            .inspect_err(|err| error!(%err, "error while fetching new pending transactions"))
-            .map_ok({
+        self.monitor_tx_hashes(pending_tx_hashes.filter_map(|r| {
+            future::ready(
+                r.inspect_err(|err| error!(%err, "error while fetching new pending transaction"))
+                    .ok(),
+            )
+        }))
+        .await
+    }
+
+    async fn monitor_tx_hashes(
+        &mut self,
+        tx_hashes: impl Stream<Item = H256> + Send + '_,
+    ) -> anyhow::Result<()> {
+        let txs = tx_hashes
+            .map({
                 let eth = self.requesting.eth();
-                let metrics = &self.metrics;
+                let Metrics {
+                    seen_txs,
+                    resolved_txs,
+                } = self.metrics.clone();
                 move |tx_hash| {
-                    metrics.seen_txs.increment(1);
-                    trace!(?tx_hash, "new pending transaction hash");
+                    seen_txs.increment(1);
+                    trace!(?tx_hash, "new transaction hash");
 
                     let at = SystemTime::now();
                     eth.transaction(TransactionId::Hash(tx_hash))
                         .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
-                        .map_ok(move |r| {
-                            r.map(move |tx| {
-                                metrics.resolved_txs.increment(1);
-                                trace!(?tx.hash, "pending transaction resolved");
+                        .map_ok({
+                            let resolved_txs = resolved_txs.clone();
+                            move |r| {
+                                r.map(move |tx| {
+                                    resolved_txs.increment(1);
+                                    trace!(?tx.hash, "transaction resolved");
 
-                                Timed::with(tx, at)
-                            })
+                                    Timed::with(tx, at)
+                                })
+                            }
                         })
                 }
             })
-            .try_buffer_unordered(self.buffer_size)
-            .filter_map(|r| future::ready(r.unwrap_or(None)))
-            .boxed();
+            .buffer_unordered(self.buffer_size)
+            .filter_map(|r| future::ready(r.unwrap_or(None)));
 
-        let mut send_txs = self.monitors.process(pending_txs);
+        self.monitor_txs(txs).await
+    }
 
-        while let Some(tx) = send_txs.next().await {
+    async fn monitor_txs(
+        &mut self,
+        txs: impl Stream<Item = Timed<Transaction>> + Send + '_,
+    ) -> anyhow::Result<()> {
+        let mut txs = self.monitors.process(txs.boxed());
+
+        while let Some(tx) = txs.next().await {
             info!(?tx, "send tx");
         }
         Ok(())
