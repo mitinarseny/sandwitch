@@ -4,24 +4,25 @@
     future_join,
     result_flattening
 )]
+pub mod abort;
 mod monitors;
-pub mod shutdown;
 mod timed;
-
-use crate::shutdown::CancelFutureExt;
 
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
 use self::monitors::{Monitor, MultiMonitor};
-use self::shutdown::CancelToken;
 use self::timed::Timed;
 
+use self::abort::FutureExt as AbortFutureExt;
+
 use anyhow::{anyhow, Context};
+use futures::future::Aborted;
 use futures::{stream::StreamExt, try_join, TryFutureExt};
 use futures::{FutureExt, Stream};
 use metrics::{register_counter, Counter};
 use serde::Deserialize;
 use std::future;
 use std::time::SystemTime;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace};
 use web3::transports::{Http, WebSocket};
 use web3::types::{Transaction, TransactionId, H256};
@@ -133,24 +134,32 @@ where
     RT: Transport + Send,
     <RT as Transport>::Out: Send,
 {
-    pub async fn run(&mut self, cancel: CancelToken) -> anyhow::Result<()> {
+    pub async fn run(&mut self, cancel_token: CancellationToken) -> anyhow::Result<()> {
         let pending_tx_hashes = self
             .streaming
             .eth_subscribe()
             .subscribe_new_pending_transactions()
-            .boxed()
-            .with_cancel(cancel)
-            .await?
+            .err_into::<anyhow::Error>()
+            .with_unpin_abort_unpin(cancel_token.cancelled().map(|_| Aborted))
+            .err_into()
+            .map(Result::flatten)
+            .await
             .with_context(|| "failed to subscribe to new pending transactions")?;
 
         info!("subscribed to new pending transactions");
 
-        self.monitor_tx_hashes(pending_tx_hashes.filter_map(|r| {
-            future::ready(
-                r.inspect_err(|err| error!(%err, "error while fetching new pending transaction"))
-                    .ok(),
-            )
-        }))
+        self.monitor_tx_hashes(
+            pending_tx_hashes
+                .filter_map(|r| {
+                    future::ready(
+                        r.inspect_err(
+                            |err| error!(%err, "error while fetching new pending transaction"),
+                        )
+                        .ok(),
+                    )
+                })
+                .take_until(cancel_token.cancelled()),
+        )
         .await
     }
 

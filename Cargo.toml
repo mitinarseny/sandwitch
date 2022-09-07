@@ -11,6 +11,7 @@ hex = "0.4"
 itertools = "0.10"
 lazy_static = "1.4"
 metrics = "0.20"
+tokio-util = "0.7"
 toml = "0.5"
 tracing = "0.1"
 

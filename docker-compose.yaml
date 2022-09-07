@@ -3,6 +3,8 @@ services:
     build: .
     command:
       - '-vv' # info log level
+    stop_signal: SIGINT
+    stop_grace_period: '30s'
     healthcheck:
       disable: true
 

@@ -2,15 +2,17 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use futures::FutureExt;
+use futures::{FutureExt, TryFutureExt};
 use metrics::register_counter;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use sandwitch::*;
 
 use clap::{Parser, ValueHint};
-use sandwitch::shutdown::{CancelFutureExt, CancelToken, Cancelled};
+use sandwitch::abort::{Aborted, FutureExt as AbortFutureExt};
+// use sandwitch::shutdown::{CancelToken, Cancelled, FutureExt as CancelFutureExt};
 use tokio::signal::ctrl_c;
 use tokio::{fs, main};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::prelude::*;
@@ -67,29 +69,31 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
-    let (cancel, close) = CancelToken::new();
+    let cancel_token = CancellationToken::new();
 
-    let app_handle = tokio::spawn(async move {
-        info!("initializing");
-        let mut app = App::from_config(config)
-            .boxed()
-            .with_cancel(cancel.clone())
-            .await
-            .map_err(Into::into)
-            .flatten()?;
+    let app_handle = tokio::spawn({
+        let cancel_token = cancel_token.clone();
+        async move {
+            info!("initializing");
+            let mut app = App::from_config(config)
+                .with_unpin_abort_unpin(cancel_token.cancelled().map(|_| Aborted))
+                .err_into()
+                .map(Result::flatten)
+                .await?;
 
-        info!("run");
-        app.run(cancel).await
+            info!("run");
+            app.run(cancel_token).await
+        }
     });
 
     ctrl_c()
         .await
         .expect("unable to listen for shutdown signal");
     info!("shutting down...");
-    drop(close);
+    cancel_token.cancel();
 
     match app_handle.await.map_err(Into::into).flatten() {
-        Err(err) if err.is::<Cancelled>() => Ok(()),
+        Err(err) if err.is::<Aborted>() => Ok(()),
         v => v,
     }
 }
