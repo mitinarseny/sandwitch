@@ -1,35 +1,24 @@
-FROM rustlang/rust:nightly AS env
+FROM rust AS env
 ARG RUST_TOOLCHAIN=nightly-2022-09-01
-RUN rustup toolchain install --profile minimal ${RUST_TOOLCHAIN}
+RUN rustup toolchain install \
+  --allow-downgrade \
+  --no-self-update \
+  --profile minimal \
+  ${RUST_TOOLCHAIN}
+
+FROM env AS builder
 WORKDIR /app
-
-
-FROM env AS chef
-RUN cargo install cargo-chef
-
-
-FROM chef AS planner
-COPY ./ ./
-RUN cargo chef prepare --recipe-path recipe.json
-
-
-FROM chef AS builder
-COPY --from=planner /app/recipe.json ./
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo init --quiet
+# build dependencies
+COPY ./Cargo.toml ./Cargo.lock ./rust-toolchain.toml ./
+RUN cargo build --release
+# build binaries
 COPY ./ ./
 RUN cargo build --release --bin sandwitch
 
-
-FROM debian:buster-slim
-RUN apt-get update && apt-get install --yes --no-install-recommends \
-  openssl \
-  ca-certificates
-
+FROM gcr.io/distroless/cc
 COPY --from=builder /app/target/release/sandwitch /usr/local/bin/
-COPY ./sandwitch.toml /etc/sandwitch/
-
 ENTRYPOINT ["/usr/local/bin/sandwitch", "--config", "/etc/sandwitch/sandwitch.toml"]
-
 EXPOSE 9000/tcp
 HEALTHCHECK --interval=15s --timeout=5s \
   CMD curl -sf http://127.0.0.1:9000/metrics || exit 1

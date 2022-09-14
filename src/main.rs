@@ -1,8 +1,9 @@
 #![feature(result_option_inspect, result_flattening)]
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
-use futures::{FutureExt, TryFutureExt};
+use futures::FutureExt;
 use metrics::register_counter;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use sandwitch::*;
@@ -49,17 +50,19 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(
         Registry::default().with(
             tracing_subscriber::fmt::layer().with_filter(
-                tracing_subscriber::EnvFilter::new("h2=info,hyper=info,tokio_util=info")
-                    .add_directive(
-                        [
-                            LevelFilter::ERROR,
-                            LevelFilter::WARN,
-                            LevelFilter::INFO,
-                            LevelFilter::DEBUG,
-                            LevelFilter::TRACE,
-                        ][(args.verbose.min(4)) as usize]
-                            .into(),
-                    ),
+                tracing_subscriber::EnvFilter::new(
+                    "h2=info,hyper=info,tokio_util=info,ethers_providers=info",
+                )
+                .add_directive(
+                    [
+                        LevelFilter::ERROR,
+                        LevelFilter::WARN,
+                        LevelFilter::INFO,
+                        LevelFilter::DEBUG,
+                        LevelFilter::TRACE,
+                    ][(args.verbose.min(4)) as usize]
+                        .into(),
+                ),
             ),
         ),
     )?;
@@ -77,12 +80,15 @@ async fn main() -> anyhow::Result<()> {
             info!("initializing");
             let mut app = App::from_config(config)
                 .with_unpin_abort_unpin(cancel_token.cancelled().map(|_| Aborted))
-                .err_into()
-                .map(Result::flatten)
-                .await?;
+                .await??;
 
             info!("run");
-            app.run(cancel_token).await
+            app.run(cancel_token).await?;
+
+            // dirty fix: wait for websockets to unsubscribe
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            Ok::<_, anyhow::Error>(())
         }
     });
 
@@ -92,8 +98,9 @@ async fn main() -> anyhow::Result<()> {
     info!("shutting down...");
     cancel_token.cancel();
 
-    match app_handle.await.map_err(Into::into).flatten() {
+    match app_handle.await? {
         Err(err) if err.is::<Aborted>() => Ok(()),
         v => v,
     }
+    .inspect(|_| info!("shutdown succeeded"))
 }

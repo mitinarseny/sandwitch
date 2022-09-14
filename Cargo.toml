@@ -19,14 +19,22 @@ tracing = "0.1"
 version = "3.2"
 features = ["derive"]
 
-[dependencies.serde]
-version = "1"
-features = ["derive"]
+[dependencies.ethers]
+version = "0.17"
+features = [
+	"abigen",
+	"rustls",
+	"ws",
+]
 
 [dependencies.metrics-exporter-prometheus]
 version = "0.11"
 default-features = false
 features = ["http-listener"]
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
 
 [dependencies.tokio]
 version = "1"
@@ -40,12 +48,17 @@ features = ["sync"]
 version = "0.3"
 features = ["env-filter"]
 
-[dependencies.web3]
-version = "0.18"
-default-features = false
-features = [
-	"http",
-	"http-rustls-tls",
-	"ws-tokio",
-	"ws-tls-tokio",
-]
+[dependencies.url]
+version = "2.2"
+features = ["serde"]
+
+
+[build-dependencies.ethers-contract]
+version = "0.17"
+features = ["abigen"]
+# features = [
+# 	"http",
+# 	"http-rustls-tls",
+# 	"ws-tokio",
+# 	"ws-tls-tokio",
+# ]

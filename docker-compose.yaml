@@ -5,8 +5,10 @@ services:
       - '-vv' # info log level
     stop_signal: SIGINT
     stop_grace_period: '30s'
+    volumes:
+      - './sandwitch.toml:/etc/sandwitch/sandwitch.toml:ro'
     healthcheck:
-      disable: true
+      disable: true # metrics are collected by prometheus
 
   prometheus:
     image: 'prom/prometheus:latest'
@@ -15,14 +17,14 @@ services:
       - '--log.level=warn'
     volumes:
       - './prometheus.yml:/etc/prometheus/prometheus.yml:ro'
-    ports:
-      - '9090:9090/tcp'
     depends_on:
       - sandwitch
     restart: unless-stopped
 
   grafana:
     image: 'grafana/grafana-oss:latest'
+    environment:
+      PROMETHEUS_ADDR: 'prometheus:9090'
     volumes:
       - './grafana.ini:/etc/grafana/grafana.ini:ro'
       - './grafana/datasources/:/etc/grafana/provisioning/datasources/:ro'

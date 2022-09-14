@@ -1,32 +1,45 @@
 use std::fmt::Display;
+use std::ops::Deref;
+use std::sync::Arc;
 
+use ethers::prelude::{Address, ContractError, Middleware};
 use futures::try_join;
-use web3::api::Eth;
-use web3::types::Address;
-use web3::Transport;
 
-use super::contracts;
+use crate::contracts::pancake_token::PancakeToken;
 
 #[derive(Clone)]
-pub struct Token<T: Transport> {
-    contract: contracts::Token<T>,
+pub struct Token<M: Middleware> {
+    contract: PancakeToken<M>,
     name: String,
     decimals: u8,
 }
 
-impl<T: Transport> Token<T> {
-    pub async fn new(eth: Eth<T>, address: Address) -> anyhow::Result<Self> {
-        let contract = contracts::Token::new(eth, address);
-        let (name, decimals) = try_join!(contract.name(), contract.decimals())?;
+impl<M: Middleware> Deref for Token<M> {
+    type Target = PancakeToken<M>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.contract
+    }
+}
+
+impl<M: Middleware> Token<M> {
+    pub async fn new(
+        client: Arc<M>,
+        address: impl Into<Address>,
+    ) -> Result<Self, ContractError<M>> {
+        Self::from_contract(PancakeToken::new(address, client)).await
+    }
+
+    pub async fn from_contract(contract: PancakeToken<M>) -> Result<Self, ContractError<M>> {
+        let (name, decimals) = {
+            let (name, decimals) = (contract.name(), contract.decimals());
+            try_join!(name.call(), decimals.call())
+        }?;
         Ok(Self {
             contract,
             name,
             decimals,
         })
-    }
-
-    pub fn address(&self) -> Address {
-        self.contract.address()
     }
 
     pub fn name(&self) -> &str {
@@ -38,71 +51,20 @@ impl<T: Transport> Token<T> {
     }
 }
 
-impl<T: Transport> PartialEq for Token<T> {
+impl<M: Middleware> PartialEq for Token<M> {
     fn eq(&self, other: &Self) -> bool {
         self.address().eq(&other.address())
     }
 }
 
-impl<T: Transport> PartialOrd for Token<T> {
+impl<M: Middleware> PartialOrd for Token<M> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.address().partial_cmp(&other.address())
     }
 }
 
-impl<T: Transport> Display for Token<T> {
+impl<M: Middleware> Display for Token<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} ({})", self.name(), self.address())
     }
 }
-
-// #[derive(Clone)]
-// pub struct Token {
-//     address: Address,
-//     name: String,
-//     decimals: u8,
-// }
-//
-// impl Token {
-//     pub async fn from_address<T: Transport>(
-//         eth: Eth<T>,
-//         address: Address,
-//     ) -> web3::contract::Result<Self> {
-//         let c = Contract::new(eth, address.clone(), contracts::token::TOKEN.clone());
-//         let (decimals, name) = try_join!(
-//             c.query("decimals", (), None, Options::default(), None)
-//                 .map_ok(|(d,)| d),
-//             c.query("name", (), None, Options::default(), None)
-//                 .map_ok(|(s,)| s)
-//         )?;
-//         Ok(Self {
-//             address,
-//             name,
-//             decimals,
-//         })
-//     }
-//
-//     pub fn address(&self) -> Address {
-//         self.address
-//     }
-// }
-//
-// impl Hash for Token {
-//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-//         self.address.hash(state)
-//     }
-// }
-//
-// impl PartialEq for Token {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.address.eq(&other.address)
-//     }
-// }
-//
-// impl PartialOrd for Token {
-//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//         self.address.partial_cmp(&other.address)
-//     }
-// }
-//
-// impl Eq for Token {}

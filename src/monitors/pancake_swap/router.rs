@@ -1,28 +1,36 @@
-use web3::api::Eth;
-use web3::types::Address;
-use web3::Transport;
+use std::ops::Deref;
+use std::sync::Arc;
 
-use super::contracts;
-use super::factory::Factory;
+use ethers::prelude::{Address, ContractError, Middleware};
+
+use crate::contracts::pancake_factory_v2::PancakeFactoryV2;
+use crate::contracts::pancake_router_v2::PancakeRouterV2;
 
 #[derive(Clone)]
-pub struct Router<T: Transport> {
-    contract: contracts::Router<T>,
-    factory: Factory<T>,
+pub struct Router<M: Middleware> {
+    contract: PancakeRouterV2<M>,
+    factory: PancakeFactoryV2<M>,
 }
 
-impl<T: Transport> Router<T> {
-    pub async fn new(eth: Eth<T>, address: Address) -> web3::contract::Result<Self> {
-        let contract = contracts::Router::new(eth.clone(), address);
-        let factory = Factory::new(eth, contract.factory().await?);
+impl<M: Middleware> Deref for Router<M> {
+    type Target = PancakeRouterV2<M>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.contract
+    }
+}
+
+impl<M: Middleware> Router<M> {
+    pub async fn new(client: Arc<M>, address: Address) -> Result<Self, ContractError<M>>
+    where
+        M: Clone,
+    {
+        let contract = PancakeRouterV2::new(address, client.clone());
+        let factory = PancakeFactoryV2::new(contract.factory().call().await?, client);
         Ok(Self { contract, factory })
     }
 
-    pub fn address(&self) -> Address {
-        self.contract.address()
-    }
-
-    pub fn factory(&self) -> &Factory<T> {
+    pub fn factory(&self) -> &PancakeFactoryV2<M> {
         &self.factory
     }
 }

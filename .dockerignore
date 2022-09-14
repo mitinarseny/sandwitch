@@ -1,3 +1,10 @@
-target/
+.dockerignore
 Dockerfile*
 docker-compose*.yaml
+.git/
+README.md
+sandwitch.toml
+target/
+prometheus.yml
+grafana.ini
+grafana/

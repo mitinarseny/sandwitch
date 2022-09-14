@@ -1,51 +1,64 @@
 use std::fmt::Display;
+use std::ops::Deref;
+use std::sync::Arc;
 
-use futures::try_join;
-use web3::api::Eth;
-use web3::types::Address;
-use web3::Transport;
+use crate::contracts::pancake_factory_v2::PancakeFactoryV2;
+use crate::contracts::pancake_pair::PancakePair;
 
-use super::contracts;
-use super::factory::Factory;
 use super::token::Token;
+use ethers::prelude::{Address, ContractError, Middleware};
+use futures::try_join;
 
 #[derive(Clone)]
-pub struct Pair<T: Transport> {
-    contract: contracts::Pair<T>,
-    tokens: (Token<T>, Token<T>),
+pub struct Pair<M: Middleware> {
+    contract: PancakePair<M>,
+    tokens: (Token<M>, Token<M>),
+    inverse_order: bool,
 }
 
-impl<T: Transport> Pair<T> {
+impl<M: Middleware> Deref for Pair<M> {
+    type Target = PancakePair<M>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.contract
+    }
+}
+
+impl<M: Middleware> Pair<M> {
     pub async fn new(
-        eth: Eth<T>,
-        factory: &Factory<T>,
+        client: Arc<M>,
+        factory: &PancakeFactoryV2<M>,
         (t0, t1): (Address, Address),
-    ) -> anyhow::Result<Self> {
-        let (t0, t1, pair) = try_join!(
-            Token::new(eth.clone(), t0),
-            Token::new(eth.clone(), t1),
-            factory.get_pair((t0, t1)),
-        )?;
+    ) -> Result<Self, ContractError<M>>
+    where
+        M: Clone,
+    {
+        let (t0, t1, pair) = {
+            let pair = factory.get_pair(t0, t1);
+            try_join!(
+                Token::new(client.clone(), t0),
+                Token::new(client.clone(), t1),
+                pair.call(),
+            )
+        }?;
         Ok(Self {
-            contract: contracts::Pair::new(eth, pair),
+            contract: PancakePair::new(pair, client),
+            inverse_order: t0 > t1,
             tokens: (t0, t1),
         })
     }
 
-    pub fn address(&self) -> Address {
-        self.contract.address()
-    }
-
-    pub fn tokens(&self) -> &(Token<T>, Token<T>) {
+    pub fn tokens(&self) -> &(Token<M>, Token<M>) {
         &self.tokens
     }
 
-    pub async fn get_reserves(&self) -> web3::contract::Result<(f64, f64, u32)> {
+    pub async fn get_reserves(&self) -> Result<(f64, f64, u32), ContractError<M>> {
         self.contract
             .get_reserves()
+            .call()
             .await
             .map(|(mut r0, mut r1, deadline)| {
-                if self.inverse_order() {
+                if self.inverse_order {
                     (r0, r1) = (r1, r0);
                 }
                 (
@@ -55,13 +68,9 @@ impl<T: Transport> Pair<T> {
                 )
             })
     }
-
-    fn inverse_order(&self) -> bool {
-        self.tokens.0 > self.tokens.1
-    }
 }
 
-impl<T: Transport> Display for Pair<T> {
+impl<M: Middleware> Display for Pair<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

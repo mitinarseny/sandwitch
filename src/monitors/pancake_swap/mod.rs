@@ -1,25 +1,24 @@
+use ethers::abi::AbiDecode;
+use ethers::contract::EthCall;
+use ethers::prelude::*;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryFutureExt};
 use metrics::{register_counter, Counter};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::future;
+use std::sync::Arc;
 use tracing::{info, warn};
-use web3::api::Eth;
-use web3::contract::tokens::Detokenize;
-use web3::types::{Address, Transaction, H256, U256};
-use web3::Transport;
 
-mod contracts;
-mod factory;
 mod pair;
 mod router;
 mod token;
 
-use crate::timed::Timed;
-
 use self::pair::Pair;
 use self::router::Router;
+
+use crate::contracts::pancake_router_v2::SwapExactETHForTokensCall;
+use crate::timed::Timed;
 
 use super::Monitor;
 
@@ -32,18 +31,19 @@ pub struct PancakeSwapConfig {
     pub token_pairs: Vec<(Address, Address)>,
 }
 
-pub struct PancakeSwap<T: Transport> {
-    router: Router<T>,
+pub struct PancakeSwap<M: Middleware> {
+    router: Router<M>,
     bnb_limit: f64,
     gas_price: f64,
     gas_limit: f64,
-    pair_contracts: HashMap<(Address, Address), Pair<T>>,
+    pair_contracts: HashMap<(Address, Address), Pair<M>>,
     metrics: Metrics,
 }
 
 struct Metrics {
     to_router: Counter,
     swap_exact_eth_for_tokens: Counter,
+    swap_exact_eth_for_tokens2: Counter,
 }
 
 impl Metrics {
@@ -51,16 +51,29 @@ impl Metrics {
         Self {
             to_router: register_counter!("sandwitch_pancake_swap_to_router"),
             swap_exact_eth_for_tokens: register_counter!(
-                "sandwitch_pancake_swap_swap_exact_eth_for_tokens"
+                "sandwitch_pancake_swap_swapExactETHForTokens",
+            ),
+            swap_exact_eth_for_tokens2: register_counter!(
+                "sandwitch_pancake_swap_swapExactETHForTokens2",
             ),
         }
     }
 }
 
-impl<T: Transport> PancakeSwap<T> {
+impl<M> PancakeSwap<M>
+where
+    M: Middleware,
+{
     #[tracing::instrument(skip_all)]
-    pub async fn from_config(eth: Eth<T>, config: PancakeSwapConfig) -> anyhow::Result<Self> {
-        let router = Router::new(eth.clone(), config.router).await?;
+    pub async fn from_config(
+        client: impl Into<Arc<M>>,
+        config: PancakeSwapConfig,
+    ) -> anyhow::Result<Self>
+    where
+        M: Clone + 'static,
+    {
+        let client = client.into();
+        let router = Router::new(client.clone(), config.router).await?;
         let factory = router.factory();
         info!(router = ?router.address(), factory = ?factory.address());
 
@@ -68,9 +81,9 @@ impl<T: Transport> PancakeSwap<T> {
             total = config.token_pairs.len(),
             "collecting pair contracts..."
         );
-        let pair_contracts: HashMap<(Address, Address), Pair<T>> =
+        let pair_contracts: HashMap<(Address, Address), Pair<M>> =
             futures::stream::iter(config.token_pairs)
-                .map(move |p| Pair::new(eth.clone(), factory, p).map_ok(move |pair| (p, pair)))
+                .map(move |p| Pair::new(client.clone(), factory, p).map_ok(move |pair| (p, pair)))
                 .buffer_unordered(5)
                 .filter_map(|r| {
                     future::ready(
@@ -95,63 +108,7 @@ impl<T: Transport> PancakeSwap<T> {
     }
 }
 
-impl<T: Transport> PancakeSwap<T> {
-    fn check_swap_exact_eth_for_tokens(&self, tx: &Transaction) -> bool {
-        !tx.value.is_zero()
-            && [tx.value, tx.gas].iter().all(|v| v.bits() <= 128) // for U256::as_u128
-            && tx.to.map_or(false, |h| h == self.router.address())
-            && tx.input.0.starts_with(
-                &contracts::SWAP_EXACT_ETH_FOR_TOKENS.short_signature(), // TODO:
-                                                                         // calculate signature before
-            )
-    }
-
-    fn decode_swap_exact_eth_for_tokens_input(
-        tx: &Transaction,
-    ) -> Option<(u128, Vec<Address>, Address, U256)> {
-        contracts::SWAP_EXACT_ETH_FOR_TOKENS
-            .decode_input(&tx.input.0[4..])
-            .ok()
-            .map(<(U256, Vec<Address>, Address, U256)>::from_tokens)
-            .map(Result::ok)
-            .flatten()
-            .filter(|(amount_out_min, ..)| amount_out_min.bits() <= 128)
-            .map(|(amount_out_min, path, to, deadline)| {
-                (amount_out_min.low_u128(), path, to, deadline)
-            })
-    }
-
-    fn decode_swap_exact_eth_for_tokens_input2(
-        tx: &Transaction,
-    ) -> Option<(u128, (Address, Address))> {
-        Self::decode_swap_exact_eth_for_tokens_input(tx)
-            .filter(|(_, path, ..)| path.len() == 2)
-            .map(|(amount_out_min, path, ..)| (amount_out_min, (path[0], path[1])))
-    }
-
-    async fn filter_map(&self, tx: Timed<Transaction>) -> Option<Timed<Swap<'_, T>>> {
-        if !self.check_swap_exact_eth_for_tokens(&tx) {
-            return None;
-        }
-
-        let (amount_out_min, (t0, t1)) = Self::decode_swap_exact_eth_for_tokens_input2(&tx)?;
-
-        let pair = self.pair_contracts.get(&(t0, t1))?;
-        let (t0, t1) = pair.tokens();
-
-        let sw = Swap {
-            tx_hash: tx.hash,
-            gas: tx.gas.as_u128(),
-            gas_price: t0.as_decimals(tx.gas_price?.low_u128()),
-            amount_in: t0.as_decimals(tx.value.low_u128()),
-            amount_out_min: t1.as_decimals(amount_out_min),
-            reserves: pair.get_reserves().await.ok().map(|(r0, r1, _)| (r0, r1))?,
-            pair,
-        };
-
-        Some(tx.map(|_| sw))
-    }
-
+impl<M: Middleware> PancakeSwap<M> {
     fn tx_fee(&self) -> f64 {
         self.gas_price * self.gas_limit
     }
@@ -180,20 +137,19 @@ impl<T: Transport> PancakeSwap<T> {
     }
 }
 
-struct Swap<'a, T: Transport> {
+struct Swap<'a, M: Middleware> {
     tx_hash: H256,
     gas: u128,
     gas_price: f64,
     amount_in: f64,
     amount_out_min: f64,
     reserves: (f64, f64),
-    pair: &'a Pair<T>,
+    pair: &'a Pair<M>,
 }
 
-impl<T> Monitor<Timed<Transaction>> for PancakeSwap<T>
+impl<M> Monitor<Timed<Transaction>> for PancakeSwap<M>
 where
-    T: Transport + Send + Sync + 'static,
-    <T as Transport>::Out: Send,
+    M: Middleware,
 {
     type Output = Transaction;
 
@@ -202,7 +158,38 @@ where
         stream: BoxStream<'a, Timed<Transaction>>,
     ) -> BoxStream<'a, Self::Output> {
         stream
-            .map(|tx| self.filter_map(tx))
+            .filter(|tx| {
+                future::ready(
+                    !tx.value.is_zero() && tx.to.map_or(false, |h| h == self.router.address()),
+                )
+            })
+            .inspect(|_| self.metrics.to_router.increment(1))
+            // .filter({
+            //     let swap_exact_eth_for_tokens_selector = SwapExactETHForTokensCall::selector();
+            //     move |tx| future::ready(tx.input.0.starts_with(&swap_exact_eth_for_tokens_selector))
+            // })
+            .map(|tx| async {
+                let c = SwapExactETHForTokensCall::decode(&tx.input.0)
+                    .ok()
+                    .inspect(|_| self.metrics.swap_exact_eth_for_tokens.increment(1))
+                    .filter(|c| c.path.len() == 2)?;
+                self.metrics.swap_exact_eth_for_tokens2.increment(1);
+
+                let pair = self.pair_contracts.get(&(c.path[0], c.path[1]))?;
+                let (t0, t1) = pair.tokens();
+
+                let sw = Swap {
+                    tx_hash: tx.hash,
+                    gas: tx.gas.as_u128(),
+                    gas_price: t0.as_decimals(tx.gas_price?.low_u128()),
+                    amount_in: t0.as_decimals(tx.value.low_u128()),
+                    amount_out_min: t1.as_decimals(c.amount_out_min.low_u128()),
+                    reserves: pair.get_reserves().await.ok().map(|(r0, r1, _)| (r0, r1))?,
+                    pair,
+                };
+
+                Some(tx.map(move |_| sw))
+            })
             .buffer_unordered(10)
             .filter_map(future::ready)
             .inspect(|sw| {
