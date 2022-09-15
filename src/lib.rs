@@ -147,34 +147,23 @@ where
 
         let mut pending_txs = pending_tx_hashes
             .take_until(cancel_token.cancelled())
+            .inspect(|tx_hash| {
+                self.metrics.seen_txs.increment(1);
+                trace!(?tx_hash, "new pending transaction");
+            })
             .map({
                 let requesting = &self.requesting;
-                let Metrics {
-                    seen_txs,
-                    resolved_txs,
-                } = self.metrics.clone();
                 move |tx_hash| {
-                    seen_txs.increment(1);
-                    trace!(?tx_hash, "new pending transaction");
-
                     // let at = SystemTime::now();
                     requesting
                         .get_transaction(tx_hash)
                         .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
                         .map_ok({
-                            let resolved_txs = resolved_txs.clone();
                             move |r| {
                                 r.filter(|tx| {
                                     tx.block_hash.is_none()
                                         && tx.block_number.is_none()
                                         && tx.transaction_index.is_none()
-                                })
-                                .map(move |tx| {
-                                    resolved_txs.increment(1);
-                                    trace!(?tx.hash, "pending transaction resolved");
-
-                                    // Timed::with(tx, at) TODO
-                                    tx
                                 })
                             }
                         })
@@ -184,9 +173,23 @@ where
             })
             .buffer_unordered(self.buffer_size)
             .filter_map(future::ready)
+            .inspect(|tx| {
+                self.metrics.resolved_txs.increment(1);
+                trace!(?tx.hash, "pending transaction resolved");
+            })
             .boxed()
             .fuse();
-        let mut new_blocks = new_blocks.fuse();
+
+        let mut new_blocks = new_blocks
+            .filter(|block| future::ready(block.number.is_some() && block.hash.is_some()))
+            .inspect({
+                let height = register_counter!("sandwitch_height");
+                move |block| {
+                    height.absolute(block.number.unwrap().as_u64());
+                    trace!(block_hash = ?block.hash.unwrap(), "new block");
+                }
+            })
+            .fuse();
 
         loop {
             select! {
@@ -198,10 +201,9 @@ where
                 },
                 block = new_blocks.next() => match block {
                     Some(block) => {
-                        trace!(?block.hash, "new block");
                         self.monitors.process(block).await;
                     },
-                    None => return Err(anyhow!("blocks finished")), // TODO
+                    None => return Err(anyhow!("new blocks stream finished unexpectedly")),
                 },
             }
         }

@@ -114,6 +114,80 @@
       "fieldConfig": {
         "defaults": {
           "color": {
+            "mode": "thresholds"
+          },
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "BscScan",
+              "url": "https://bscscan.com/block/${__value.numeric}"
+            },
+            {
+              "targetBlank": true,
+              "title": "EtherScan",
+              "url": "https://etherscan.io/block/${__value.numeric}"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 2,
+        "y": 0
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sandwitch_height",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Block Height",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
             "mode": "palette-classic"
           },
           "custom": {
@@ -171,8 +245,8 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 22,
-        "x": 2,
+        "w": 20,
+        "x": 4,
         "y": 0
       },
       "id": 2,
@@ -244,6 +318,69 @@
           "color": {
             "mode": "thresholds"
           },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 0,
+        "y": 3
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sandwitch_resolved_txs",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Total Resolved TX",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -257,20 +394,21 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 3,
-        "w": 2,
+        "w": 4,
         "x": 0,
-        "y": 3
+        "y": 6
       },
-      "id": 4,
+      "id": 11,
       "options": {
-        "colorMode": "none",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
@@ -280,7 +418,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "name"
+        "textMode": "auto"
       },
       "pluginVersion": "",
       "targets": [
@@ -289,14 +427,14 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "editorMode": "builder",
-          "expr": "sandwitch_build_info",
-          "legendFormat": "{{version}}",
+          "editorMode": "code",
+          "expr": "sandwitch_resolved_txs / sandwitch_seen_txs",
+          "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Version",
+      "title": "Resolve TX Rate",
       "type": "stat"
     },
     {
@@ -331,8 +469,8 @@
             "axisSoftMin": 0,
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
+            "fillOpacity": 30,
+            "gradientMode": "opacity",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
@@ -351,13 +489,20 @@
             "spanNulls": false,
             "stacking": {
               "group": "A",
-              "mode": "none"
+              "mode": "normal"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "decimals": 2,
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Pool",
+              "url": "https://pancakeswap.finance/info/pool/${__field.labels.pair}"
+            }
+          ],
           "mappings": [],
           "min": 0,
           "thresholds": {
@@ -384,6 +529,13 @@
         "y": 10
       },
       "id": 7,
+      "links": [
+        {
+          "targetBlank": true,
+          "title": "PancakeSwap Info",
+          "url": "https://pancakeswap.finance/info"
+        }
+      ],
       "options": {
         "legend": {
           "calcs": [],
@@ -403,7 +555,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "irate(sandwitch_pancake_swap_pair_hit_times[$__rate_interval])",
+          "expr": "sandwitch_pancake_swap_pair_hit_times",
           "hide": false,
           "interval": "",
           "legendFormat": "{{token0_name}} -> {{token1_name}}",
@@ -423,7 +575,7 @@
     "list": []
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
