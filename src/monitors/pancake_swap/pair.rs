@@ -1,3 +1,4 @@
+use hex::ToHex;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use crate::contracts::pancake_pair::PancakePair;
 use super::token::Token;
 use ethers::prelude::{Address, ContractError, Middleware};
 use futures::try_join;
+use metrics::{register_counter, Counter};
 
 #[derive(Clone)]
 pub struct Pair<M: Middleware> {
@@ -79,5 +81,56 @@ impl<M: Middleware> Display for Pair<M> {
             self.address(),
             self.tokens.1
         )
+    }
+}
+
+pub struct CachedPair<M: Middleware> {
+    inner: Pair<M>,
+    reserves: Option<(f64, f64, u32)>,
+    tx_count: Counter,
+}
+
+impl<M: Middleware> From<Pair<M>> for CachedPair<M> {
+    fn from(p: Pair<M>) -> Self {
+        let (t0, t1) = p.tokens();
+        Self {
+            reserves: None,
+            tx_count: register_counter!(
+                "sandwitch_pancake_swap_pair_hit_times",
+                &[
+                    ("token0", t0.address().encode_hex::<String>()),
+                    ("token1", t0.address().encode_hex::<String>()),
+                    ("token0_name", t0.name().to_string()),
+                    ("token1_name", t1.name().to_string()),
+                    ("pair", p.address().encode_hex::<String>())
+                ]
+            ),
+            inner: p,
+        }
+    }
+}
+
+impl<M: Middleware> Deref for CachedPair<M> {
+    type Target = Pair<M>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<M: Middleware> CachedPair<M> {
+    pub async fn get_reserves(&mut self) -> Result<(f64, f64, u32), ContractError<M>> {
+        Ok(match self.reserves {
+            Some(v) => v,
+            None => *self.reserves.insert(self.inner.get_reserves().await?),
+        })
+    }
+
+    pub fn clear_cache(&mut self) {
+        self.reserves.take();
+    }
+
+    pub fn hit(&self) {
+        self.tx_count.increment(1);
     }
 }

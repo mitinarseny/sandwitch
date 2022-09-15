@@ -1,52 +1,51 @@
-use async_broadcast::broadcast;
-use futures::stream::{select_all, BoxStream, StreamExt};
+use ethers::prelude::{Block, Transaction};
+use ethers::types::TxHash;
+use futures::future::{join_all, BoxFuture};
+use futures::FutureExt;
 
 pub mod pancake_swap;
 
 pub trait Monitor<Input> {
-    type Output;
-
-    fn process<'a>(&'a mut self, stream: BoxStream<'a, Input>) -> BoxStream<'a, Self::Output>;
+    fn process(&mut self, input: Input) -> BoxFuture<'_, ()>;
 }
 
-pub struct MultiMonitor<In, Out> {
-    buffer_size: usize,
-    monitors: Vec<Box<dyn Monitor<In, Output = Out> + Send>>,
+pub trait TxMonitor: Monitor<Transaction> + Monitor<Block<TxHash>> {
+    fn flush(&mut self) -> Vec<Transaction>;
 }
 
-impl<In, Out> MultiMonitor<In, Out> {
-    pub fn new(
-        buffer_size: usize,
-        monitors: Vec<Box<dyn Monitor<In, Output = Out> + Send>>,
-    ) -> Self {
-        Self {
-            buffer_size,
-            monitors,
-        }
+pub struct MultiTxMonitor(Vec<Box<dyn TxMonitor + Send>>);
+
+impl MultiTxMonitor {
+    pub fn new(monitors: Vec<Box<dyn TxMonitor + Send>>) -> Self {
+        Self(monitors)
     }
 }
 
-impl<In, Out> Monitor<In> for MultiMonitor<In, Out>
-where
-    In: Clone + Send + Sync,
-{
-    type Output = Out;
+impl Monitor<Transaction> for MultiTxMonitor {
+    fn process(&mut self, input: Transaction) -> BoxFuture<'_, ()> {
+        join_all(self.0.iter_mut().map(|m| m.process(input.clone())))
+            .map(|_| ())
+            .boxed()
+    }
+}
 
-    fn process<'a>(&'a mut self, mut stream: BoxStream<'a, In>) -> BoxStream<'a, Self::Output> {
-        let (tx, rx) = broadcast(self.buffer_size);
+impl Monitor<Block<TxHash>> for MultiTxMonitor {
+    fn process(&mut self, input: Block<TxHash>) -> BoxFuture<'_, ()> {
+        join_all(self.0.iter_mut().map(|m| m.process(input.clone())))
+            .map(|_| ())
+            .boxed()
+    }
+}
 
-        select_all(
-            self.monitors
-                .iter_mut()
-                .map(|m| m.process(rx.clone().boxed())),
-        )
-        .take_until(async move {
-            while let Some(v) = stream.next().await {
-                if !tx.broadcast(v).await.is_ok() {
-                    break;
-                }
-            }
-        })
-        .boxed()
+impl TxMonitor for MultiTxMonitor {
+    fn flush(&mut self) -> Vec<Transaction> {
+        self.0
+            .iter_mut()
+            .map(|m| m.flush())
+            .reduce(|mut v1, v2| {
+                v1.extend(v2.into_iter());
+                v1
+            })
+            .unwrap_or_else(|| Vec::new())
     }
 }

@@ -170,8 +170,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 10,
-        "w": 11,
+        "h": 9,
+        "w": 22,
         "x": 2,
         "y": 0
       },
@@ -183,7 +183,7 @@
           ],
           "displayMode": "list",
           "placement": "right",
-          "showLegend": false
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -198,7 +198,7 @@
           },
           "editorMode": "builder",
           "exemplar": false,
-          "expr": "irate(sandwitch_seen_txs[$__interval])",
+          "expr": "irate(sandwitch_seen_txs[$__rate_interval])",
           "instant": false,
           "legendFormat": "Seen",
           "range": true,
@@ -210,16 +210,107 @@
             "uid": "prometheus"
           },
           "editorMode": "builder",
-          "expr": "irate(sandwitch_resolved_txs[$__interval])",
+          "expr": "irate(sandwitch_resolved_txs[$__rate_interval])",
           "hide": false,
           "interval": "",
           "legendFormat": "Resolved",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "builder",
+          "expr": "irate(sandwitch_pancake_swap_to_router[$__rate_interval])",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "PancakeSwap Router",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Transactions",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 0,
+        "y": 3
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "name"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "builder",
+          "expr": "sandwitch_build_info",
+          "legendFormat": "{{version}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Version",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 9,
+      "panels": [],
+      "title": "Pancake Swap",
+      "type": "row"
     },
     {
       "datasource": {
@@ -287,23 +378,21 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 10,
-        "w": 11,
-        "x": 13,
-        "y": 0
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 10
       },
       "id": 7,
       "options": {
         "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "list",
+          "calcs": [],
+          "displayMode": "table",
           "placement": "right",
           "showLegend": true
         },
         "tooltip": {
-          "mode": "multi",
+          "mode": "single",
           "sort": "desc"
         }
       },
@@ -313,108 +402,17 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "editorMode": "builder",
-          "expr": "irate(sandwitch_pancake_swap_to_router[$__interval])",
+          "editorMode": "code",
+          "expr": "irate(sandwitch_pancake_swap_pair_hit_times[$__rate_interval])",
           "hide": false,
           "interval": "",
-          "legendFormat": "To Router",
-          "range": true,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "builder",
-          "expr": "irate(sandwitch_pancake_swap_swapExactETHForTokens2[$__interval])",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "swapExactETHForTokens2",
-          "range": true,
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "builder",
-          "expr": "irate(sandwitch_pancake_swap_swapExactETHForTokens[$__interval])",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "swapExactETHForTokens",
-          "range": true,
-          "refId": "E"
-        }
-      ],
-      "title": "Pancake Swap",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 2,
-        "x": 0,
-        "y": 3
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "name"
-      },
-      "pluginVersion": "",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "builder",
-          "expr": "sandwitch_build_info",
-          "legendFormat": "{{version}}",
+          "legendFormat": "{{token0_name}} -> {{token1_name}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Version",
-      "type": "stat"
+      "title": "Pancake Swap",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",

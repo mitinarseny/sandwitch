@@ -10,19 +10,20 @@ mod monitors;
 mod timed;
 
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-use self::monitors::{Monitor, MultiMonitor};
-use self::timed::Timed;
+use self::monitors::{Monitor, MultiTxMonitor};
 use ethers::prelude::*;
+use futures::future::try_join;
+use futures::select;
+use std::sync::Arc;
 use url::Url;
 
 use self::abort::FutureExt as AbortFutureExt;
 
 use anyhow::{anyhow, Context};
-use futures::{future::Aborted, stream::StreamExt, try_join, FutureExt, TryFutureExt};
+use futures::{future::Aborted, stream::StreamExt, FutureExt, TryFutureExt};
 use metrics::{register_counter, Counter};
 use serde::Deserialize;
 use std::future;
-use std::time::{Duration, SystemTime};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace};
 
@@ -51,10 +52,10 @@ where
     SC: PubsubClient,
     RC: JsonRpcClient,
 {
-    streaming: Provider<SC>,
-    requesting: Provider<RC>,
+    streaming: Arc<Provider<SC>>,
+    requesting: Arc<Provider<RC>>,
     buffer_size: usize,
-    monitors: MultiMonitor<Timed<Transaction>, Transaction>,
+    monitors: MultiTxMonitor,
 
     metrics: Metrics,
 }
@@ -97,12 +98,12 @@ where
         requesting: RT,
         config: Config,
     ) -> anyhow::Result<Self> {
-        let streaming = Provider::new(streaming);
-        let requesting = Provider::new(requesting);
+        let streaming = Arc::new(Provider::new(streaming));
+        let requesting = Arc::new(Provider::new(requesting));
 
         let network_id = {
             let (streaming_net, requesting_net) =
-                try_join!(streaming.get_net_version(), requesting.get_net_version())?;
+                try_join(streaming.get_net_version(), requesting.get_net_version()).await?;
             if streaming_net != requesting_net {
                 return Err(anyhow!("mismatching network IDs: streaming: {streaming_net}, requesting: {requesting_net}"));
             }
@@ -117,7 +118,7 @@ where
             streaming,
             requesting,
             buffer_size: config.core.buffer_size,
-            monitors: MultiMonitor::new(config.core.buffer_size, vec![Box::new(pancake)]),
+            monitors: MultiTxMonitor::new(vec![Box::new(pancake)]),
             metrics: Metrics::new(),
         })
     }
@@ -129,16 +130,22 @@ where
     RT: JsonRpcClient,
 {
     pub async fn run(&mut self, cancel_token: CancellationToken) -> anyhow::Result<()> {
+        let new_blocks = self
+            .streaming
+            .subscribe_blocks()
+            .inspect_ok(|_| info!("subscribed to new blocks"))
+            .with_abort_unpin(cancel_token.cancelled().map(|_| Aborted))
+            .await
+            .with_context(|| "failed to subscribe to new blocks")??;
         let pending_tx_hashes = self
             .streaming
             .subscribe_pending_txs()
-            .with_unpin_abort_unpin(cancel_token.cancelled().map(|_| Aborted))
+            .inspect_ok(|_| info!("subscribed to new pending transactions"))
+            .with_abort_unpin(cancel_token.cancelled().map(|_| Aborted))
             .await
             .with_context(|| "failed to subscribe to new pending transactions")??;
 
-        info!("subscribed to new pending transactions");
-
-        let pending_txs = pending_tx_hashes
+        let mut pending_txs = pending_tx_hashes
             .take_until(cancel_token.cancelled())
             .map({
                 let requesting = &self.requesting;
@@ -148,32 +155,55 @@ where
                 } = self.metrics.clone();
                 move |tx_hash| {
                     seen_txs.increment(1);
-                    trace!(?tx_hash, "new transaction hash");
+                    trace!(?tx_hash, "new pending transaction");
 
-                    let at = SystemTime::now();
+                    // let at = SystemTime::now();
                     requesting
                         .get_transaction(tx_hash)
                         .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
                         .map_ok({
                             let resolved_txs = resolved_txs.clone();
                             move |r| {
-                                r.map(move |tx| {
+                                r.filter(|tx| {
+                                    tx.block_hash.is_none()
+                                        && tx.block_number.is_none()
+                                        && tx.transaction_index.is_none()
+                                })
+                                .map(move |tx| {
                                     resolved_txs.increment(1);
-                                    trace!(?tx.hash, "transaction resolved");
+                                    trace!(?tx.hash, "pending transaction resolved");
 
-                                    Timed::with(tx, at)
+                                    // Timed::with(tx, at) TODO
+                                    tx
                                 })
                             }
                         })
+                        .map(Result::ok)
+                        .map(Option::flatten)
                 }
             })
             .buffer_unordered(self.buffer_size)
-            .filter_map(|r| future::ready(r.unwrap_or(None)));
+            .filter_map(future::ready)
+            .boxed()
+            .fuse();
+        let mut new_blocks = new_blocks.fuse();
 
-        let mut send_txs = self.monitors.process(pending_txs.boxed());
-
-        while let Some(tx) = send_txs.next().await {
-            info!(?tx, "send tx");
+        loop {
+            select! {
+                tx = pending_txs.next() => match tx {
+                    Some(tx) => {
+                        self.monitors.process(tx).await;
+                    },
+                    None => break,
+                },
+                block = new_blocks.next() => match block {
+                    Some(block) => {
+                        trace!(?block.hash, "new block");
+                        self.monitors.process(block).await;
+                    },
+                    None => return Err(anyhow!("blocks finished")), // TODO
+                },
+            }
         }
 
         Ok(())

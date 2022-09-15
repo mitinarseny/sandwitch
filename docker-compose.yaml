@@ -19,6 +19,8 @@ services:
       - './prometheus.yml:/etc/prometheus/prometheus.yml:ro'
     depends_on:
       - sandwitch
+    logging:
+      driver: none
     restart: unless-stopped
 
   grafana:
@@ -33,3 +35,5 @@ services:
       - prometheus
     ports:
       - '3000:3000/tcp'
+    logging:
+      driver: none
