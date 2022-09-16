@@ -9,23 +9,23 @@ mod contracts;
 mod monitors;
 mod timed;
 
+use self::abort::FutureExt as AbortFutureExt;
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
 use self::monitors::{Monitor, MultiTxMonitor};
+
+use std::future;
+use std::sync::Arc;
+
+use anyhow::{anyhow, Context};
 use ethers::prelude::*;
 use futures::future::try_join;
 use futures::select;
-use std::sync::Arc;
-use url::Url;
-
-use self::abort::FutureExt as AbortFutureExt;
-
-use anyhow::{anyhow, Context};
 use futures::{future::Aborted, stream::StreamExt, FutureExt, TryFutureExt};
-use metrics::{register_counter, Counter};
+use metrics::{register_counter, register_gauge};
 use serde::Deserialize;
-use std::future;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace};
+use url::Url;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -56,23 +56,6 @@ where
     requesting: Arc<Provider<RC>>,
     buffer_size: usize,
     monitors: MultiTxMonitor,
-
-    metrics: Metrics,
-}
-
-#[derive(Clone)]
-struct Metrics {
-    seen_txs: Counter,
-    resolved_txs: Counter,
-}
-
-impl Metrics {
-    fn new() -> Self {
-        Self {
-            seen_txs: register_counter!("sandwitch_seen_txs"),
-            resolved_txs: register_counter!("sandwitch_resolved_txs"),
-        }
-    }
 }
 
 impl App<Ws, Http> {
@@ -119,7 +102,6 @@ where
             requesting,
             buffer_size: config.core.buffer_size,
             monitors: MultiTxMonitor::new(vec![Box::new(pancake)]),
-            metrics: Metrics::new(),
         })
     }
 }
@@ -145,37 +127,47 @@ where
             .await
             .with_context(|| "failed to subscribe to new pending transactions")??;
 
+        let buffered_txs = register_gauge!("sandwitch_buffered_txs");
         let mut pending_txs = pending_tx_hashes
             .take_until(cancel_token.cancelled())
-            .inspect(|tx_hash| {
-                self.metrics.seen_txs.increment(1);
-                trace!(?tx_hash, "new pending transaction");
-            })
-            .map({
-                let requesting = &self.requesting;
+            .inspect({
+                let seen_txs = register_counter!("sandwitch_seen_txs");
                 move |tx_hash| {
-                    // let at = SystemTime::now();
-                    requesting
-                        .get_transaction(tx_hash)
-                        .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
-                        .map_ok({
-                            move |r| {
-                                r.filter(|tx| {
-                                    tx.block_hash.is_none()
-                                        && tx.block_number.is_none()
-                                        && tx.transaction_index.is_none()
-                                })
-                            }
-                        })
-                        .map(Result::ok)
-                        .map(Option::flatten)
+                    seen_txs.increment(1);
+                    trace!(?tx_hash, "new pending transaction");
                 }
             })
+            .map(|tx_hash| {
+                self.requesting
+                    .get_transaction(tx_hash)
+                    .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
+                    .map(Result::ok)
+                    .map(Option::flatten)
+            })
+            .inspect(|_| buffered_txs.increment(1.0))
             .buffer_unordered(self.buffer_size)
+            .inspect(|_| buffered_txs.decrement(1.0))
             .filter_map(future::ready)
-            .inspect(|tx| {
-                self.metrics.resolved_txs.increment(1);
-                trace!(?tx.hash, "pending transaction resolved");
+            .inspect({
+                let resolved_txs = register_counter!("sandwitch_resolved_txs");
+                move |tx| {
+                    resolved_txs.increment(1);
+                    trace!(?tx.hash, "transaction resolved");
+                }
+            })
+            .filter(|tx| {
+                future::ready(
+                    tx.block_hash.is_none()
+                        && tx.block_number.is_none()
+                        && tx.transaction_index.is_none(),
+                )
+            })
+            .inspect({
+                let resolved_pending_txs = register_counter!("sandwitch_resolved_pending_txs");
+                move |tx| {
+                    resolved_pending_txs.increment(1);
+                    trace!(?tx.hash, "resolved transaction is still pending");
+                }
             })
             .boxed()
             .fuse();
@@ -195,13 +187,13 @@ where
             select! {
                 tx = pending_txs.next() => match tx {
                     Some(tx) => {
-                        self.monitors.process(tx).await;
+                        self.monitors.process(&tx).await;
                     },
                     None => break,
                 },
                 block = new_blocks.next() => match block {
                     Some(block) => {
-                        self.monitors.process(block).await;
+                        self.monitors.process(&block).await;
                     },
                     None => return Err(anyhow!("new blocks stream finished unexpectedly")),
                 },

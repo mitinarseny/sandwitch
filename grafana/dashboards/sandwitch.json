@@ -150,7 +150,7 @@
       "id": 14,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
@@ -177,6 +177,84 @@
         }
       ],
       "title": "Block Height",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 4,
+        "y": 0
+      },
+      "id": 16,
+      "links": [
+        {
+          "targetBlank": true,
+          "title": "EtherScan",
+          "url": "https://etherscan.io/blocks"
+        },
+        {
+          "targetBlank": true,
+          "title": "BscScan",
+          "url": "https://bscscan.com/blocks"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "1/irate(sandwitch_height[$__rate_interval])",
+          "format": "time_series",
+          "instant": false,
+          "interval": "",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Block rate",
       "type": "stat"
     },
     {
@@ -232,10 +310,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -245,8 +319,8 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 20,
-        "x": 4,
+        "w": 18,
+        "x": 6,
         "y": 0
       },
       "id": 2,
@@ -296,6 +370,20 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "sandwitch_buffered_txs",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Buffered",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "editorMode": "builder",
           "expr": "irate(sandwitch_pancake_swap_to_router[$__rate_interval])",
           "hide": false,
@@ -334,15 +422,15 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
-        "w": 4,
+        "h": 6,
+        "w": 3,
         "x": 0,
         "y": 3
       },
       "id": 12,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
@@ -400,10 +488,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
-        "w": 4,
-        "x": 0,
-        "y": 6
+        "h": 6,
+        "w": 3,
+        "x": 3,
+        "y": 3
       },
       "id": 11,
       "options": {
@@ -495,7 +583,7 @@
               "mode": "off"
             }
           },
-          "decimals": 2,
+          "decimals": 0,
           "links": [
             {
               "targetBlank": true,
@@ -518,7 +606,7 @@
               }
             ]
           },
-          "unit": "tx/s"
+          "unit": "none"
         },
         "overrides": []
       },

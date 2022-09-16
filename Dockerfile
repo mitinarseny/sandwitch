@@ -1,5 +1,5 @@
 FROM rust AS env
-ARG RUST_TOOLCHAIN=nightly-2022-09-01
+ARG RUST_TOOLCHAIN=nightly-2022-09-15
 RUN rustup toolchain install \
   --allow-downgrade \
   --no-self-update \

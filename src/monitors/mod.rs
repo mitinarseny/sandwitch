@@ -6,7 +6,7 @@ use futures::FutureExt;
 pub mod pancake_swap;
 
 pub trait Monitor<Input> {
-    fn process(&mut self, input: Input) -> BoxFuture<'_, ()>;
+    fn process<'a>(&'a mut self, input: &'a Input) -> BoxFuture<'a, ()>;
 }
 
 pub trait TxMonitor: Monitor<Transaction> + Monitor<Block<TxHash>> {
@@ -22,16 +22,16 @@ impl MultiTxMonitor {
 }
 
 impl Monitor<Transaction> for MultiTxMonitor {
-    fn process(&mut self, input: Transaction) -> BoxFuture<'_, ()> {
-        join_all(self.0.iter_mut().map(|m| m.process(input.clone())))
+    fn process<'a>(&'a mut self, input: &'a Transaction) -> BoxFuture<'a, ()> {
+        join_all(self.0.iter_mut().map(|m| m.process(input)))
             .map(|_| ())
             .boxed()
     }
 }
 
 impl Monitor<Block<TxHash>> for MultiTxMonitor {
-    fn process(&mut self, input: Block<TxHash>) -> BoxFuture<'_, ()> {
-        join_all(self.0.iter_mut().map(|m| m.process(input.clone())))
+    fn process<'a>(&'a mut self, input: &'a Block<TxHash>) -> BoxFuture<'a, ()> {
+        join_all(self.0.iter_mut().map(|m| m.process(input)))
             .map(|_| ())
             .boxed()
     }

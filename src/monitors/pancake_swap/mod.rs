@@ -169,7 +169,8 @@ impl<M> Monitor<Transaction> for PancakeSwap<M>
 where
     M: Middleware,
 {
-    fn process(&mut self, tx: Transaction) -> BoxFuture<'_, ()> {
+    #[tracing::instrument(skip_all, fields(?tx.hash))]
+    fn process<'a>(&'a mut self, tx: &'a Transaction) -> BoxFuture<'a, ()> {
         async move {
             if tx.value.is_zero()
                 || tx.gas_price.is_none()
@@ -281,7 +282,8 @@ impl<M> Monitor<Block<TxHash>> for PancakeSwap<M>
 where
     M: Middleware,
 {
-    fn process(&mut self, _block: Block<TxHash>) -> BoxFuture<'_, ()> {
+    #[tracing::instrument(skip_all, fields(?block.hash))]
+    fn process<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, ()> {
         self.pair_contracts
             .iter()
             .map(|(_, p)| p.on_block())
@@ -297,7 +299,6 @@ where
 {
     fn flush(&mut self) -> Vec<Transaction> {
         Vec::new()
-        // todo!()
     }
 }
 
