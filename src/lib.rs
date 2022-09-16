@@ -15,17 +15,21 @@ use self::monitors::{Monitor, MultiTxMonitor};
 
 use std::collections::HashSet;
 use std::future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use ethers::prelude::*;
-use futures::future::try_join;
-use futures::select;
-use futures::{future::Aborted, stream::StreamExt, FutureExt, TryFutureExt};
+use futures::lock::Mutex;
+use futures::{
+    future::{try_join, Aborted},
+    select,
+    stream::StreamExt,
+    FutureExt, TryFutureExt,
+};
 use metrics::{register_counter, register_gauge};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, trace};
 use url::Url;
 
 #[derive(Deserialize, Debug)]
@@ -129,7 +133,9 @@ where
             .with_context(|| "failed to subscribe to new pending transactions")??;
 
         let current_pending_txs: Mutex<HashSet<H256>> = Mutex::new(HashSet::new());
-        let buffered_txs = register_gauge!("sandwitch_buffered_txs");
+        let resolve_buffer = register_gauge!("sandwitch_resolve_buffer");
+        let process_buffer = register_gauge!("sandwitch_process_buffer");
+        let send_buffer = register_gauge!("sandwitch_send_buffer");
 
         let mut pending_txs = pending_tx_hashes
             .take_until(cancel_token.cancelled())
@@ -149,9 +155,9 @@ where
                     .map(Result::ok)
                     .map(Option::flatten)
             })
-            .inspect(|_| buffered_txs.increment(1.0))
+            .inspect(|_| resolve_buffer.increment(1.0))
             .buffer_unordered(self.buffer_size)
-            .inspect(|_| buffered_txs.decrement(1.0))
+            .inspect(|_| resolve_buffer.decrement(1.0))
             .filter_map(future::ready)
             .inspect({
                 let resolved_txs = register_counter!("sandwitch_resolved_txs");
@@ -174,29 +180,46 @@ where
                     trace!(?tx.hash, "resolved transaction is still pending");
                 }
             })
-            .inspect(|tx| {
-                let mut pending = current_pending_txs.lock().unwrap();
-                if !pending.insert(tx.hash) {
-                    warn!(?tx.hash, "this transaction hash has already been seen");
-                };
+            .filter({
+                let current_pending_txs = &current_pending_txs;
+                move |tx| {
+                    let tx_hash = tx.hash.clone();
+                    async move { current_pending_txs.lock().await.insert(tx_hash) }
+                }
             })
-            .then({
+            .map({
                 let monitors = &self.monitors;
+                move |tx| async move {
+                    let to_send = monitors.on_tx(&tx).await;
+                    (tx.hash, to_send)
+                }
+            })
+            .inspect(|_| process_buffer.increment(1.0))
+            .buffer_unordered(self.buffer_size)
+            .inspect(|_| process_buffer.decrement(1.0))
+            .filter_map({
                 let current_pending_txs = &current_pending_txs;
                 let missed_txs = register_counter!("sandwitch_missed_txs");
-                move |tx| {
+                move |(tx_hash, to_send)| {
                     let missed_txs = missed_txs.clone();
                     async move {
-                        let _to_send = monitors.on_tx(&tx).await;
-
-                        if current_pending_txs.lock().unwrap().remove(&tx.hash) {
-                            // TODO: send txs in batch if not empty
-                        } else {
-                            missed_txs.increment(1);
-                        }
+                        current_pending_txs
+                            .lock()
+                            .await
+                            .remove(&tx_hash)
+                            .then_some(to_send)
+                            .or_else(move || {
+                                missed_txs.increment(1);
+                                None
+                            })
                     }
                 }
             })
+            .filter(|to_send| future::ready(!to_send.is_empty()))
+            .map(|_to_send| future::ready(())) // TODO: send
+            .inspect(|_| send_buffer.increment(1.0))
+            .buffer_unordered(self.buffer_size)
+            .inspect(|_| send_buffer.decrement(1.0))
             .boxed()
             .fuse();
 
@@ -226,12 +249,17 @@ where
                     );
                 }
             })
-            .inspect(|block| {
-                let mut real = current_pending_txs.lock().unwrap();
-                for h in block.transactions.iter() {
-                    real.remove(h);
+            .then({
+                let current_pending_txs = &current_pending_txs;
+                move |block| async move {
+                    let mut txs = current_pending_txs.lock().await;
+                    for h in block.transactions.iter() {
+                        txs.remove(h);
+                    }
+                    block
                 }
             })
+            .boxed()
             .fuse();
 
         loop {
