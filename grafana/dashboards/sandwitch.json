@@ -189,7 +189,9 @@
           "color": {
             "mode": "thresholds"
           },
+          "decimals": 1,
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -245,7 +247,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "1/irate(sandwitch_height[$__rate_interval])",
+          "expr": "1/irate(sandwitch_height[$__range])",
           "format": "time_series",
           "instant": false,
           "interval": "",
@@ -302,7 +304,7 @@
               "mode": "off"
             }
           },
-          "decimals": 0,
+          "decimals": 1,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -318,7 +320,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
+        "h": 12,
         "w": 18,
         "x": 6,
         "y": 0
@@ -350,7 +352,7 @@
           "instant": false,
           "legendFormat": "Seen",
           "range": true,
-          "refId": "A"
+          "refId": "Seen"
         },
         {
           "datasource": {
@@ -363,7 +365,7 @@
           "interval": "",
           "legendFormat": "Resolved",
           "range": true,
-          "refId": "B"
+          "refId": "Resolved"
         },
         {
           "datasource": {
@@ -377,7 +379,33 @@
           "instant": false,
           "legendFormat": "Buffered",
           "range": true,
-          "refId": "D"
+          "refId": "Buffered"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "sandwitch_missed_txs",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Missed",
+          "range": true,
+          "refId": "Missed"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "irate(sandwitch_resolved_txs[$__rate_interval]) - irate(sandwitch_resolved_pending_txs[$__rate_interval])",
+          "hide": false,
+          "legendFormat": "Resolved as Already Mined",
+          "range": true,
+          "refId": "Resolved as Already Mined"
         },
         {
           "datasource": {
@@ -390,7 +418,7 @@
           "interval": "",
           "legendFormat": "PancakeSwap Router",
           "range": true,
-          "refId": "C"
+          "refId": "PancakeSwap Router"
         }
       ],
       "title": "Transactions",
@@ -406,7 +434,6 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -416,21 +443,20 @@
                 "value": null
               }
             ]
-          },
-          "unit": "none"
+          }
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
-        "w": 3,
+        "h": 4,
+        "w": 6,
         "x": 0,
         "y": 3
       },
-      "id": 12,
+      "id": 18,
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
@@ -450,13 +476,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sandwitch_resolved_txs",
+          "expr": "sandwitch_last_block_tx_count",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Total Resolved TX",
+      "title": "TXs in block",
+      "transparent": true,
       "type": "stat"
     },
     {
@@ -476,10 +503,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -488,10 +511,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
-        "w": 3,
-        "x": 3,
-        "y": 3
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 7
       },
       "id": 11,
       "options": {
@@ -516,13 +539,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sandwitch_resolved_txs / sandwitch_seen_txs",
+          "expr": "irate(sandwitch_resolved_pending_txs[$__rate_interval]) / irate(sandwitch_seen_txs[$__rate_interval])",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Resolve TX Rate",
+      "transparent": true,
       "type": "stat"
     },
     {
@@ -531,7 +555,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 12
       },
       "id": 9,
       "panels": [],
@@ -608,13 +632,38 @@
           },
           "unit": "none"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "Wrapped BNB -> BUSD Token"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 13
       },
       "id": 7,
       "links": [
@@ -663,7 +712,7 @@
     "list": []
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},

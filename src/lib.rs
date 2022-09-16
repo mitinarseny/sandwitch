@@ -13,8 +13,9 @@ use self::abort::FutureExt as AbortFutureExt;
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
 use self::monitors::{Monitor, MultiTxMonitor};
 
+use std::collections::HashSet;
 use std::future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context};
 use ethers::prelude::*;
@@ -24,7 +25,7 @@ use futures::{future::Aborted, stream::StreamExt, FutureExt, TryFutureExt};
 use metrics::{register_counter, register_gauge};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use url::Url;
 
 #[derive(Deserialize, Debug)]
@@ -127,7 +128,9 @@ where
             .await
             .with_context(|| "failed to subscribe to new pending transactions")??;
 
+        let current_pending_txs: Mutex<HashSet<H256>> = Mutex::new(HashSet::new());
         let buffered_txs = register_gauge!("sandwitch_buffered_txs");
+
         let mut pending_txs = pending_tx_hashes
             .take_until(cancel_token.cancelled())
             .inspect({
@@ -139,8 +142,10 @@ where
             })
             .map(|tx_hash| {
                 self.requesting
-                    .get_transaction(tx_hash)
-                    .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
+                    .get_transaction(tx_hash.clone())
+                    .inspect_err(
+                        move |err| error!(%err, ?tx_hash, "failed to get transaction by hash"),
+                    )
                     .map(Result::ok)
                     .map(Option::flatten)
             })
@@ -169,16 +174,62 @@ where
                     trace!(?tx.hash, "resolved transaction is still pending");
                 }
             })
+            .inspect(|tx| {
+                let mut pending = current_pending_txs.lock().unwrap();
+                if !pending.insert(tx.hash) {
+                    warn!(?tx.hash, "this transaction hash has already been seen");
+                };
+            })
+            .then({
+                let monitors = &self.monitors;
+                let current_pending_txs = &current_pending_txs;
+                let missed_txs = register_counter!("sandwitch_missed_txs");
+                move |tx| {
+                    let missed_txs = missed_txs.clone();
+                    async move {
+                        let _to_send = monitors.on_tx(&tx).await;
+
+                        if current_pending_txs.lock().unwrap().remove(&tx.hash) {
+                            // TODO: send txs in batch if not empty
+                        } else {
+                            missed_txs.increment(1);
+                        }
+                    }
+                }
+            })
             .boxed()
             .fuse();
 
         let mut new_blocks = new_blocks
-            .filter(|block| future::ready(block.number.is_some() && block.hash.is_some()))
+            .filter_map(|block| future::ready(block.hash))
+            .filter_map(|block_hash| {
+                self.requesting
+                    .get_block(block_hash.clone())
+                    .inspect_err(
+                        move |err| error!(%err, ?block_hash, "failed to get block by hash"),
+                    )
+                    .map(Result::ok)
+                    .map(Option::flatten)
+            })
             .inspect({
                 let height = register_counter!("sandwitch_height");
+                let last_block_tx_count = register_gauge!("sandwitch_last_block_tx_count");
                 move |block| {
-                    height.absolute(block.number.unwrap().as_u64());
-                    trace!(block_hash = ?block.hash.unwrap(), "new block");
+                    if let Some(number) = block.number {
+                        height.absolute(number.as_u64());
+                    }
+                    last_block_tx_count.set(block.transactions.len() as f64);
+                    trace!(
+                        block_hash = ?block.hash.unwrap(),
+                        tx_count = block.transactions.len(),
+                        "new block",
+                    );
+                }
+            })
+            .inspect(|block| {
+                let mut real = current_pending_txs.lock().unwrap();
+                for h in block.transactions.iter() {
+                    real.remove(h);
                 }
             })
             .fuse();
@@ -186,14 +237,12 @@ where
         loop {
             select! {
                 tx = pending_txs.next() => match tx {
-                    Some(tx) => {
-                        self.monitors.process(&tx).await;
-                    },
+                    Some(_) => {}
                     None => break,
                 },
                 block = new_blocks.next() => match block {
                     Some(block) => {
-                        self.monitors.process(&block).await;
+                        self.monitors.on_block(&block).await;
                     },
                     None => return Err(anyhow!("new blocks stream finished unexpectedly")),
                 },

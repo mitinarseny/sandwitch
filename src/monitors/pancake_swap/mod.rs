@@ -20,7 +20,7 @@ use self::router::Router;
 
 use crate::contracts::pancake_router_v2::SwapExactETHForTokensCall;
 
-use super::{Monitor, TxMonitor};
+use super::Monitor;
 
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
@@ -165,12 +165,12 @@ struct Swap<'a, M: Middleware> {
     pair: &'a Pair<M>,
 }
 
-impl<M> Monitor<Transaction> for PancakeSwap<M>
+impl<M> Monitor for PancakeSwap<M>
 where
     M: Middleware,
 {
     #[tracing::instrument(skip_all, fields(?tx.hash))]
-    fn process<'a>(&'a mut self, tx: &'a Transaction) -> BoxFuture<'a, ()> {
+    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, Vec<Transaction>> {
         async move {
             if tx.value.is_zero()
                 || tx.gas_price.is_none()
@@ -187,7 +187,7 @@ where
                 .filter(|c| c.path.len() == 2)?;
             self.metrics.swap_exact_eth_for_tokens2.increment(1);
 
-            let pair = self.pair_contracts.get_mut(&(c.path[0], c.path[1]))?;
+            let pair = self.pair_contracts.get(&(c.path[0], c.path[1]))?;
             pair.hit().await.ok()?;
             let (t0, t1) = pair.tokens();
 
@@ -213,92 +213,18 @@ where
 
             Some(())
         }
-        .map(|_| ())
+        .map(|_| Vec::new())
         .boxed()
-        // stream
-        //     .filter(|tx| {
-        //         future::ready(
-        //             !tx.value.is_zero() && tx.to.map_or(false, |h| h == self.router.address()),
-        //         )
-        //     })
-        //     .inspect(|_| self.metrics.to_router.increment(1))
-        //     .map(|tx| async {
-        //         let c = SwapExactETHForTokensCall::decode(&tx.input.0)
-        //             .ok()
-        //             .inspect(|_| self.metrics.swap_exact_eth_for_tokens.increment(1))
-        //             .filter(|c| c.path.len() == 2)?;
-        //         self.metrics.swap_exact_eth_for_tokens2.increment(1);
-        //
-        //         let pair = self.pair_contracts.get(&(c.path[0], c.path[1]))?;
-        //         let (t0, t1) = pair.tokens();
-        //
-        //         let sw = Swap {
-        //             tx_hash: tx.hash,
-        //             gas: tx.gas.as_u128(),
-        //             gas_price: t0.as_decimals(tx.gas_price?.low_u128()),
-        //             amount_in: t0.as_decimals(tx.value.low_u128()),
-        //             amount_out_min: t1.as_decimals(c.amount_out_min.low_u128()),
-        //             reserves: pair.get_reserves().await.ok().map(|(r0, r1, _)| (r0, r1))?,
-        //             pair,
-        //         };
-        //
-        //         Some(tx.map(move |_| sw))
-        //     })
-        //     .buffer_unordered(10)
-        //     .filter_map(future::ready)
-        //     .inspect(|sw| {
-        //         if let Some((we_buy, our_min_b)) = self.calculate_amounts_in_and_out_min(
-        //             sw.reserves.0,
-        //             sw.reserves.1,
-        //             sw.amount_in,
-        //             sw.amount_out_min,
-        //             self.bnb_limit,
-        //         ) {
-        //             let (t0, t1) = sw.pair.tokens();
-        //             println!(
-        //                 "{:#x}, {}, {}, {}, {}, {:#x}, {:#x}, {}, {}, {:#x}, {}, {}, {}",
-        //                 sw.tx_hash,
-        //                 sw.gas,
-        //                 sw.gas_price,
-        //                 sw.amount_in,
-        //                 sw.amount_out_min,
-        //                 t0.address(),
-        //                 t1.address(),
-        //                 sw.reserves.0,
-        //                 sw.reserves.1,
-        //                 sw.pair.address(),
-        //                 we_buy,
-        //                 our_min_b,
-        //                 sw.unix().as_millis()
-        //             );
-        //         }
-        //     })
-        //     .filter_map(|_| future::ready(None))
-        //     .boxed()
     }
-}
 
-impl<M> Monitor<Block<TxHash>> for PancakeSwap<M>
-where
-    M: Middleware,
-{
     #[tracing::instrument(skip_all, fields(?block.hash))]
-    fn process<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, ()> {
+    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, ()> {
         self.pair_contracts
             .iter()
             .map(|(_, p)| p.on_block())
             .collect::<FuturesUnordered<_>>()
             .collect::<()>()
             .boxed()
-    }
-}
-
-impl<M> TxMonitor for PancakeSwap<M>
-where
-    M: Middleware,
-{
-    fn flush(&mut self) -> Vec<Transaction> {
-        Vec::new()
     }
 }
 
