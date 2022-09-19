@@ -32,11 +32,11 @@
       "includeVars": false,
       "keepTime": false,
       "tags": [],
-      "targetBlank": false,
+      "targetBlank": true,
       "title": "GitHub",
       "tooltip": "",
       "type": "link",
-      "url": "github.com/mitinarseny/sandwitch"
+      "url": "https://github.com/mitinarseny/sandwitch"
     }
   ],
   "liveNow": true,
@@ -817,6 +817,10 @@
           "text": "56",
           "value": "56"
         },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "definition": "label_values(sandwitch_info, network_id)",
         "hide": 0,
         "includeAll": false,
@@ -839,6 +843,10 @@
           "selected": false,
           "text": "sandwitch:9000",
           "value": "sandwitch:9000"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
         },
         "definition": "label_values(sandwitch_info{network_id=\"${network_id}\"}, instance)",
         "hide": 1,
