@@ -1,14 +1,16 @@
-use ethers::abi::AbiDecode;
-use ethers::prelude::*;
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::{try_join, FutureExt, StreamExt, TryFutureExt};
-use hex::ToHex;
-use metrics::{describe_counter, register_counter, Counter, Unit};
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::future;
 use std::sync::Arc;
+
+use ethers::{abi::AbiDecode, prelude::*};
+use futures::{
+    future::{try_join4, BoxFuture},
+    stream::FuturesUnordered,
+    FutureExt, StreamExt, TryFutureExt,
+};
+use hex::ToHex;
+use metrics::{describe_counter, register_counter, Counter, Unit};
+use serde::Deserialize;
 use tracing::{info, warn};
 
 mod pair;
@@ -87,7 +89,7 @@ where
                     .inspect(|pairs: &HashMap<_, _>| {
                         info!(collected = pairs.len(), "collected pair contracts")
                     })
-                    .await
+                    .await // TODO: add db cache wrapper (sqlite?)
             },
             metrics: Metrics {
                 to_router: {
@@ -181,22 +183,24 @@ where
 
             self.metrics.to_router.increment(1);
 
-            let c = SwapExactETHForTokensCall::decode(&tx.input.0)
+            let c = SwapExactETHForTokensCall::decode(&tx.input)
                 .ok()
                 .inspect(|_| self.metrics.swap_exact_eth_for_tokens.increment(1))
                 .filter(|c| c.path.len() == 2)?;
             self.metrics.swap_exact_eth_for_tokens2.increment(1);
 
             let pair = self.pair_contracts.get(&(c.path[0], c.path[1]))?;
-            pair.hit().await.ok()?;
+            pair.hit().await.ok()?; // TODO: remove this pair if error is this contract does not
+                                    // exist no more
             let (t0, t1) = pair.tokens();
 
-            let (gas_price, amount_in, amount_out_min, reserves) = try_join!(
+            let (gas_price, amount_in, amount_out_min, reserves) = try_join4(
                 t0.as_decimals(tx.gas_price.unwrap().low_u128()),
                 t0.as_decimals(tx.value.low_u128()),
                 t1.as_decimals(c.amount_out_min.low_u128()),
                 pair.reserves().map_ok(|(r0, r1, _)| (r0, r1)),
             )
+            .await
             .ok()?;
 
             let sw = Swap {

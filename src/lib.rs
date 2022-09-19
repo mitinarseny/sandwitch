@@ -19,9 +19,9 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use ethers::prelude::*;
-use futures::lock::Mutex;
 use futures::{
     future::{try_join, Aborted},
+    lock::Mutex,
     select,
     stream::StreamExt,
     FutureExt, TryFutureExt,
@@ -29,7 +29,7 @@ use futures::{
 use metrics::{register_counter, register_gauge};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, trace};
+use tracing::{error, error_span, info, trace, warn, Instrument};
 use url::Url;
 
 #[derive(Deserialize, Debug)]
@@ -149,11 +149,10 @@ where
             .map(|tx_hash| {
                 self.requesting
                     .get_transaction(tx_hash.clone())
-                    .inspect_err(
-                        move |err| error!(%err, ?tx_hash, "failed to get transaction by hash"),
-                    )
+                    .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
                     .map(Result::ok)
                     .map(Option::flatten)
+                    .instrument(error_span!("get_transaction_by_hash", ?tx_hash))
             })
             .inspect(|_| resolve_buffer.increment(1.0))
             .buffer_unordered(self.buffer_size)
@@ -184,14 +183,27 @@ where
                 let current_pending_txs = &current_pending_txs;
                 move |tx| {
                     let tx_hash = tx.hash.clone();
-                    async move { current_pending_txs.lock().await.insert(tx_hash) }
+                    async move {
+                        let first_seen = current_pending_txs.lock().await.insert(tx_hash);
+                        if !first_seen {
+                            warn!(
+                                ?tx_hash,
+                                "this transaction has already been seen, skipping..."
+                            );
+                        }
+                        first_seen
+                    }
                 }
             })
             .map({
                 let monitors = &self.monitors;
-                move |tx| async move {
-                    let to_send = monitors.on_tx(&tx).await;
-                    (tx.hash, to_send)
+                move |tx| {
+                    let tx_hash = tx.hash.clone();
+                    async move {
+                        let to_send = monitors.on_tx(&tx).await;
+                        (tx.hash, to_send)
+                    }
+                    .instrument(error_span!("process_tx", ?tx_hash))
                 }
             })
             .inspect(|_| process_buffer.increment(1.0))
@@ -210,6 +222,10 @@ where
                             .then_some(to_send)
                             .or_else(move || {
                                 missed_txs.increment(1);
+                                trace!(
+                                    ?tx_hash,
+                                    "this transaction has already been included in block"
+                                );
                                 None
                             })
                     }
@@ -228,35 +244,41 @@ where
             .filter_map(|block_hash| {
                 self.requesting
                     .get_block(block_hash.clone())
-                    .inspect_err(
-                        move |err| error!(%err, ?block_hash, "failed to get block by hash"),
-                    )
+                    .inspect_err(|err| error!(%err, "failed to get block by hash"))
                     .map(Result::ok)
                     .map(Option::flatten)
+                    .instrument(error_span!("get_block_by_hash", ?block_hash))
             })
             .inspect({
                 let height = register_counter!("sandwitch_height");
                 let last_block_tx_count = register_gauge!("sandwitch_last_block_tx_count");
-                move |block| {
-                    if let Some(number) = block.number {
-                        height.absolute(number.as_u64());
-                    }
-                    last_block_tx_count.set(block.transactions.len() as f64);
-                    trace!(
-                        block_hash = ?block.hash.unwrap(),
-                        tx_count = block.transactions.len(),
-                        "new block",
-                    );
-                }
+                move |block| error_span!("update_block_metrics", block_hash = ?block.hash.unwrap())
+                    .in_scope(|| {
+                        if let Some(number) = block.number {
+                            height.absolute(number.as_u64());
+                        }
+                        last_block_tx_count.set(block.transactions.len() as f64);
+                        trace!(
+                            tx_count = block.transactions.len(),
+                            "new block",
+                        );
+                    })
             })
             .then({
                 let current_pending_txs = &current_pending_txs;
-                move |block| async move {
-                    let mut txs = current_pending_txs.lock().await;
-                    for h in block.transactions.iter() {
-                        txs.remove(h);
+                move |block| {
+                    let block_hash = block.hash;
+                    async move {
+                        let mut txs = current_pending_txs.lock().await;
+                        for h in block.transactions.iter() {
+                            if txs.remove(h) {
+                                trace!(tx_hash = ?h, "transaction has been included in new block, so removing from current pending set...");
+                            };
+                            // TODO: what about chain reorderings?
+                        }
+                        block
                     }
-                    block
+                    .instrument(error_span!("remove_txs_seen_in_block", ?block_hash))
                 }
             })
             .boxed()
@@ -264,9 +286,8 @@ where
 
         loop {
             select! {
-                tx = pending_txs.next() => match tx {
-                    Some(_) => {}
-                    None => break,
+                tx = pending_txs.next() => if tx.is_none() {
+                    break;
                 },
                 block = new_blocks.next() => match block {
                     Some(block) => {

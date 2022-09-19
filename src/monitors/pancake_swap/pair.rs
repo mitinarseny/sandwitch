@@ -3,8 +3,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use ethers::prelude::{Address, ContractError, Middleware};
-use futures::lock::Mutex;
-use futures::{try_join, TryFutureExt};
+use futures::{future::try_join, lock::Mutex, TryFutureExt};
 use hex::ToHex;
 use metrics::{register_counter, Counter};
 
@@ -89,7 +88,7 @@ impl<M: Middleware> Pair<M> {
                 }
 
                 let (t0, t1) = self.tokens();
-                let (r0, r1) = try_join!(t0.as_decimals(r0), t1.as_decimals(r1),)?;
+                let (r0, r1) = try_join(t0.as_decimals(r0), t1.as_decimals(r1)).await?;
                 Ok((r0, r1, deadline))
             })
             .await
