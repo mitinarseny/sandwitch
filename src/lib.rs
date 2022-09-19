@@ -1,8 +1,9 @@
 #![feature(
-    iterator_try_collect,
-    result_option_inspect,
     future_join,
-    result_flattening
+    is_some_with,
+    iterator_try_collect,
+    result_flattening,
+    result_option_inspect
 )]
 pub mod abort;
 mod contracts;
@@ -11,25 +12,25 @@ mod timed;
 
 use self::abort::FutureExt as AbortFutureExt;
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-use self::monitors::{Monitor, MultiTxMonitor};
+use self::monitors::{BlockMonitor, MultiTxMonitor, PendingTxMonitor, TxMonitor};
 
 use std::collections::HashSet;
-use std::future;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use ethers::prelude::*;
 use futures::{
+    future,
     future::{try_join, Aborted},
     lock::Mutex,
     select,
-    stream::StreamExt,
+    stream::{StreamExt, TryStreamExt},
     FutureExt, TryFutureExt,
 };
 use metrics::{register_counter, register_gauge};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, error_span, info, trace, warn, Instrument};
+use tracing::{error_span, info, trace, warn, Instrument};
 use url::Url;
 
 #[derive(Deserialize, Debug)]
@@ -60,7 +61,7 @@ where
     streaming: Arc<Provider<SC>>,
     requesting: Arc<Provider<RC>>,
     buffer_size: usize,
-    monitors: MultiTxMonitor,
+    monitors: MultiTxMonitor<Box<dyn PendingTxMonitor>>,
 }
 
 impl App<Ws, Http> {
@@ -106,7 +107,7 @@ where
             streaming,
             requesting,
             buffer_size: config.core.buffer_size,
-            monitors: MultiTxMonitor::new(vec![Box::new(pancake)]),
+            monitors: MultiTxMonitor::new([Box::new(pancake) as Box<dyn PendingTxMonitor>]),
         })
     }
 }
@@ -149,37 +150,39 @@ where
             .map(|tx_hash| {
                 self.requesting
                     .get_transaction(tx_hash.clone())
-                    .inspect_err(|err| error!(%err, "failed to get transaction by hash"))
-                    .map(Result::ok)
-                    .map(Option::flatten)
-                    .instrument(error_span!("get_transaction_by_hash", ?tx_hash))
+                    .map(move |r| {
+                        r.with_context(|| format!("failed to get transaction by hash: {tx_hash}"))
+                    })
             })
             .inspect(|_| resolve_buffer.increment(1.0))
             .buffer_unordered(self.buffer_size)
             .inspect(|_| resolve_buffer.decrement(1.0))
-            .filter_map(future::ready)
-            .inspect({
+            .try_filter_map(future::ok)
+            .inspect_ok({
                 let resolved_txs = register_counter!("sandwitch_resolved_txs");
                 move |tx| {
                     resolved_txs.increment(1);
                     trace!(?tx.hash, "transaction resolved");
                 }
             })
-            .filter(|tx| {
+            .try_filter(|tx| {
                 future::ready(
                     tx.block_hash.is_none()
                         && tx.block_number.is_none()
-                        && tx.transaction_index.is_none(),
+                        && tx.transaction_index.is_none()
+                        && !tx.value.is_zero()
+                        && !tx.gas.is_zero()
+                        && tx.gas_price.is_some_and(|g| !g.is_zero()),
                 )
             })
-            .inspect({
+            .inspect_ok({
                 let resolved_pending_txs = register_counter!("sandwitch_resolved_pending_txs");
                 move |tx| {
                     resolved_pending_txs.increment(1);
                     trace!(?tx.hash, "resolved transaction is still pending");
                 }
             })
-            .filter({
+            .try_filter({
                 let current_pending_txs = &current_pending_txs;
                 move |tx| {
                     let tx_hash = tx.hash.clone();
@@ -195,21 +198,21 @@ where
                     }
                 }
             })
-            .map({
+            .map_ok({
                 let monitors = &self.monitors;
                 move |tx| {
                     let tx_hash = tx.hash.clone();
                     async move {
-                        let to_send = monitors.on_tx(&tx).await;
-                        (tx.hash, to_send)
+                        let to_send = monitors.on_tx(&tx).await?;
+                        Ok((tx.hash, to_send))
                     }
                     .instrument(error_span!("process_tx", ?tx_hash))
                 }
             })
-            .inspect(|_| process_buffer.increment(1.0))
-            .buffer_unordered(self.buffer_size)
-            .inspect(|_| process_buffer.decrement(1.0))
-            .filter_map({
+            .inspect_ok(|_| process_buffer.increment(1.0))
+            .try_buffer_unordered(self.buffer_size)
+            .inspect_ok(|_| process_buffer.decrement(1.0))
+            .try_filter_map({
                 let current_pending_txs = &current_pending_txs;
                 let missed_txs = register_counter!("sandwitch_missed_txs");
                 move |(tx_hash, to_send)| {
@@ -219,7 +222,7 @@ where
                             .lock()
                             .await
                             .remove(&tx_hash)
-                            .then_some(to_send)
+                            .then(|| Ok(to_send))
                             .or_else(move || {
                                 missed_txs.increment(1);
                                 trace!(
@@ -228,14 +231,15 @@ where
                                 );
                                 None
                             })
+                            .transpose()
                     }
                 }
             })
-            .filter(|to_send| future::ready(!to_send.is_empty()))
-            .map(|_to_send| future::ready(())) // TODO: send
-            .inspect(|_| send_buffer.increment(1.0))
-            .buffer_unordered(self.buffer_size)
-            .inspect(|_| send_buffer.decrement(1.0))
+            .try_filter(|to_send| future::ready(!to_send.is_empty()))
+            .map_ok(|_to_send| future::ok(())) // TODO: send
+            .inspect_ok(|_| send_buffer.increment(1.0))
+            .try_buffer_unordered(self.buffer_size)
+            .inspect_ok(|_| send_buffer.decrement(1.0))
             .boxed()
             .fuse();
 
@@ -244,12 +248,12 @@ where
             .filter_map(|block_hash| {
                 self.requesting
                     .get_block(block_hash.clone())
-                    .inspect_err(|err| error!(%err, "failed to get block by hash"))
-                    .map(Result::ok)
-                    .map(Option::flatten)
-                    .instrument(error_span!("get_block_by_hash", ?block_hash))
+                    .map(move |r| {
+                        r.with_context(|| format!("failed to get block by hash: {block_hash}"))
+                    })
+                    .map(Result::transpose)
             })
-            .inspect({
+            .inspect_ok({
                 let height = register_counter!("sandwitch_height");
                 let last_block_tx_count = register_gauge!("sandwitch_last_block_tx_count");
                 move |block| error_span!("update_block_metrics", block_hash = ?block.hash.unwrap())
@@ -264,19 +268,22 @@ where
                         );
                     })
             })
-            .then({
+            .and_then({
                 let current_pending_txs = &current_pending_txs;
                 move |block| {
-                    let block_hash = block.hash;
+                    let block_hash = block.hash.unwrap();
                     async move {
                         let mut txs = current_pending_txs.lock().await;
                         for h in block.transactions.iter() {
                             if txs.remove(h) {
-                                trace!(tx_hash = ?h, "transaction has been included in new block, so removing from current pending set...");
+                                trace!(
+                                    tx_hash = ?h,
+                                    "transaction has been included in new block, so removing from current pending set...",
+                                );
                             };
                             // TODO: what about chain reorderings?
                         }
-                        block
+                        Ok(block)
                     }
                     .instrument(error_span!("remove_txs_seen_in_block", ?block_hash))
                 }
@@ -286,12 +293,18 @@ where
 
         loop {
             select! {
-                tx = pending_txs.next() => if tx.is_none() {
+                tx = pending_txs.try_next() => if tx?.is_none() {
                     break;
                 },
-                block = new_blocks.next() => match block {
+                block = new_blocks.try_next() => match block? {
                     Some(block) => {
-                        self.monitors.on_block(&block).await;
+                        self.monitors.on_block(&block)
+                            .instrument(error_span!("on_block", block_hash = ?block.hash.unwrap()))
+                            .await
+                            .with_context(|| format!(
+                                "failed to process block {:?}",
+                                block.hash.unwrap(),
+                            ))?;
                     },
                     None => return Err(anyhow!("new blocks stream finished unexpectedly")),
                 },

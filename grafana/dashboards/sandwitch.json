@@ -313,7 +313,7 @@
             "lineStyle": {
               "fill": "solid"
             },
-            "lineWidth": 1,
+            "lineWidth": 2,
             "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
@@ -352,6 +352,10 @@
               {
                 "id": "unit",
                 "value": "tx"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           },
@@ -364,6 +368,10 @@
               {
                 "id": "unit",
                 "value": "tx"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           },
@@ -376,6 +384,10 @@
               {
                 "id": "unit",
                 "value": "tx"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -599,12 +611,26 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "max": 1,
+          "min": 0,
           "thresholds": {
-            "mode": "absolute",
+            "mode": "percentage",
             "steps": [
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "purple",
+                "value": 40
+              },
+              {
+                "color": "#EAB839",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 80
               }
             ]
           },
@@ -641,13 +667,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "irate(sandwitch_resolved_pending_txs{instance=\"${instance}\"}[$__rate_interval]) / irate(sandwitch_seen_txs{instance=\"${instance}\"}[$__rate_interval])",
+          "expr": "1 - (irate(sandwitch_resolved_pending_txs{instance=\"${instance}\"}[$__rate_interval]) / irate(sandwitch_resolved_txs{instance=\"${instance}\"}[$__rate_interval]))",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Resolved as Pending TX Rate",
+      "title": "Resolved as Already Mined TX Rate",
       "type": "stat"
     },
     {
@@ -733,32 +759,7 @@
           },
           "unit": "none"
         },
-        "overrides": [
-          {
-            "__systemRef": "hideSeriesFrom",
-            "matcher": {
-              "id": "byNames",
-              "options": {
-                "mode": "exclude",
-                "names": [
-                  "Wrapped BNB -> BUSD Token"
-                ],
-                "prefix": "All except:",
-                "readOnly": true
-              }
-            },
-            "properties": [
-              {
-                "id": "custom.hideFrom",
-                "value": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": true
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 9,
@@ -868,7 +869,7 @@
     ]
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},

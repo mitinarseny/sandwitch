@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::future;
 use std::sync::Arc;
 
 use ethers::{abi::AbiDecode, prelude::*};
 use futures::{
+    future,
     future::{try_join4, BoxFuture},
     stream::FuturesUnordered,
     FutureExt, StreamExt, TryFutureExt,
@@ -22,7 +22,7 @@ use self::router::Router;
 
 use crate::contracts::pancake_router_v2::SwapExactETHForTokensCall;
 
-use super::Monitor;
+use super::{BlockMonitor, FunctionCallMonitor, TxMonitor};
 
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
@@ -167,41 +167,78 @@ struct Swap<'a, M: Middleware> {
     pair: &'a Pair<M>,
 }
 
-impl<M> Monitor for PancakeSwap<M>
+impl<M> TxMonitor for PancakeSwap<M>
+where
+    M: Middleware + 'static,
+{
+    #[tracing::instrument(skip_all, fields(?tx.hash))]
+    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
+        async move {
+            if !tx.to.map_or(false, |h| h == self.router.address()) {
+                return None;
+            }
+            self.metrics.to_router.increment(1);
+
+            match *tx.input {
+                [127, 243, 106, 181, ..] => Some(
+                    self.on_func(tx, &SwapExactETHForTokensCall::decode(&tx.input).ok()?)
+                        .await,
+                ),
+                _ => None,
+            }
+        }
+        .map(|o| o.unwrap_or_else(|| Ok(Vec::new())))
+        .boxed()
+    }
+}
+
+impl<M> BlockMonitor for PancakeSwap<M>
 where
     M: Middleware,
 {
-    #[tracing::instrument(skip_all, fields(?tx.hash))]
-    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, Vec<Transaction>> {
+    #[tracing::instrument(skip_all, fields(?block.hash))]
+    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        self.pair_contracts
+            .iter()
+            .map(|(_, p)| p.on_block())
+            .collect::<FuturesUnordered<_>>()
+            .collect::<()>()
+            .map(Result::Ok)
+            .boxed()
+    }
+}
+
+impl<M> FunctionCallMonitor<SwapExactETHForTokensCall> for PancakeSwap<M>
+where
+    M: Middleware + 'static,
+{
+    fn on_func<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        inputs: &'a SwapExactETHForTokensCall,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
         async move {
-            if tx.value.is_zero()
-                || tx.gas_price.is_none()
-                || tx.to.map_or(false, |h| h == self.router.address())
-            {
-                return None;
+            self.metrics.swap_exact_eth_for_tokens.increment(1);
+            if inputs.path.len() != 2 {
+                return Ok(Vec::new());
             }
-
-            self.metrics.to_router.increment(1);
-
-            let c = SwapExactETHForTokensCall::decode(&tx.input)
-                .ok()
-                .inspect(|_| self.metrics.swap_exact_eth_for_tokens.increment(1))
-                .filter(|c| c.path.len() == 2)?;
             self.metrics.swap_exact_eth_for_tokens2.increment(1);
 
-            let pair = self.pair_contracts.get(&(c.path[0], c.path[1]))?;
-            pair.hit().await.ok()?; // TODO: remove this pair if error is this contract does not
-                                    // exist no more
+            let pair = match self.pair_contracts.get(&(inputs.path[0], inputs.path[1])) {
+                Some(v) => v,
+                None => return Ok(Vec::new()),
+            }; // TODO
+            pair.hit().await?; // TODO: remove this pair if error is this contract does not
+                               // exist no more
             let (t0, t1) = pair.tokens();
 
             let (gas_price, amount_in, amount_out_min, reserves) = try_join4(
                 t0.as_decimals(tx.gas_price.unwrap().low_u128()),
                 t0.as_decimals(tx.value.low_u128()),
-                t1.as_decimals(c.amount_out_min.low_u128()),
+                t1.as_decimals(inputs.amount_out_min.low_u128()),
                 pair.reserves().map_ok(|(r0, r1, _)| (r0, r1)),
             )
-            .await
-            .ok()?;
+            .await?;
 
             let sw = Swap {
                 tx_hash: tx.hash,
@@ -214,21 +251,9 @@ where
             };
 
             info!(?tx.hash, "we got interesting transation");
-
-            Some(())
+            Ok(Vec::new())
         }
-        .map(|_| Vec::new())
         .boxed()
-    }
-
-    #[tracing::instrument(skip_all, fields(?block.hash))]
-    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, ()> {
-        self.pair_contracts
-            .iter()
-            .map(|(_, p)| p.on_block())
-            .collect::<FuturesUnordered<_>>()
-            .collect::<()>()
-            .boxed()
     }
 }
 
