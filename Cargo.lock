@@ -2650,6 +2650,7 @@ dependencies = [
  "lazy_static",
  "metrics",
  "metrics-exporter-prometheus",
+ "pin-project",
  "serde",
  "tokio",
  "tokio-stream",

@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ethers::{abi::AbiDecode, prelude::*};
+use ethers::prelude::*;
+use futures::lock::Mutex;
 use futures::{
-    future,
-    future::{try_join4, BoxFuture},
-    stream::FuturesUnordered,
-    FutureExt, StreamExt, TryFutureExt,
+    future, future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt,
 };
 use hex::ToHex;
 use metrics::{describe_counter, register_counter, Counter, Unit};
@@ -20,6 +18,7 @@ mod token;
 use self::pair::Pair;
 use self::router::Router;
 
+use crate::cached::Aption;
 use crate::contracts::pancake_router_v2::SwapExactETHForTokensCall;
 
 use super::{BlockMonitor, FunctionCallMonitor, TxMonitor};
@@ -34,11 +33,12 @@ pub struct PancakeSwapConfig {
 }
 
 pub struct PancakeSwap<M: Middleware> {
+    client: Arc<M>,
     router: Router<M>,
     bnb_limit: f64,
     gas_price: f64,
     gas_limit: f64,
-    pair_contracts: HashMap<(Address, Address), Pair<M>>,
+    pair_contracts: HashMap<(Address, Address), Mutex<Aption<Pair<M>>>>,
     metrics: Metrics,
 }
 
@@ -65,32 +65,11 @@ where
             bnb_limit: config.bnb_limit,
             gas_price: config.gas_price,
             gas_limit: config.gas_limit,
-            pair_contracts: {
-                info!(
-                    total = config.token_pairs.len(),
-                    "collecting pair contracts..."
-                );
-                config
-                    .token_pairs
-                    .into_iter()
-                    .map(move |p| {
-                        Pair::new(client.clone(), factory, p).map_ok(move |pair| (p, pair))
-                    })
-                    .collect::<FuturesUnordered<_>>()
-                    .filter_map(|r| {
-                        future::ready(
-                            r.inspect_err(|err| {
-                                warn!(%err, "failed to initialize pair, skipping...");
-                            })
-                            .ok(),
-                        )
-                    })
-                    .collect()
-                    .inspect(|pairs: &HashMap<_, _>| {
-                        info!(collected = pairs.len(), "collected pair contracts")
-                    })
-                    .await // TODO: add db cache wrapper (sqlite?)
-            },
+            pair_contracts: config
+                .token_pairs
+                .into_iter()
+                .map(|p| (p, Mutex::new(None.into())))
+                .collect(),
             metrics: Metrics {
                 to_router: {
                     let c = register_counter!(
@@ -124,6 +103,7 @@ where
                 },
             },
             router,
+            client,
         })
     }
 }
@@ -157,14 +137,13 @@ impl<M: Middleware> PancakeSwap<M> {
     }
 }
 
-struct Swap<'a, M: Middleware> {
+struct Swap {
     tx_hash: H256,
     gas: u128,
     gas_price: f64,
     amount_in: f64,
     amount_out_min: f64,
     reserves: (f64, f64),
-    pair: &'a Pair<M>,
 }
 
 impl<M> TxMonitor for PancakeSwap<M>
@@ -173,22 +152,19 @@ where
 {
     #[tracing::instrument(skip_all, fields(?tx.hash))]
     fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
-        async move {
-            if !tx.to.map_or(false, |h| h == self.router.address()) {
-                return None;
-            }
+        if !tx.to.map_or(false, |h| h == self.router.address()) {
+            None
+        } else {
             self.metrics.to_router.increment(1);
 
             match *tx.input {
-                [127, 243, 106, 181, ..] => Some(
-                    self.on_func(tx, &SwapExactETHForTokensCall::decode(&tx.input).ok()?)
-                        .await,
-                ),
+                [127, 243, 106, 181, ..] => {
+                    <Self as FunctionCallMonitor<SwapExactETHForTokensCall>>::on_func_raw(self, tx)
+                }
                 _ => None,
             }
         }
-        .map(|o| o.unwrap_or_else(|| Ok(Vec::new())))
-        .boxed()
+        .unwrap_or_else(|| future::ok(Vec::new()).boxed())
     }
 }
 
@@ -197,10 +173,14 @@ where
     M: Middleware,
 {
     #[tracing::instrument(skip_all, fields(?block.hash))]
-    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        if block.hash.is_none() {
+            return future::ok(()).boxed();
+        }
         self.pair_contracts
-            .iter()
-            .map(|(_, p)| p.on_block())
+            .iter_mut()
+            .filter_map(|(_, p)| p.get_mut().as_mut())
+            .map(|p| p.on_block())
             .collect::<FuturesUnordered<_>>()
             .collect::<()>()
             .map(Result::Ok)
@@ -215,7 +195,7 @@ where
     fn on_func<'a>(
         &'a self,
         tx: &'a Transaction,
-        inputs: &'a SwapExactETHForTokensCall,
+        inputs: SwapExactETHForTokensCall,
     ) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
         async move {
             self.metrics.swap_exact_eth_for_tokens.increment(1);
@@ -223,32 +203,35 @@ where
                 return Ok(Vec::new());
             }
             self.metrics.swap_exact_eth_for_tokens2.increment(1);
+            let (t0, t1) = (inputs.path[0], inputs.path[1]);
 
-            let pair = match self.pair_contracts.get(&(inputs.path[0], inputs.path[1])) {
+            let mut pair_guard = match self.pair_contracts.get(&(t0, t1)) {
                 Some(v) => v,
                 None => return Ok(Vec::new()),
-            }; // TODO
-            pair.hit().await?; // TODO: remove this pair if error is this contract does not
-                               // exist no more
+            }
+            .lock()
+            .await;
+
+            let pair = pair_guard
+                .get_or_try_insert_with(|| {
+                    Pair::new(self.client.clone(), self.router.factory(), (t0, t1))
+                })
+                .await?;
+
+            // TODO: remove this pair if error is this contract does not exist no more
+
+            pair.hit();
             let (t0, t1) = pair.tokens();
 
-            let (gas_price, amount_in, amount_out_min, reserves) = try_join4(
-                t0.as_decimals(tx.gas_price.unwrap().low_u128()),
-                t0.as_decimals(tx.value.low_u128()),
-                t1.as_decimals(inputs.amount_out_min.low_u128()),
-                pair.reserves().map_ok(|(r0, r1, _)| (r0, r1)),
-            )
-            .await?;
-
-            let sw = Swap {
+            let _sw = Swap {
                 tx_hash: tx.hash,
                 gas: tx.gas.as_u128(),
-                gas_price,
-                amount_in,
-                amount_out_min,
-                reserves,
-                pair,
+                gas_price: t0.as_decimals(tx.gas_price.unwrap().low_u128()),
+                amount_in: t0.as_decimals(tx.value.low_u128()),
+                amount_out_min: t1.as_decimals(inputs.amount_out_min.low_u128()),
+                reserves: pair.reserves().map_ok(|(r0, r1, _)| (r0, r1)).await?,
             };
+            drop(pair);
 
             info!(?tx.hash, "we got interesting transation");
             Ok(Vec::new())

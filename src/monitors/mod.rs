@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use ethers::prelude::{Block, EthCall, Transaction};
 use ethers::types::TxHash;
@@ -15,7 +15,7 @@ pub trait TxMonitor: Send + Sync {
 }
 
 pub trait BlockMonitor: Send + Sync {
-    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
 pub trait PendingTxMonitor: TxMonitor + BlockMonitor {}
@@ -25,8 +25,13 @@ pub trait FunctionCallMonitor<C: EthCall>: Send + Sync {
     fn on_func<'a>(
         &'a self,
         tx: &'a Transaction,
-        inputs: &'a C,
+        inputs: C,
     ) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>>;
+
+    fn on_func_raw<'a>(&'a self, tx: &'a Transaction) -> Option<BoxFuture<'a, anyhow::Result<Vec<Transaction>>>> {
+        let inputs = C::decode(&tx.input).ok()?;
+        Some(self.on_func(tx, inputs))
+    }
 }
 
 impl<M> TxMonitor for Box<M>
@@ -44,8 +49,8 @@ where
     M: BlockMonitor + ?Sized,
 {
     #[inline]
-    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
-        BlockMonitor::on_block(&**self, block)
+    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        BlockMonitor::on_block(self.as_mut(), block)
     }
 }
 
@@ -65,6 +70,12 @@ impl<M> Deref for MultiTxMonitor<M> {
     }
 }
 
+impl<M> DerefMut for MultiTxMonitor<M> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl<M> TxMonitor for MultiTxMonitor<M>
 where
     M: TxMonitor,
@@ -80,8 +91,8 @@ impl<M> BlockMonitor for MultiTxMonitor<M>
 where
     M: BlockMonitor,
 {
-    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
-        try_join_all(self.iter().map(|m| m.on_block(block)))
+    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        try_join_all(self.iter_mut().map(|m| m.on_block(block)))
             .map_ok(|_| ())
             .boxed()
     }

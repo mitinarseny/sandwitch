@@ -3,14 +3,14 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use ethers::prelude::{Address, ContractError, Middleware};
-use futures::lock::Mutex;
+use futures::future::try_join;
 
 use crate::contracts::pancake_token::PancakeToken;
 
 pub struct Token<M: Middleware> {
     contract: PancakeToken<M>,
-    name: Mutex<Option<String>>,
-    decimals: Mutex<Option<u8>>,
+    name: String,
+    decimals: u8,
 }
 
 impl<M: Middleware> Deref for Token<M> {
@@ -21,40 +21,24 @@ impl<M: Middleware> Deref for Token<M> {
     }
 }
 
-impl<M: Middleware> From<PancakeToken<M>> for Token<M> {
-    fn from(c: PancakeToken<M>) -> Self {
-        Self {
-            contract: c,
-            name: Mutex::new(None),
-            decimals: Mutex::new(None),
-        }
-    }
-}
-
 impl<M: Middleware> Token<M> {
-    pub fn new(client: Arc<M>, address: Address) -> Self {
-        PancakeToken::new(address, client).into()
-    }
-
-    pub async fn name(&self) -> Result<String, ContractError<M>> {
-        let mut name = self.name.lock().await;
-        Ok(match &*name {
-            Some(v) => v,
-            None => name.insert(self.contract.name().call().await?),
-        }
-        .clone())
-    }
-
-    async fn decimals(&self) -> Result<u8, ContractError<M>> {
-        let mut decimals = self.decimals.lock().await;
-        Ok(match *decimals {
-            Some(v) => v,
-            None => *decimals.insert(self.contract.decimals().call().await?),
+    pub async fn new(client: Arc<M>, address: Address) -> Result<Self, ContractError<M>> {
+        let contract = PancakeToken::new(address, client);
+        let (name, decimals) =
+            try_join(contract.name().call(), contract.decimals().call()).await?;
+        Ok(Self {
+            contract,
+            name,
+            decimals,
         })
     }
 
-    pub async fn as_decimals(&self, v: impl Into<u128>) -> Result<f64, ContractError<M>> {
-        Ok(v.into() as f64 / 10f64.powi(self.decimals().await? as i32))
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn as_decimals(&self, v: impl Into<u128>) -> f64 {
+        v.into() as f64 / 10f64.powi(self.decimals as i32)
     }
 }
 

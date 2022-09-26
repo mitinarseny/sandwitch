@@ -3,13 +3,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use futures::FutureExt;
+use futures::future::Aborted;
+use futures::{pin_mut, select_biased, FutureExt};
 use metrics::register_counter;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use sandwitch::*;
 
 use clap::{Parser, ValueHint};
-use sandwitch::abort::{Aborted, FutureExt as AbortFutureExt};
+use sandwitch::abort::FutureExt as AbortFutureExt;
 // use sandwitch::shutdown::{CancelToken, Cancelled, FutureExt as CancelFutureExt};
 use tokio::signal::ctrl_c;
 use tokio::{fs, main};
@@ -74,33 +75,47 @@ async fn main() -> anyhow::Result<()> {
 
     let cancel_token = CancellationToken::new();
 
-    let app_handle = tokio::spawn({
-        let cancel_token = cancel_token.clone();
+    let app = {
+        let cancel_token = &cancel_token;
         async move {
+            let mut app = {
+                let app = App::from_config(config);
+                let cancel = cancel_token.cancelled();
+                pin_mut!(app);
+                pin_mut!(cancel);
+                app.with_abort(cancel.map(|_| Aborted)).await??
+            };
             info!("initializing");
-            let mut app = App::from_config(config)
-                .with_unpin_abort_unpin(cancel_token.cancelled().map(|_| Aborted))
-                .await??;
 
             info!("run");
             app.run(cancel_token).await?;
 
             // dirty fix: wait for websockets to unsubscribe
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            // tokio::time::sleep(Duration::from_secs(1)).await;
 
             Ok::<_, anyhow::Error>(())
         }
-    });
+        .fuse()
+    };
+    pin_mut!(app);
 
-    ctrl_c()
-        .await
-        .expect("unable to listen for shutdown signal");
-    info!("shutting down...");
-    cancel_token.cancel();
-
-    match app_handle.await? {
-        Err(err) if err.is::<Aborted>() => Ok(()),
-        v => v,
+    select_biased! {
+        r = ctrl_c().fuse() => {
+            r?;
+            info!("shutting down...");
+            cancel_token.cancel();
+        },
+        r = app => {
+            return r;
+        }
     }
-    .inspect(|_| info!("shutdown succeeded"))
+
+    match app.await {
+        Err(err) if err.is::<Aborted>() => {
+            info!("shutdown succeeded");
+            Ok(())
+        }
+        Err(err) => Err(err),
+        Ok(v) => Ok(v),
+    }
 }
