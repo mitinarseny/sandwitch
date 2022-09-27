@@ -86,8 +86,8 @@ impl<M: Middleware> Pair<M> {
             .map(|v| *v)
     }
 
-    pub async fn on_block(&mut self) {
-        self.reserves.get_mut().take();
+    pub async fn on_block(&self) {
+        self.reserves.lock().await.take();
     }
 }
 

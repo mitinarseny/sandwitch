@@ -38,7 +38,7 @@ pub struct PancakeSwap<M: Middleware> {
     bnb_limit: f64,
     gas_price: f64,
     gas_limit: f64,
-    pair_contracts: HashMap<(Address, Address), Mutex<Aption<Pair<M>>>>,
+    pair_contracts: HashMap<(Address, Address), Mutex<Aption<Arc<Pair<M>>>>>,
     metrics: Metrics,
 }
 
@@ -205,19 +205,18 @@ where
             self.metrics.swap_exact_eth_for_tokens2.increment(1);
             let (t0, t1) = (inputs.path[0], inputs.path[1]);
 
-            let mut pair_guard = match self.pair_contracts.get(&(t0, t1)) {
-                Some(v) => v,
+            let pair = match self.pair_contracts.get(&(t0, t1)) {
                 None => return Ok(Vec::new()),
-            }
-            .lock()
-            .await;
-
-            let pair = pair_guard
-                .get_or_try_insert_with(|| {
-                    Pair::new(self.client.clone(), self.router.factory(), (t0, t1))
-                })
-                .await?;
-
+                Some(pair) => pair
+                    .lock()
+                    .await
+                    .get_or_try_insert_with(|| {
+                        Pair::new(self.client.clone(), self.router.factory(), (t0, t1))
+                            .map_ok(Arc::new)
+                    })
+                    .await?
+                    .clone(),
+            };
             // TODO: remove this pair if error is this contract does not exist no more
 
             pair.hit();

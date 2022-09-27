@@ -417,10 +417,7 @@ where
     ) -> anyhow::Result<()> {
         let mut new_blocks = blocks
             .filter(|b| future::ready(b.hash.is_some() && b.number.is_some()))
-            // .inspect(||)
-            // .then(|b| self.process_block(&b))
             .fuse();
-        // let mut pending_txs = pending_txs.counted(register_counter!("sandwitch_seen_txs"));
 
         let mut aborts = AbortSet::new();
         let mut processing_txs = FuturesUnordered::new(register_gauge!("sandwitch_in_flight_txs"));
@@ -471,8 +468,7 @@ where
         &self,
         tx_hash: TxHash,
         aborts: &mut AbortSet<TxHash>,
-    ) -> Option<impl Future<Output = ProcessTxResult> + '_>
-    {
+    ) -> Option<impl Future<Output = ProcessTxResult> + '_> {
         let abort = aborts.try_insert(tx_hash).or_else(|| {
             warn!(
                 ?tx_hash,
@@ -519,10 +515,7 @@ where
     }
 
     #[tracing::instrument(skip_all, fields(tx_hash = ?r.with()))]
-    fn process_tx_result(
-        &self,
-        r: ProcessTxResult,
-    ) -> anyhow::Result<()> {
+    fn process_tx_result(&self, r: ProcessTxResult) -> anyhow::Result<()> {
         match r.into_inner() {
             Ok(r) => self
                 .process_metrics
@@ -538,8 +531,16 @@ where
 
     #[tracing::instrument(skip_all, block_hash = ?block.hash.unwrap())]
     async fn process_block(&self, block: &Block<TxHash>) -> anyhow::Result<()> {
-        let r = self.monitors.write().await.on_block(block).try_timed().await?;
-        self.process_metrics.process_block_duration.record(r.elapsed());
+        let r = self
+            .monitors
+            .write()
+            .await
+            .on_block(block)
+            .try_timed()
+            .await?;
+        self.process_metrics
+            .process_block_duration
+            .record(r.elapsed());
         Ok(r.into_inner())
     }
 
