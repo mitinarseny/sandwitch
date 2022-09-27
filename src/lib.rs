@@ -18,7 +18,9 @@ use self::abort::{AbortSet, FutureExt as AbortFutureExt};
 use self::metriced::{FuturesUnordered, StreamExt as MetricedStreamExt};
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
 use self::monitors::{BlockMonitor, MultiTxMonitor, PendingTxMonitor, TxMonitor};
-use self::timed::{StreamExt as TimedStreamExt, Timed, TryFutureExt as TimedTryFutureExt};
+use self::timed::{
+    StreamExt as TimedStreamExt, Timed, TryFutureExt as TimedTryFutureExt, TryTimedFuture,
+};
 use self::with::{FutureExt as WithFutureExt, With};
 
 use std::sync::Arc;
@@ -33,8 +35,8 @@ use futures::{
     stream::StreamExt,
     FutureExt, TryFutureExt,
 };
-use futures::{pin_mut, select_biased, Stream};
-use metrics::{register_counter, register_gauge, register_histogram, Counter, Gauge};
+use futures::{pin_mut, select_biased, Future, Stream};
+use metrics::{register_counter, register_gauge, register_histogram, Counter, Gauge, Histogram};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -58,6 +60,31 @@ pub struct MonitorsConfig {
     pub pancake_swap: PancakeSwapConfig,
 }
 
+struct ProcessMetrics {
+    seen_txs: Counter,
+    resolved_txs: Counter,
+    resolved_as_pending_txs: Counter,
+    process_tx_duration: Histogram,
+    missed_txs: Counter,
+
+    height: Counter,
+    process_block_duration: Histogram,
+}
+
+impl ProcessMetrics {
+    fn new() -> Self {
+        Self {
+            seen_txs: register_counter!("sandwitch_seen_txs"),
+            resolved_txs: register_counter!("sandwitch_resolved_txs"),
+            resolved_as_pending_txs: register_counter!("sandwitch_resolved_as_pending_txs"),
+            process_tx_duration: register_histogram!("sandwitch_process_tx_duration_seconds"),
+            missed_txs: register_counter!("sandwitch_missed_txs"),
+            height: register_counter!("sandwitch_height"),
+            process_block_duration: register_histogram!("sandwitch_process_block_duration_seconds"),
+        }
+    }
+}
+
 pub struct App<SC, RC>
 where
     SC: PubsubClient,
@@ -66,6 +93,7 @@ where
     streaming: Arc<Provider<SC>>,
     requesting: Arc<Provider<RC>>,
     monitors: RwLock<MultiTxMonitor<Box<dyn PendingTxMonitor>>>,
+    process_metrics: ProcessMetrics,
 }
 
 impl App<Ws, Http> {
@@ -113,6 +141,7 @@ where
             monitors: RwLock::new(MultiTxMonitor::new([
                 Box::new(pancake) as Box<dyn PendingTxMonitor>
             ])),
+            process_metrics: ProcessMetrics::new(),
         })
     }
 }
@@ -388,112 +417,150 @@ where
     ) -> anyhow::Result<()> {
         let mut new_blocks = blocks
             .filter(|b| future::ready(b.hash.is_some() && b.number.is_some()))
+            // .inspect(||)
+            // .then(|b| self.process_block(&b))
             .fuse();
         // let mut pending_txs = pending_txs.counted(register_counter!("sandwitch_seen_txs"));
-
-        let height = register_counter!("sandwitch_height");
-        let process_block_duration =
-            register_histogram!("sandwitch_process_block_duration_seconds");
-        let seen_txs = register_counter!("sandwitch_seen_txs");
-        let resolved_txs = register_counter!("sandwitch_resolved_txs");
-        let resolved_as_pending_txs = register_counter!("sandwitch_resolved_as_pending_txs");
-        let process_tx_duration = register_histogram!("sandwitch_process_tx_duration_seconds");
-        let missed_txs = register_counter!("sandwitch_missed_txs");
 
         let mut aborts = AbortSet::new();
         let mut processing_txs = FuturesUnordered::new(register_gauge!("sandwitch_in_flight_txs"));
 
         while !(pending_txs.is_terminated() && processing_txs.is_terminated()) {
             select_biased! {
-                r = processing_txs.select_next_some() => {
-                    let (r, tx_hash) = With::<
-                        Result<anyhow::Result<Timed<()>>, Aborted>,
-                        TxHash,
-                    >::into_tuple(r);
-                    match r {
-                        Ok(r) => process_tx_duration.record(r?.elapsed()),
-                        Err(Aborted) => {
-                            missed_txs.increment(1);
-                            trace!(?tx_hash, "transaction has been missed");
-                        },
-                    };
-                },
+                r = processing_txs.select_next_some() => self.process_tx_result(r)?,
                 block = new_blocks.select_next_some() => {
+                    aborts.abort_all().for_each(drop);
+
                     let block_hash = block.hash.unwrap();
                     let block_number = block.number.unwrap().as_u64();
-                    height.absolute(block_number);
+                    self.process_metrics.height.absolute(block_number);
                     trace!(?block_hash, ?block_number, "got new block");
                     // TODO: metrics: gas avg (prcentil)
-                    aborts.abort_all().for_each(drop);
-                    process_block_duration.record(
-                        self.monitors
-                            .write()
-                            .await
-                            .on_block(&block)
-                            .instrument(
-                                error_span!("process_block", ?block_hash, block_number),
-                            )
-                            .try_timed()
-                            .await?
-                            .elapsed(),
-                    );
+
+                    let process_block = self.process_block(&block).fuse();
+                    pin_mut!(process_block);
+
+                    loop {
+                        select_biased! {
+                            r = processing_txs.select_next_some() => self.process_tx_result(r)?,
+                            r = process_block => {
+                                break r;
+                            },
+                            tx_hash = pending_txs.select_next_some() => {
+                                match self.maybe_process_tx(tx_hash, &mut aborts) {
+                                    Some(f) => processing_txs.push(f),
+                                    None => continue,
+                                }
+                            },
+                        }
+                    }?
                 },
                 tx_hash = pending_txs.select_next_some() => {
-                    let abort = match aborts.try_insert(tx_hash) {
-                        Some(v) => v,
-                        None => {
-                            warn!(
-                                ?tx_hash,
-                                "this transaction has already been seen, skipping...",
-                            );
-                            continue;
-                        },
-                    };
-                    seen_txs.increment(1);
-                    trace!(?tx_hash, "got new transaction");
-                    processing_txs.push({
-                        let resolved_txs = &resolved_txs;
-                        let resolved_as_pending_txs = &resolved_as_pending_txs;
-                        async move {
-                            let tx = match self
-                                .requesting
-                                .get_transaction(tx_hash)
-                                .await
-                                .with_context(|| format!(
-                                    "failed to get transaction by hash: {tx_hash:#x}",
-                                ))?
-                            {
-                                Some(tx) => tx,
-                                None => return Ok(()),
-                            };
-                            resolved_txs.increment(1);
-
-                            if tx.block_hash.is_some() ||
-                                tx.block_number.is_some() ||
-                                tx.transaction_index.is_some() {
-                                return Ok(());
-                            }
-                            resolved_as_pending_txs.increment(1);
-
-                            if tx.value.is_zero() ||
-                                tx.gas.is_zero() ||
-                                tx.gas_price.map_or(true, |g| g.is_zero()) {
-                                return Ok(());
-                            }
-
-                            let _to_send = self.monitors.read().await.on_tx(&tx).await?;
-                            // TODO: send in batch
-
-                            Ok(())
-                        }.instrument(error_span!("process_tx", ?tx_hash))
-                            .try_timed()
-                            .with_abort_reg(abort)
-                            .with(tx_hash)
-                    });
+                    match self.maybe_process_tx(tx_hash, &mut aborts) {
+                        Some(f) => processing_txs.push(f),
+                        None => continue,
+                    }
                 },
                 complete => break,
             }
         }
         Ok(())
     }
+
+    fn maybe_process_tx(
+        &self,
+        tx_hash: TxHash,
+        aborts: &mut AbortSet<TxHash>,
+    ) -> Option<impl Future<Output = ProcessTxResult> + '_>
+    {
+        let abort = aborts.try_insert(tx_hash).or_else(|| {
+            warn!(
+                ?tx_hash,
+                "this transaction has already been seen, skipping...",
+            );
+            None
+        })?;
+        self.process_metrics.seen_txs.increment(1);
+        trace!(?tx_hash, "got new transaction");
+        Some(
+            self.process_tx(tx_hash)
+                .try_timed()
+                .with_abort_reg(abort)
+                .with(tx_hash),
+        )
+    }
+
+    #[tracing::instrument(skip_all, fields(?tx_hash))]
+    async fn process_tx(&self, tx_hash: TxHash) -> anyhow::Result<()> {
+        let tx = match self
+            .requesting
+            .get_transaction(tx_hash)
+            .await
+            .with_context(|| format!("failed to get transaction by hash: {tx_hash:#x}",))?
+        {
+            Some(tx) => tx,
+            None => return Ok(()),
+        };
+        self.process_metrics.resolved_txs.increment(1);
+
+        if tx.block_hash.is_some() || tx.block_number.is_some() || tx.transaction_index.is_some() {
+            return Ok(());
+        }
+        self.process_metrics.resolved_as_pending_txs.increment(1);
+
+        if tx.value.is_zero() || tx.gas.is_zero() || tx.gas_price.map_or(true, |g| g.is_zero()) {
+            return Ok(());
+        }
+
+        let _to_send = self.monitors.read().await.on_tx(&tx).await?;
+        // TODO: send in batch
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all, fields(tx_hash = ?r.with()))]
+    fn process_tx_result(
+        &self,
+        r: ProcessTxResult,
+    ) -> anyhow::Result<()> {
+        match r.into_inner() {
+            Ok(r) => self
+                .process_metrics
+                .process_tx_duration
+                .record(r?.elapsed()),
+            Err(Aborted) => {
+                self.process_metrics.missed_txs.increment(1);
+                trace!("transaction has been missed");
+            }
+        }
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all, block_hash = ?block.hash.unwrap())]
+    async fn process_block(&self, block: &Block<TxHash>) -> anyhow::Result<()> {
+        let r = self.monitors.write().await.on_block(block).try_timed().await?;
+        self.process_metrics.process_block_duration.record(r.elapsed());
+        Ok(r.into_inner())
+    }
+
+    // #[tracing::instrument(skip_all, fields(block_hash = ?block.hash.unwrap()))]
+    // async fn process_block(
+    //     &self,
+    //     block: Block<TxHash>,
+    //     aborts: &mut AbortSet<TxHash>,
+    //     processing_txs: FuturesUnordered<impl >
+    // ) -> anyhow::Result<()> {
+    //     aborts.abort_all().for_each(drop);
+    //
+    //     let block_number = block.number.unwrap().as_u64();
+    //     self.process_metrics.height.absolute(block_number);
+    //     trace!(block_number, "got new block");
+    //
+    //
+    //     // TODO: metrics: gas avg (prcentil)
+    //
+    //     Ok(())
+    // }
 }
+
+type ProcessTxResult = With<Result<anyhow::Result<Timed<()>>, Aborted>, TxHash>;

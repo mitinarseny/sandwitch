@@ -32,6 +32,11 @@ impl<T> Timed<T> {
     }
 
     #[inline]
+    pub fn into_inner(self) -> T {
+        self.0.into_inner()
+    }
+
+    #[inline]
     pub fn at(&self) -> Instant {
         *self.0.with()
     }
