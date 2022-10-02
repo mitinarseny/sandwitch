@@ -6,7 +6,6 @@
     result_option_inspect
 )]
 pub mod abort;
-// mod buffer;
 mod cached;
 mod contracts;
 mod metriced;
@@ -15,9 +14,9 @@ mod timed;
 mod with;
 
 use self::abort::{AbortSet, FutureExt as AbortFutureExt};
-use self::metriced::{FuturesUnordered, StreamExt as MetricedStreamExt};
+use self::metriced::{FuturesOrdered, FuturesUnordered};
 use self::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-use self::monitors::{BlockMonitor, MultiTxMonitor, PendingTxMonitor, TxMonitor};
+use self::monitors::{Monitor, StatelessBlockMonitor, TxMonitor};
 use self::timed::{
     StreamExt as TimedStreamExt, Timed, TryFutureExt as TimedTryFutureExt, TryTimedFuture,
 };
@@ -27,11 +26,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use ethers::prelude::*;
-use futures::future::join;
 use futures::stream::FusedStream;
 use futures::{
     future,
-    future::{try_join, Aborted},
+    future::{join, try_join, Aborted, Fuse},
     stream::StreamExt,
     FutureExt, TryFutureExt,
 };
@@ -40,7 +38,7 @@ use metrics::{register_counter, register_gauge, register_histogram, Counter, Gau
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, error_span, info, trace, trace_span, warn, Instrument};
+use tracing::{error, info, trace, warn};
 use url::Url;
 
 #[derive(Deserialize, Debug)]
@@ -92,7 +90,7 @@ where
 {
     streaming: Arc<Provider<SC>>,
     requesting: Arc<Provider<RC>>,
-    monitors: RwLock<MultiTxMonitor<Box<dyn PendingTxMonitor>>>,
+    monitors: Vec<Box<dyn Monitor>>,
     process_metrics: ProcessMetrics,
 }
 
@@ -138,9 +136,7 @@ where
         Ok(Self {
             streaming,
             requesting,
-            monitors: RwLock::new(MultiTxMonitor::new([
-                Box::new(pancake) as Box<dyn PendingTxMonitor>
-            ])),
+            monitors: [Box::new(RwLock::new(pancake)) as Box<dyn Monitor>].into(),
             process_metrics: ProcessMetrics::new(),
         })
     }
@@ -421,10 +417,34 @@ where
 
         let mut aborts = AbortSet::new();
         let mut processing_txs = FuturesUnordered::new(register_gauge!("sandwitch_in_flight_txs"));
+        let mut processing_blocks =
+            FuturesOrdered::new(register_gauge!("sandwitch_in_flight_blocks"));
 
-        while !(pending_txs.is_terminated() && processing_txs.is_terminated()) {
+        while !(pending_txs.is_terminated()
+            && processing_txs.is_terminated()
+            && processing_blocks.is_terminated())
+        {
             select_biased! {
-                r = processing_txs.select_next_some() => self.process_tx_result(r)?,
+                r = processing_txs.select_next_some() => {
+                    let (r, tx_hash) = With::<
+                        Result<
+                            anyhow::Result<Timed<()>>,
+                            Aborted
+                        >,
+                        TxHash,
+                    >::into_tuple(r);
+                    match r {
+                        Ok(r) => self
+                            .process_metrics
+                            .process_tx_duration
+                            .record(r?.elapsed()),
+                        Err(Aborted) => {
+                            self.process_metrics.missed_txs.increment(1);
+                            trace!(?tx_hash, "transaction has been missed");
+                        }
+                    }
+                },
+                r = processing_blocks.select_next_some() => r?,
                 block = new_blocks.select_next_some() => {
                     aborts.abort_all().for_each(drop);
 
@@ -434,56 +454,38 @@ where
                     trace!(?block_hash, ?block_number, "got new block");
                     // TODO: metrics: gas avg (prcentil)
 
-                    let process_block = self.process_block(&block).fuse();
-                    pin_mut!(process_block);
-
-                    loop {
-                        select_biased! {
-                            r = processing_txs.select_next_some() => self.process_tx_result(r)?,
-                            r = process_block => {
-                                break r;
-                            },
-                            tx_hash = pending_txs.select_next_some() => {
-                                match self.maybe_process_tx(tx_hash, &mut aborts) {
-                                    Some(f) => processing_txs.push(f),
-                                    None => continue,
-                                }
-                            },
-                        }
-                    }?
+                    processing_blocks.push_back(async move {
+                        let r = self.monitors.on_block(&block).try_timed().await?;
+                        self.process_metrics
+                            .process_block_duration
+                            .record(r.elapsed());
+                        anyhow::Ok(r.into_inner())
+                    });
                 },
                 tx_hash = pending_txs.select_next_some() => {
-                    match self.maybe_process_tx(tx_hash, &mut aborts) {
-                        Some(f) => processing_txs.push(f),
-                        None => continue,
-                    }
+                    let abort = match aborts.try_insert(tx_hash) {
+                        Some(v) => v,
+                        None => {
+                            warn!(
+                                ?tx_hash,
+                                "this transaction has already been seen, skipping...",
+                            );
+                            continue
+                        },
+                    };
+                    self.process_metrics.seen_txs.increment(1);
+                    trace!(?tx_hash, "got new transaction");
+                    processing_txs.push(
+                        self.process_tx(tx_hash)
+                            .try_timed()
+                            .with_abort_reg(abort)
+                            .with(tx_hash),
+                    );
                 },
                 complete => break,
             }
         }
         Ok(())
-    }
-
-    fn maybe_process_tx(
-        &self,
-        tx_hash: TxHash,
-        aborts: &mut AbortSet<TxHash>,
-    ) -> Option<impl Future<Output = ProcessTxResult> + '_> {
-        let abort = aborts.try_insert(tx_hash).or_else(|| {
-            warn!(
-                ?tx_hash,
-                "this transaction has already been seen, skipping...",
-            );
-            None
-        })?;
-        self.process_metrics.seen_txs.increment(1);
-        trace!(?tx_hash, "got new transaction");
-        Some(
-            self.process_tx(tx_hash)
-                .try_timed()
-                .with_abort_reg(abort)
-                .with(tx_hash),
-        )
     }
 
     #[tracing::instrument(skip_all, fields(?tx_hash))]
@@ -508,60 +510,9 @@ where
             return Ok(());
         }
 
-        let _to_send = self.monitors.read().await.on_tx(&tx).await?;
+        let _to_send = self.monitors.on_tx(&tx).await?;
         // TODO: send in batch
 
         Ok(())
     }
-
-    #[tracing::instrument(skip_all, fields(tx_hash = ?r.with()))]
-    fn process_tx_result(&self, r: ProcessTxResult) -> anyhow::Result<()> {
-        match r.into_inner() {
-            Ok(r) => self
-                .process_metrics
-                .process_tx_duration
-                .record(r?.elapsed()),
-            Err(Aborted) => {
-                self.process_metrics.missed_txs.increment(1);
-                trace!("transaction has been missed");
-            }
-        }
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all, block_hash = ?block.hash.unwrap())]
-    async fn process_block(&self, block: &Block<TxHash>) -> anyhow::Result<()> {
-        let r = self
-            .monitors
-            .write()
-            .await
-            .on_block(block)
-            .try_timed()
-            .await?;
-        self.process_metrics
-            .process_block_duration
-            .record(r.elapsed());
-        Ok(r.into_inner())
-    }
-
-    // #[tracing::instrument(skip_all, fields(block_hash = ?block.hash.unwrap()))]
-    // async fn process_block(
-    //     &self,
-    //     block: Block<TxHash>,
-    //     aborts: &mut AbortSet<TxHash>,
-    //     processing_txs: FuturesUnordered<impl >
-    // ) -> anyhow::Result<()> {
-    //     aborts.abort_all().for_each(drop);
-    //
-    //     let block_number = block.number.unwrap().as_u64();
-    //     self.process_metrics.height.absolute(block_number);
-    //     trace!(block_number, "got new block");
-    //
-    //
-    //     // TODO: metrics: gas avg (prcentil)
-    //
-    //     Ok(())
-    // }
 }
-
-type ProcessTxResult = With<Result<anyhow::Result<Timed<()>>, Aborted>, TxHash>;

@@ -39,7 +39,7 @@
       "url": "https://github.com/mitinarseny/sandwitch"
     }
   ],
-  "liveNow": true,
+  "liveNow": false,
   "panels": [
     {
       "datasource": {
@@ -346,48 +346,12 @@
           {
             "matcher": {
               "id": "byFrameRefID",
-              "options": "resolve_buffer"
+              "options": "in_flight"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "tx"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "process_buffer"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "tx"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "send_buffer"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "tx"
-              },
-              {
-                "id": "decimals",
-                "value": 0
+                "value": "txs"
               }
             ]
           }
@@ -452,7 +416,7 @@
           "instant": false,
           "legendFormat": "In-Flight",
           "range": true,
-          "refId": "resolve_buffer"
+          "refId": "in_flight"
         },
         {
           "datasource": {
@@ -841,7 +805,7 @@
           "query": "label_values(sandwitch_info, network_id)",
           "refId": "StandardVariableQuery"
         },
-        "refresh": 2,
+        "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
         "sort": 3,
@@ -877,13 +841,13 @@
     ]
   },
   "time": {
-    "from": "now-45m",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "Sandwitch",
   "uid": "KcM5MOGVk",
-  "version": 1,
+  "version": 4,
   "weekStart": ""
 }

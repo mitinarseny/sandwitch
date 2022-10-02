@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut};
+// use std::ops::{Deref, DerefMut};
 
 use ethers::prelude::{Block, EthCall, Transaction};
 use ethers::types::TxHash;
@@ -7,6 +7,7 @@ use futures::{
     future::{try_join_all, BoxFuture},
     FutureExt,
 };
+use tokio::sync::RwLock;
 
 pub mod pancake_swap;
 
@@ -14,69 +15,25 @@ pub trait TxMonitor: Send + Sync {
     fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>>;
 }
 
-pub trait BlockMonitor: Send + Sync {
-    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>>;
-}
-
-pub trait PendingTxMonitor: TxMonitor + BlockMonitor {}
-impl<M> PendingTxMonitor for M where M: TxMonitor + BlockMonitor {}
-
-pub trait FunctionCallMonitor<C: EthCall>: Send + Sync {
-    fn on_func<'a>(
-        &'a self,
-        tx: &'a Transaction,
-        inputs: C,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>>;
-
-    fn on_func_raw<'a>(&'a self, tx: &'a Transaction) -> Option<BoxFuture<'a, anyhow::Result<Vec<Transaction>>>> {
-        let inputs = C::decode(&tx.input).ok()?;
-        Some(self.on_func(tx, inputs))
-    }
-}
-
 impl<M> TxMonitor for Box<M>
 where
     M: TxMonitor + ?Sized,
 {
-    #[inline]
     fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
-        TxMonitor::on_tx(&**self, tx)
+        (**self).on_tx(tx)
     }
 }
 
-impl<M> BlockMonitor for Box<M>
+impl<M> TxMonitor for RwLock<M>
 where
-    M: BlockMonitor + ?Sized,
+    M: TxMonitor,
 {
-    #[inline]
-    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
-        BlockMonitor::on_block(self.as_mut(), block)
+    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
+        async move { self.read().await.on_tx(tx).await }.boxed()
     }
 }
 
-pub struct MultiTxMonitor<M>(Vec<M>);
-
-impl<M> MultiTxMonitor<M> {
-    pub fn new(monitors: impl IntoIterator<Item = M>) -> Self {
-        Self(monitors.into_iter().collect())
-    }
-}
-
-impl<M> Deref for MultiTxMonitor<M> {
-    type Target = <Vec<M> as Deref>::Target;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<M> DerefMut for MultiTxMonitor<M> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<M> TxMonitor for MultiTxMonitor<M>
+impl<'l, M> TxMonitor for [M]
 where
     M: TxMonitor,
 {
@@ -87,7 +44,62 @@ where
     }
 }
 
-impl<M> BlockMonitor for MultiTxMonitor<M>
+pub trait StatelessBlockMonitor: Send + Sync {
+    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>>;
+}
+
+pub trait BlockMonitor: Send + Sync {
+    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>>;
+}
+
+impl<M> StatelessBlockMonitor for Box<M>
+where
+    M: StatelessBlockMonitor + ?Sized,
+{
+    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        self.as_ref().on_block(block)
+    }
+}
+
+impl<M> StatelessBlockMonitor for RwLock<M>
+where
+    M: BlockMonitor,
+{
+    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        async move { self.write().await.on_block(block).await }.boxed()
+    }
+}
+
+impl<M> StatelessBlockMonitor for [M]
+where
+    M: StatelessBlockMonitor,
+{
+    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        try_join_all(self.iter().map(|m| m.on_block(block)))
+            .map_ok(|_| ())
+            .boxed()
+    }
+}
+
+impl<M> BlockMonitor for Box<M>
+where
+    M: BlockMonitor + ?Sized,
+{
+    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        self.as_mut().on_block(block)
+    }
+}
+
+impl<M> BlockMonitor for RwLock<M>
+where
+    M: BlockMonitor,
+{
+    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
+        self.get_mut().on_block(block)
+    }
+}
+
+impl<M> BlockMonitor for [M]
 where
     M: BlockMonitor,
 {
@@ -95,5 +107,24 @@ where
         try_join_all(self.iter_mut().map(|m| m.on_block(block)))
             .map_ok(|_| ())
             .boxed()
+    }
+}
+
+pub trait Monitor: TxMonitor + StatelessBlockMonitor {}
+impl<M> Monitor for M where M: TxMonitor + StatelessBlockMonitor {}
+
+pub trait FunctionCallMonitor<C: EthCall>: Send + Sync {
+    fn on_func<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        inputs: C,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>>;
+
+    fn on_func_raw<'a>(
+        &'a self,
+        tx: &'a Transaction,
+    ) -> Option<BoxFuture<'a, anyhow::Result<Vec<Transaction>>>> {
+        let inputs = C::decode(&tx.input).ok()?;
+        Some(self.on_func(tx, inputs))
     }
 }

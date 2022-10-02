@@ -6,41 +6,49 @@ use futures::future::LocalFutureObj;
 use futures::task::LocalSpawn;
 use futures::{
     future::{Future, FutureObj},
-    stream::{FusedStream, FuturesUnordered as StdFuturesUnordered, Stream},
+    stream::{
+        FusedStream, FuturesOrdered as StdFuturesOrdered, FuturesUnordered as StdFuturesUnordered,
+        Stream,
+    },
     task::{Spawn, SpawnError},
 };
 use metrics::{Counter, Gauge};
 use pin_project::pin_project;
 
 #[pin_project]
-pub struct FuturesUnordered<Fut> {
+pub struct InFlight<St>
+where
+    St: Stream,
+{
     #[pin]
-    inner: StdFuturesUnordered<Fut>,
+    inner: St,
     in_flight: Gauge,
 }
 
-impl<Fut> Deref for FuturesUnordered<Fut> {
-    type Target = StdFuturesUnordered<Fut>;
+impl<St> Deref for InFlight<St>
+where
+    St: Stream,
+{
+    type Target = St;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<Fut> DerefMut for FuturesUnordered<Fut> {
+impl<St> DerefMut for InFlight<St>
+where
+    St: Stream,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<Fut> FuturesUnordered<Fut> {
-    pub fn new(in_flight: Gauge) -> Self {
-        Self {
-            inner: StdFuturesUnordered::new(),
-            in_flight,
-        }
-    }
-
+impl<St> InFlight<St>
+where
+    St: Stream,
+{
     fn on_push(&self) {
         self.in_flight.increment(1.0);
     }
@@ -52,23 +60,13 @@ impl<Fut> FuturesUnordered<Fut> {
     fn on_clear(&self) {
         self.in_flight.set(0.0);
     }
-
-    pub fn push(&self, f: Fut) {
-        self.on_push();
-        self.inner.push(f)
-    }
-
-    pub fn clear(&mut self) {
-        self.on_clear();
-        self.inner.clear()
-    }
 }
 
-impl<Fut> Stream for FuturesUnordered<Fut>
+impl<St> Stream for InFlight<St>
 where
-    Fut: Future,
+    St: Stream,
 {
-    type Item = <StdFuturesUnordered<Fut> as Stream>::Item;
+    type Item = <St as Stream>::Item;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.as_mut().project();
@@ -84,30 +82,78 @@ where
     }
 }
 
-impl<Fut> FusedStream for FuturesUnordered<Fut>
+impl<St> FusedStream for InFlight<St>
 where
-    Fut: Future,
+    St: FusedStream,
 {
     fn is_terminated(&self) -> bool {
         self.inner.is_terminated()
     }
 }
 
-impl<Fut> Extend<Fut> for FuturesUnordered<Fut>
+pub type FuturesOrdered<Fut> = InFlight<StdFuturesOrdered<Fut>>;
+
+impl<Fut> FuturesOrdered<Fut>
 where
     Fut: Future,
 {
-    fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = Fut>,
-    {
-        for item in iter {
-            self.push(item);
+    pub fn new(in_flight: Gauge) -> Self {
+        Self {
+            inner: StdFuturesOrdered::new(),
+            in_flight,
         }
+    }
+
+    pub fn push_back(&mut self, f: Fut) {
+        self.on_push();
+        self.inner.push_back(f)
+    }
+
+    pub fn push_front(&mut self, f: Fut) {
+        self.on_push();
+        self.inner.push_front(f)
     }
 }
 
-impl Spawn for FuturesUnordered<FutureObj<'_, ()>> {
+pub type FuturesUnordered<Fut> = InFlight<StdFuturesUnordered<Fut>>;
+
+impl<Fut> FuturesUnordered<Fut>
+where
+    Fut: Future,
+{
+    pub fn new(in_flight: Gauge) -> Self {
+        Self {
+            inner: StdFuturesUnordered::new(),
+            in_flight,
+        }
+    }
+
+    pub fn push(&self, f: Fut) {
+        self.on_push();
+        self.inner.push(f)
+    }
+
+    pub fn clear(&mut self) {
+        self.on_clear();
+        self.inner.clear()
+    }
+}
+
+impl<St, Fut> Extend<Fut> for InFlight<St>
+where
+    Fut: Future,
+    St: Stream + Extend<Fut>,
+{
+    fn extend<T: IntoIterator<Item = Fut>>(&mut self, iter: T) {
+        self.inner
+            .extend(iter.into_iter().inspect(|_| self.in_flight.increment(1.0)))
+    }
+}
+
+impl<St> Spawn for InFlight<St>
+where
+    St: Stream + Spawn,
+{
     fn spawn_obj(&self, future: FutureObj<'static, ()>) -> Result<(), SpawnError> {
         let r = self.inner.spawn_obj(future);
         if r.is_ok() {
@@ -121,7 +167,10 @@ impl Spawn for FuturesUnordered<FutureObj<'_, ()>> {
     }
 }
 
-impl LocalSpawn for FuturesUnordered<LocalFutureObj<'_, ()>> {
+impl<St> LocalSpawn for InFlight<St>
+where
+    St: Stream + LocalSpawn,
+{
     fn spawn_local_obj(&self, future: LocalFutureObj<'static, ()>) -> Result<(), SpawnError> {
         let r = self.inner.spawn_local_obj(future);
         if r.is_ok() {

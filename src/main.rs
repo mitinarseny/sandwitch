@@ -1,6 +1,5 @@
 #![feature(result_option_inspect, result_flattening)]
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::Context;
 use futures::future::Aborted;
@@ -81,17 +80,13 @@ async fn main() -> anyhow::Result<()> {
             let mut app = {
                 let app = App::from_config(config);
                 let cancel = cancel_token.cancelled();
-                pin_mut!(app);
-                pin_mut!(cancel);
+                pin_mut!(app, cancel);
                 app.with_abort(cancel.map(|_| Aborted)).await??
             };
             info!("initializing");
 
             info!("run");
             app.run(cancel_token).await?;
-
-            // dirty fix: wait for websockets to unsubscribe
-            // tokio::time::sleep(Duration::from_secs(1)).await;
 
             Ok::<_, anyhow::Error>(())
         }
