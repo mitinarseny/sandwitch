@@ -91,6 +91,92 @@ where
     }
 }
 
+impl<St, Fut> Extend<Fut> for InFlight<St>
+where
+    Fut: Future,
+    St: Stream + Extend<Fut>,
+{
+    fn extend<T: IntoIterator<Item = Fut>>(&mut self, iter: T) {
+        self.inner
+            .extend(iter.into_iter().inspect(|_| self.in_flight.increment(1.0)))
+    }
+}
+
+impl<'a, St> IntoIterator for &'a InFlight<St>
+where
+    St: Stream,
+    &'a St: IntoIterator,
+{
+    type Item = <&'a St as IntoIterator>::Item;
+
+    type IntoIter = <&'a St as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
+impl<'a, St> IntoIterator for &'a mut InFlight<St>
+where
+    St: Stream,
+    &'a mut St: IntoIterator,
+{
+    type Item = <&'a mut St as IntoIterator>::Item;
+
+    type IntoIter = <&'a mut St as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
+impl<'a, St> IntoIterator for InFlight<St>
+where
+    St: Stream + IntoIterator,
+{
+    type Item = <St as IntoIterator>::Item;
+
+    type IntoIter = <St as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
+impl<St> Spawn for InFlight<St>
+where
+    St: Stream + Spawn,
+{
+    fn spawn_obj(&self, future: FutureObj<'static, ()>) -> Result<(), SpawnError> {
+        let r = self.inner.spawn_obj(future);
+        if r.is_ok() {
+            self.on_push();
+        }
+        r
+    }
+
+    fn status(&self) -> Result<(), SpawnError> {
+        self.inner.status()
+    }
+}
+
+impl<St> LocalSpawn for InFlight<St>
+where
+    St: Stream + LocalSpawn,
+{
+    fn spawn_local_obj(&self, future: LocalFutureObj<'static, ()>) -> Result<(), SpawnError> {
+        let r = self.inner.spawn_local_obj(future);
+        if r.is_ok() {
+            self.on_push();
+        }
+        r
+    }
+
+    fn status_local(&self) -> Result<(), SpawnError> {
+        self.inner.status_local()
+    }
+}
+
 pub type FuturesOrdered<Fut> = InFlight<StdFuturesOrdered<Fut>>;
 
 impl<Fut> FuturesOrdered<Fut>
@@ -136,51 +222,6 @@ where
     pub fn clear(&mut self) {
         self.on_clear();
         self.inner.clear()
-    }
-}
-
-impl<St, Fut> Extend<Fut> for InFlight<St>
-where
-    Fut: Future,
-    St: Stream + Extend<Fut>,
-{
-    fn extend<T: IntoIterator<Item = Fut>>(&mut self, iter: T) {
-        self.inner
-            .extend(iter.into_iter().inspect(|_| self.in_flight.increment(1.0)))
-    }
-}
-
-impl<St> Spawn for InFlight<St>
-where
-    St: Stream + Spawn,
-{
-    fn spawn_obj(&self, future: FutureObj<'static, ()>) -> Result<(), SpawnError> {
-        let r = self.inner.spawn_obj(future);
-        if r.is_ok() {
-            self.on_push();
-        }
-        r
-    }
-
-    fn status(&self) -> Result<(), SpawnError> {
-        self.inner.status()
-    }
-}
-
-impl<St> LocalSpawn for InFlight<St>
-where
-    St: Stream + LocalSpawn,
-{
-    fn spawn_local_obj(&self, future: LocalFutureObj<'static, ()>) -> Result<(), SpawnError> {
-        let r = self.inner.spawn_local_obj(future);
-        if r.is_ok() {
-            self.on_push();
-        }
-        r
-    }
-
-    fn status_local(&self) -> Result<(), SpawnError> {
-        self.inner.status_local()
     }
 }
 

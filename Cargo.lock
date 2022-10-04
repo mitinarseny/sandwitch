@@ -81,17 +81,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-broadcast"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d26004fe83b2d1cd3a97609b21e39f9a31535822210fe83205d2ce48866ea61"
-dependencies = [
- "event-listener",
- "futures-core",
- "parking_lot 0.12.1",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1123,12 +1112,6 @@ dependencies = [
  "tracing",
  "walkdir",
 ]
-
-[[package]]
-name = "event-listener"
-version = "2.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
 name = "eyre"
@@ -2640,12 +2623,10 @@ name = "sandwitch"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-broadcast",
  "clap",
  "ethers",
  "ethers-contract",
  "futures",
- "hex",
  "itertools",
  "lazy_static",
  "metrics",

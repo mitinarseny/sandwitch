@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use futures::Future;
+use futures::{Future, TryFuture, TryFutureExt};
 
 pub struct Aption<T>(Option<T>);
 
@@ -49,10 +49,10 @@ impl<T> Aption<T> {
     pub async fn get_or_try_insert_with<F, Fut, E>(&mut self, f: F) -> Result<&mut T, E>
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<T, E>>,
+        Fut: TryFuture<Ok = T, Error = E>,
     {
         if let None = self.0 {
-            self.0 = Some(f().await?);
+            self.0 = Some(f().into_future().await?);
         }
         Ok(unsafe { self.0.as_mut().unwrap_unchecked() })
     }

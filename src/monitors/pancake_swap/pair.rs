@@ -2,9 +2,11 @@ use std::fmt::Display;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use ethers::prelude::{Address, ContractError, Middleware};
+use ethers::{
+    abi::AbiEncode,
+    prelude::{Address, ContractError, Middleware},
+};
 use futures::{future::try_join3, lock::Mutex};
-use hex::ToHex;
 use metrics::{register_counter, Counter};
 
 use crate::cached::Aption;
@@ -45,11 +47,11 @@ impl<M: Middleware> Pair<M> {
             hit_times: register_counter!(
                 "sandwitch_pancake_swap_pair_hit_times",
                 &[
-                    ("token0", t0.address().encode_hex::<String>()),
-                    ("token1", t0.address().encode_hex::<String>()),
+                    ("token0", t0.address().encode_hex()),
+                    ("token1", t0.address().encode_hex()),
                     ("token0_name", t0.name().to_string()),
                     ("token1_name", t1.name().to_string()),
-                    ("pair", pair.encode_hex::<String>())
+                    ("pair", pair.encode_hex())
                 ]
             ),
             tokens: (t0, t1),
@@ -83,7 +85,7 @@ impl<M: Middleware> Pair<M> {
             .await
             .get_or_try_insert_with(|| self.get_reserves())
             .await
-            .map(|v| *v)
+            .copied()
     }
 
     pub async fn on_block(&self) {
@@ -95,7 +97,7 @@ impl<M: Middleware> Display for Pair<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} -> {} -> {}",
+            "{} -> <{}> -> {}",
             self.tokens.0,
             self.address(),
             self.tokens.1

@@ -9,9 +9,15 @@ RUN rustup toolchain install \
 FROM env AS builder
 WORKDIR /app
 RUN cargo init --quiet
+
 # build dependencies
 COPY ./Cargo.toml ./Cargo.lock ./rust-toolchain.toml ./
 RUN cargo build --release
+
+COPY ./build.rs ./
+COPY ./contracts ./contracts
+RUN cargo build --release
+
 # build binaries
 COPY ./ ./
 RUN cargo build --release --bin sandwitch

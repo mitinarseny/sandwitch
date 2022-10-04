@@ -1,48 +1,9 @@
-// use std::ops::{Deref, DerefMut};
-
-use ethers::prelude::{Block, EthCall, Transaction};
+use ethers::prelude::{Block, EthCall, Transaction, TransactionRequest};
 use ethers::types::TxHash;
-use futures::TryFutureExt;
-use futures::{
-    future::{try_join_all, BoxFuture},
-    FutureExt,
-};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, TryStreamExt};
 use tokio::sync::RwLock;
 
 pub mod pancake_swap;
-
-pub trait TxMonitor: Send + Sync {
-    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>>;
-}
-
-impl<M> TxMonitor for Box<M>
-where
-    M: TxMonitor + ?Sized,
-{
-    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
-        (**self).on_tx(tx)
-    }
-}
-
-impl<M> TxMonitor for RwLock<M>
-where
-    M: TxMonitor,
-{
-    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
-        async move { self.read().await.on_tx(tx).await }.boxed()
-    }
-}
-
-impl<'l, M> TxMonitor for [M]
-where
-    M: TxMonitor,
-{
-    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
-        try_join_all(self.iter().map(|m| m.on_tx(tx)))
-            .map_ok(|v| v.concat())
-            .boxed()
-    }
-}
 
 pub trait StatelessBlockMonitor: Send + Sync {
     fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>>;
@@ -75,8 +36,10 @@ where
     M: StatelessBlockMonitor,
 {
     fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
-        try_join_all(self.iter().map(|m| m.on_block(block)))
-            .map_ok(|_| ())
+        self.iter()
+            .map(|m| m.on_block(block))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
             .boxed()
     }
 }
@@ -104,8 +67,57 @@ where
     M: BlockMonitor,
 {
     fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
-        try_join_all(self.iter_mut().map(|m| m.on_block(block)))
-            .map_ok(|_| ())
+        self.iter_mut()
+            .map(|m| m.on_block(block))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .boxed()
+    }
+}
+
+pub trait TxMonitor: Send + Sync {
+    fn on_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>>;
+}
+
+impl<M> TxMonitor for Box<M>
+where
+    M: TxMonitor + ?Sized,
+{
+    fn on_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>> {
+        (**self).on_tx(tx)
+    }
+}
+
+impl<M> TxMonitor for RwLock<M>
+where
+    M: TxMonitor,
+{
+    fn on_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>> {
+        async move { self.read().await.on_tx(tx).await }.boxed()
+    }
+}
+
+impl<'l, M> TxMonitor for [M]
+where
+    M: TxMonitor,
+{
+    fn on_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>> {
+        self.iter()
+            .map(|m| m.on_tx(tx))
+            .collect::<FuturesUnordered<_>>()
+            .try_concat()
             .boxed()
     }
 }
@@ -118,12 +130,12 @@ pub trait FunctionCallMonitor<C: EthCall>: Send + Sync {
         &'a self,
         tx: &'a Transaction,
         inputs: C,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>>;
+    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>>;
 
     fn on_func_raw<'a>(
         &'a self,
         tx: &'a Transaction,
-    ) -> Option<BoxFuture<'a, anyhow::Result<Vec<Transaction>>>> {
+    ) -> Option<BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>>> {
         let inputs = C::decode(&tx.input).ok()?;
         Some(self.on_func(tx, inputs))
     }

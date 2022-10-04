@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ethers::prelude::*;
+use ethers::{abi::AbiEncode, prelude::*};
 use futures::lock::Mutex;
 use futures::{
     future, future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt,
 };
-use hex::ToHex;
 use metrics::{describe_counter, register_counter, Counter, Unit};
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -19,7 +18,9 @@ use self::pair::Pair;
 use self::router::Router;
 
 use crate::cached::Aption;
-use crate::contracts::pancake_router_v2::SwapExactETHForTokensCall;
+use crate::contracts::pancake_router_v2::{
+    SwapETHForExactTokensCall, SwapExactETHForTokensCall, SwapExactTokensForETHCall,
+};
 
 use super::{BlockMonitor, FunctionCallMonitor, TxMonitor};
 
@@ -74,7 +75,7 @@ where
                 to_router: {
                     let c = register_counter!(
                         "sandwitch_pancake_swap_to_router",
-                        "address" => router.address().encode_hex::<String>(),
+                        "address" => router.address().encode_hex(),
                     );
                     describe_counter!(
                         "sandwitch_pancake_swap_to_router",
@@ -151,16 +152,19 @@ where
     M: Middleware + 'static,
 {
     #[tracing::instrument(skip_all, fields(?tx.hash))]
-    fn on_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
+    fn on_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>> {
         if !tx.to.map_or(false, |h| h == self.router.address()) {
             None
         } else {
             self.metrics.to_router.increment(1);
 
             match *tx.input {
-                [127, 243, 106, 181, ..] => {
-                    <Self as FunctionCallMonitor<SwapExactETHForTokensCall>>::on_func_raw(self, tx)
-                }
+                [127, 243, 106, 181, ..] => <PancakeSwap<M> as FunctionCallMonitor<
+                    SwapExactETHForTokensCall,
+                >>::on_func_raw(self, tx),
                 _ => None,
             }
         }
@@ -196,23 +200,27 @@ where
         &'a self,
         tx: &'a Transaction,
         inputs: SwapExactETHForTokensCall,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<Transaction>>> {
+    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>> {
         async move {
             self.metrics.swap_exact_eth_for_tokens.increment(1);
-            if inputs.path.len() != 2 {
-                return Ok(Vec::new());
-            }
+            let (t0_address, t1_address) = match inputs.path[..] {
+                [t0, t1] => (t0, t1),
+                _ => return Ok([].into()),
+            };
             self.metrics.swap_exact_eth_for_tokens2.increment(1);
-            let (t0, t1) = (inputs.path[0], inputs.path[1]);
 
-            let pair = match self.pair_contracts.get(&(t0, t1)) {
+            let pair = match self.pair_contracts.get(&(t0_address, t1_address)) {
                 None => return Ok(Vec::new()),
                 Some(pair) => pair
                     .lock()
                     .await
                     .get_or_try_insert_with(|| {
-                        Pair::new(self.client.clone(), self.router.factory(), (t0, t1))
-                            .map_ok(Arc::new)
+                        Pair::new(
+                            self.client.clone(),
+                            self.router.factory(),
+                            (t0_address, t1_address),
+                        )
+                        .map_ok(Arc::new)
                     })
                     .await?
                     .clone(),
@@ -228,12 +236,46 @@ where
                 gas_price: t0.as_decimals(tx.gas_price.unwrap().low_u128()),
                 amount_in: t0.as_decimals(tx.value.low_u128()),
                 amount_out_min: t1.as_decimals(inputs.amount_out_min.low_u128()),
-                reserves: pair.reserves().map_ok(|(r0, r1, _)| (r0, r1)).await?,
+                reserves: pair.reserves().await.map(|(r0, r1, _)| (r0, r1))?,
             };
-            drop(pair);
+
+            // let s1 = SwapETHForExactTokensCall {
+            //     amount_out: todo!(),
+            //     path: todo!(),
+            //     to: todo!(),
+            //     deadline: todo!(),
+            // };
 
             info!(?tx.hash, "we got interesting transation");
-            Ok(Vec::new())
+            // Ok([
+            //     TransactionRequest::new()
+            //         .to(self.router.address())
+            //         .gas_price(tx.gas_price.unwrap() + 1)
+            //         .data(
+            //             SwapETHForExactTokensCall {
+            //                 amount_out: todo!(),
+            //                 path: [t0_address, t1_address].into(),
+            //                 to: todo!(),
+            //                 deadline: todo!(),
+            //             }
+            //             .encode(),
+            //         ),
+            //     TransactionRequest::new()
+            //         .to(self.router.address())
+            //         .gas_price(tx.gas_price.unwrap() - 1)
+            //         .data(
+            //             SwapExactTokensForETHCall {
+            //                 amount_in: todo!(),
+            //                 amount_out_min: todo!(),
+            //                 path: [t1_address, t0_address].into(),
+            //                 to: todo!(),
+            //                 deadline: todo!(),
+            //             }
+            //             .encode(),
+            //         ),
+            // ]
+            // .into())
+            Ok([].into())
         }
         .boxed()
     }
