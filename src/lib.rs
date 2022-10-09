@@ -12,6 +12,7 @@ mod metriced;
 mod monitors;
 mod timed;
 mod with;
+mod nonce;
 
 use self::abort::{AbortSet, FutureExt as AbortFutureExt};
 use self::metriced::{
@@ -23,6 +24,14 @@ use self::monitors::{
 };
 use self::timed::TryFutureExt as TimedTryFutureExt;
 
+use std::cmp::{
+    Ordering::{Greater, Less},
+    Reverse,
+};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::iter;
+use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
@@ -33,9 +42,9 @@ use futures::{
     pin_mut, select_biased,
     stream::{FusedStream, FuturesUnordered, Stream, StreamExt, TryStreamExt},
 };
+use itertools::Itertools;
 use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use serde::Deserialize;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 use url::Url;
@@ -90,6 +99,7 @@ where
     streaming: Arc<Provider<SC>>,
     requesting: Arc<Provider<RC>>,
     monitors: Vec<Box<dyn Monitor>>,
+    last_nonce: AtomicU64,
     process_metrics: ProcessMetrics,
 }
 
@@ -133,9 +143,15 @@ where
         let pancake =
             PancakeSwap::from_config(requesting.clone(), config.monitors.pancake_swap).await?;
         Ok(Self {
+            last_nonce: AtomicU64::new(
+                requesting
+                    .get_transaction_count("", None) // TODO
+                    .await?
+                    .as_u64(),
+            ),
             streaming,
             requesting,
-            monitors: [Box::new(RwLock::new(pancake)) as Box<dyn Monitor>].into(),
+            monitors: [Box::new(pancake) as Box<dyn Monitor>].into(),
             process_metrics: ProcessMetrics::new(),
         })
     }
@@ -233,7 +249,7 @@ where
                                 ?tx_hash,
                                 "this transaction has already been seen, skipping...",
                             );
-                            continue
+                            continue;
                         },
                     };
                     self.process_metrics.seen_txs.increment(1);
@@ -252,6 +268,19 @@ where
         block_number = block.number.unwrap().as_u64(),
     ))]
     async fn process_block(&self, block: Block<TxHash>) -> anyhow::Result<()> {
+        let block_hash = block.hash.unwrap();
+        let block = match self
+            .requesting
+            .get_block(block_hash)
+            .await
+            .with_context(|| format!("failed to get block by hash: {block_hash:#x}"))?
+        {
+            Some(block) => block,
+            None => {
+                warn!("fake block, skipping...");
+                return Ok(());
+            }
+        };
         let r = self.monitors.on_block(&block).try_timed().await?;
         let elapsed = r.elapsed();
         self.process_metrics.process_block_duration.record(elapsed);
@@ -309,18 +338,33 @@ where
             return Ok(());
         }
 
-        let to_send = self.monitors.on_tx(&tx).await?;
+        let mut to_send = self.monitors.on_tx(&tx).await?;
+        // TODO: make sure that gas_price is some
+
+        // sort desc by gas_price
+        to_send.sort_by_key(|tx| Reverse(tx.gas_price.unwrap()));
 
         // TODO: send in batch
         // TODO: filter out txs sent by us
+        let next_nonce = self.next_nonce();
         to_send
             .into_iter()
-            .map(|tx| tx.nonce(1))
+            .enumerate()
+            .map(|(i, tx)| tx.nonce(next_nonce + i as u64))
             .map(|tx| self.requesting.send_transaction(tx, None))
             .collect::<FuturesUnordered<_>>()
+            .inspect_ok(|ptx| {
+                // TODO: log
+            })
             .map_ok(|_| ())
             .try_collect::<()>()
             .await
             .map_err(Into::into)
     }
+
+    fn next_nonce(&self) -> u64 {
+        self.last_nonce.load(Ordering::SeqCst) + 1
+    }
 }
+
+

@@ -22,7 +22,7 @@ use crate::contracts::pancake_router_v2::{
     SwapETHForExactTokensCall, SwapExactETHForTokensCall, SwapExactTokensForETHCall,
 };
 
-use super::{BlockMonitor, FunctionCallMonitor, TxMonitor};
+use super::{FunctionCallMonitor, TxMonitor, StatelessBlockMonitor};
 
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
@@ -172,19 +172,19 @@ where
     }
 }
 
-impl<M> BlockMonitor for PancakeSwap<M>
+impl<M> StatelessBlockMonitor for PancakeSwap<M>
 where
     M: Middleware,
 {
     #[tracing::instrument(skip_all, fields(?block.hash))]
-    fn on_block<'a>(&'a mut self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
-        if block.hash.is_none() {
-            return future::ok(()).boxed();
-        }
+    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
         self.pair_contracts
-            .iter_mut()
-            .filter_map(|(_, p)| p.get_mut().as_mut())
-            .map(|p| p.on_block())
+            .iter()
+            .map(|(_, p)| async {
+                if let Some(p) = p.lock().await.as_deref() {
+                    p.on_block().await;
+                }
+            })
             .collect::<FuturesUnordered<_>>()
             .collect::<()>()
             .map(Result::Ok)
