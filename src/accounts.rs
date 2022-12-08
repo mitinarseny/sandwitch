@@ -1,17 +1,24 @@
 use anyhow::Context;
-use ethers::types::transaction::eip2718::TypedTransaction;
-use futures::future::{self, join, BoxFuture, LocalBoxFuture};
-use futures::lock::{Mutex, MutexGuard, OwnedMutexGuard};
-use futures::stream::{self, FusedStream, FuturesUnordered, StreamExt};
-use futures::{Future, FutureExt, Stream, TryFuture, TryFutureExt, TryStreamExt};
-use std::collections::HashMap;
-use std::ops::Deref;
+use ethers::{
+    providers::{JsonRpcClient, Middleware, Provider, ProviderError},
+    signers::Signer,
+    types::{
+        transaction::eip2718::TypedTransaction, Address, BlockId, Transaction, TxHash, H256, U256,
+    },
+};
+use futures::{
+    future::{self, LocalBoxFuture},
+    lock::{Mutex, OwnedMutexGuard},
+    stream::{FusedStream, FuturesUnordered, StreamExt},
+    Future, FutureExt, TryFuture, TryFutureExt, TryStreamExt,
+};
 use std::panic;
 use std::sync::Arc;
+use std::{collections::HashMap, convert::Infallible};
+use std::{ops::Deref, rc::Rc};
+use thiserror::Error;
 
-use ethers::prelude::*;
-
-pub type TxGroup = Vec<TransactionRequest>;
+use crate::cached::{CachedAt, CachedAtBlock};
 
 struct PendingState {
     last_gas_price: Option<U256>,
@@ -30,19 +37,58 @@ impl PendingState {
         }
         self.last_gas_price = Some(gas_price);
         let nonce = self.next_nonce;
-        self.next_nonce += 1;
+        self.next_nonce += 1.into();
         nonce
+    }
+
+    fn set_next_nonce<'a, 'b: 'a>(
+        &'a mut self,
+        tx: &'b mut TypedTransaction,
+    ) -> &'b mut TypedTransaction {
+        tx.set_nonce(self.next_nonce(tx.gas_price().unwrap()))
     }
 }
 
 pub struct InnerAccount<P: JsonRpcClient, S: Signer> {
     provider: Arc<Provider<P>>,
     signer: S,
+    balance: CachedAtBlock<U256>,
+}
+
+#[derive(Error, Debug)]
+pub enum SendTxError<S: Signer, E = Infallible> {
+    #[error("signer")]
+    Sign(S::Error),
+
+    #[error("provider")]
+    Provider(ProviderError),
+
+    #[error(transparent)]
+    Other(#[from] E),
+}
+
+impl<S: Signer> SendTxError<S, Infallible> {
+    pub fn other_into<E>(self) -> SendTxError<S, E> {
+        match self {
+            SendTxError::Sign(e) => SendTxError::Sign(e),
+            SendTxError::Provider(e) => SendTxError::Provider(e),
+            SendTxError::Other(_) => unreachable!(),
+        }
+    }
 }
 
 impl<P: JsonRpcClient, S: Signer> InnerAccount<P, S> {
     pub fn address(&self) -> Address {
         self.signer.address()
+    }
+
+    pub async fn balance_at(&self, block_hash: H256) -> Result<U256, ProviderError> {
+        self.balance
+            .get_at_or_try_insert_with(block_hash, |block_hash| {
+                self.provider
+                    .get_balance(self.address(), BlockId::Hash(*block_hash).into())
+            })
+            .await
     }
 
     async fn get_pending_state(
@@ -60,31 +106,35 @@ impl<P: JsonRpcClient, S: Signer> InnerAccount<P, S> {
         })
     }
 
-    async fn send_tx(&self, tx: TypedTransaction) -> anyhow::Result<TxHash> {
+    async fn send_tx(&self, tx: TypedTransaction) -> Result<TxHash, SendTxError<S>> {
         let tx = tx.rlp_signed(
             &self
                 .signer
                 .sign_transaction(&tx)
                 .await
-                .with_context(|| "failed to sign transaction")?,
+                .map_err(SendTxError::Sign)?,
         );
         let ptx = self
             .provider
             .send_raw_transaction(tx)
             .await
-            .with_context(|| "failed to send raw transaction")?;
+            .map_err(SendTxError::Provider)?;
         Ok(ptx.tx_hash())
-    }
-
-    pub async fn balance(&self, block: impl Into<Option<BlockId>>) -> Result<U256, ProviderError> {
-        todo!()
     }
 }
 
-#[derive(Clone)]
 pub struct Account<P: JsonRpcClient, S: Signer> {
     inner: Arc<InnerAccount<P, S>>,
     pending_state: Arc<Mutex<PendingState>>,
+}
+
+impl<P: JsonRpcClient, S: Signer> Clone for Account<P, S> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            pending_state: self.pending_state.clone(),
+        }
+    }
 }
 
 impl<P: JsonRpcClient, S: Signer> Deref for Account<P, S> {
@@ -103,6 +153,7 @@ impl<P: JsonRpcClient, S: Signer> Account<P, S> {
         let inner = InnerAccount {
             provider: provider.into(),
             signer,
+            balance: CachedAt::default(),
         };
         let pending_state = inner.get_pending_state(None).await?;
         Ok(Self {
@@ -111,17 +162,14 @@ impl<P: JsonRpcClient, S: Signer> Account<P, S> {
         })
     }
 
-    pub async fn lock(&self) -> LockedAccount<P, S> {
+    pub async fn lock(self) -> LockedAccount<P, S> {
         LockedAccount {
-            inner: self.inner.clone(),
-            pending_state: self.pending_state.clone().lock_owned().await,
+            inner: self.inner,
+            pending_state: self.pending_state.lock_owned().await,
         }
     }
 
-    pub async fn sync_pending_state(
-        &self,
-        block: impl Into<Option<BlockId>>,
-    ) -> Result<(), ProviderError> {
+    pub async fn sync_pending_state(&self, block: BlockId) -> Result<(), ProviderError> {
         let mut pending_nonces = self.pending_state.lock().await;
         *pending_nonces = self.inner.get_pending_state(block).await?;
         Ok(())
@@ -146,25 +194,33 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
         self.pending_state.can_send(gas_price)
     }
 
-    fn set_next_nonce(&mut self, tx: &mut TypedTransaction) -> &mut TypedTransaction {
-        tx.set_nonce(self.pending_state.next_nonce(tx.gas_price().unwrap()))
-    }
-
     pub fn send_tx(
         &mut self,
-        tx: TypedTransaction,
-    ) -> impl TryFuture<Ok = TxHash, Error = anyhow::Error> {
-        self.set_next_nonce(&mut tx);
-        tokio::spawn(self.inner.send_tx(tx)).map(Result::unwrap)
+        mut tx: TypedTransaction,
+    ) -> impl TryFuture<Ok = TxHash, Error = SendTxError<S>>
+    where
+        P: 'static,
+        S: 'static,
+    {
+        self.pending_state.set_next_nonce(&mut tx);
+        tokio::spawn({
+            let inner = self.inner.clone();
+            async move { inner.send_tx(tx).await }
+        })
+        .map(Result::unwrap)
     }
 
     pub fn send_txs(
         &mut self,
         txs: impl IntoIterator<Item = TypedTransaction>,
-    ) -> impl TryFuture<Ok = Vec<TxHash>, Error = anyhow::Error> {
+    ) -> impl TryFuture<Ok = Vec<TxHash>, Error = SendTxError<S>>
+    where
+        P: 'static,
+        S: 'static,
+    {
         let txs = txs.into_iter().map({
-            |tx| {
-                self.set_next_nonce(&mut tx);
+            |mut tx| {
+                self.pending_state.set_next_nonce(&mut tx);
                 tx
             }
         });
@@ -173,9 +229,9 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
         // were actually sent to the network in case of someone drops
         // this future
         tokio::spawn(
-            txs.map({
+            txs.map(|tx| {
                 let inner = self.inner.clone();
-                move |tx| inner.send_tx(tx)
+                async move { inner.send_tx(tx).await }
             })
             .collect::<FuturesUnordered<_>>()
             .try_collect::<Vec<_>>(),
@@ -187,10 +243,9 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
 #[derive(Default)]
 pub struct Accounts<P: JsonRpcClient, S: Signer>(HashMap<Address, Account<P, S>>);
 
-impl<P: JsonRpcClient, S: Signer, A: Into<Arc<Account<P, S>>>> Extend<A> for Accounts<P, S> {
-    fn extend<T: IntoIterator<Item = A>>(&mut self, iter: T) {
-        self.0
-            .extend(iter.into_iter().map(Into::into).map(|a| (a.address(), a)))
+impl<P: JsonRpcClient, S: Signer> Extend<Account<P, S>> for Accounts<P, S> {
+    fn extend<T: IntoIterator<Item = Account<P, S>>>(&mut self, iter: T) {
+        self.0.extend(iter.into_iter().map(|a| (a.address(), a)))
     }
 }
 
@@ -199,245 +254,175 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         self.0.len()
     }
 
-    fn map_unordered<F, Fut>(&self, f: F) -> impl FusedStream<Fut::Output>
+    fn map_unordered<'a, F, Fut>(&'a self, f: F) -> impl FusedStream<Item = Fut::Output> + 'a
     where
-        F: Fn(Account<P, S>) -> Fut,
-        Fut: Future,
+        F: FnMut(&'a Account<P, S>) -> Fut,
+        Fut: Future + 'a,
     {
-        self.0
-            .values()
-            .cloned()
-            .map(f)
-            .collect::<FuturesUnordered<_>>()
+        self.0.values().map(f).collect::<FuturesUnordered<_>>()
     }
 
-    fn map_unordered_locked(&self, f: F) -> impl FusedStream<Fut::Output>
+    fn map_unordered_locked<'a, F, Fut>(&'a self, f: F) -> impl FusedStream<Item = Fut::Output> + 'a
     where
-        F: Fn(LockedAccount<P, S>) -> Fut,
-        Fut: Future,
+        F: Fn(LockedAccount<P, S>) -> Fut + Clone + 'a,
+        Fut: Future + 'a,
     {
-        self.map_unordered(|account| async move { account.lock().map(f) })
+        self.map_unordered(move |account| account.clone().lock().then(f.clone()))
     }
 
-    pub async fn find<F, Fut>(&self, pred: F) -> Option<Account<P, S>>
+    pub async fn find<F>(&self, pred: F) -> Option<Account<P, S>>
     where
-        F: Fn(&Account<P, S>) -> Fut,
-        Fut: Future<Output = bool>,
+        F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, bool>,
     {
-        self.map_unordered(|account| async move { pred(&account).await.then_some(account) })
-            .filter_map(future::ready)
-            .next()
-            .await
-    }
-
-    pub async fn try_find<F, Fut>(&self, pred: F) -> Result<Option<Account<P, S>>, Fut::Error>
-    where
-        F: Fn(&Account<P, S>) -> Fut,
-        Fut: TryFuture<Ok = bool>,
-    {
-        self.0
-            .map_unordered(|account| async move {
-                pred(&account).into_future().await?.then_some(account)
-            })
-            .try_filter_map(future::ready)
-            .try_next()
-            .await
-    }
-
-    pub async fn find_map<F, Fut, R>(&self, f: F) -> Option<(Account<P, S>, R)>
-    where
-        F: Fn(&Account<P, S>) -> Fut,
-        Fut: Future<Output = Option<R>>,
-    {
-        self.map_unordered(|account| async move { f(&account).await.map(move |r| (account, r)) })
-            .filter_map(future::ready)
-            .next()
-            .await
-    }
-
-    pub async fn try_find_map<F, Fut, R>(
-        &self,
-        f: F,
-    ) -> Result<Option<(Account<P, S>, R)>, Fut::Error>
-    where
-        F: Fn(&Account<P, S>) -> Fut,
-        Fut: TryFuture<Ok = Option<R>>,
-    {
-        self.map_unordered(|account| async move {
-            f(&account).into_future().await?.map(move |r| (account, r))
+        self.map_unordered(|account| {
+            let pred = &pred;
+            async move { pred(&account).await.then_some(account) }
         })
-        .try_filter_map(future::ready)
+        .filter_map(future::ready)
+        .next()
+        .await
+        .cloned()
+    }
+
+    pub async fn try_find<F, E>(&self, pred: F) -> Result<Option<Account<P, S>>, E>
+    where
+        F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Result<bool, E>>,
+    {
+        self.map_unordered(|account| {
+            let pred = &pred;
+            async move { Ok(pred(&account).await?.then_some(account)) }
+        })
+        .try_filter_map(future::ok)
         .try_next()
         .await
+        .map(|o| o.cloned())
     }
 
-    pub async fn find_locked<F, Fut>(&self, pred: F) -> Option<LockedAccount<P, S>>
+    pub async fn find_map<F, T>(&self, f: F) -> Option<(Account<P, S>, T)>
     where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: Future<Output = bool>,
+        F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Option<T>>,
     {
-        self.map_unordered_locked(|locked_account| async move {
-            pred(&locked_account).await.then_some(locked_account)
+        self.map_unordered(|account| {
+            let f = &f;
+            async move { f(&account).await.map(move |r| (account.clone(), r)) }
         })
         .filter_map(future::ready)
         .next()
         .await
     }
 
-    pub async fn try_find_locked<F, Fut>(
-        &self,
-        pred: F,
-    ) -> Result<Option<LockedAccount<P, S>>, Fut::Error>
+    pub async fn try_find_map<F, T, E>(&self, f: F) -> Result<Option<(Account<P, S>, T)>, E>
     where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: TryFuture<Ok = bool>,
+        F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Result<Option<T>, E>>,
     {
-        self.map_unordered_locked(|locked_account| async move {
-            pred(&locked_account).await?.then_some(locked_account)
+        self.map_unordered(|account| {
+            let f = &f;
+            async move { Ok(f(&account).await?.map(move |r| (account.clone(), r))) }
         })
-        .try_filter_map(future::ready)
+        .try_filter_map(future::ok)
         .try_next()
         .await
     }
 
-    pub async fn find_map_locked<F, Fut, R>(&self, f: F) -> Option<(LockedAccount<P, S>, R)>
+    pub async fn find_locked<F>(&self, pred: F) -> Option<LockedAccount<P, S>>
     where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: Future<Output = Option<R>>,
+        F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, bool>,
     {
-        self.map_unordered_locked(|locked_account| async move {
-            f(&locked_account).await.map(move |r| (locked_account, r))
+        self.map_unordered_locked(|locked_account| {
+            let pred = &pred;
+            async move { pred(&locked_account).await.then_some(locked_account) }
         })
         .filter_map(future::ready)
         .next()
         .await
     }
 
-    pub async fn try_find_map_locked<F, Fut, R>(
-        &self,
-        f: F,
-    ) -> Result<Option<(LockedAccount<P, S>, R)>, Fut::Error>
+    pub async fn try_find_locked<F, E>(&self, pred: F) -> Result<Option<LockedAccount<P, S>>, E>
     where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: TryFuture<Ok = Option<R>>,
+        F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, Result<bool, E>>,
     {
-        self.map_unordered_locked(|locked_account| async move {
-            f(&locked_account)
-                .into_future()
-                .await?
-                .map(move |r| (locked_account, r))
+        self.map_unordered_locked(|locked_account| {
+            let pred = &pred;
+            async move { Ok(pred(&locked_account).await?.then_some(locked_account)) }
         })
-        .try_filter_map(future::ready)
+        .try_filter_map(future::ok)
         .try_next()
         .await
     }
 
-    pub async fn find_wrap(&self, wrap_tx: &Transaction) -> Option<LockedAccount<P, S>> {
-        let wrap_gas_price = wrap_tx.gas_price.unwrap();
-        self.find_locked(|locked_account| {
-            future::ready(locked_account.can_send(wrap_gas_price - 1))
+    pub async fn find_map_locked<F, T>(&self, f: F) -> Option<(LockedAccount<P, S>, T)>
+    where
+        F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, Option<T>>,
+    {
+        self.map_unordered_locked(|locked_account| {
+            let f = &f;
+            async move { f(&locked_account).await.map(move |r| (locked_account, r)) }
         })
+        .filter_map(future::ready)
+        .next()
         .await
     }
 
-    pub async fn find_wrap_and<F, Fut>(
+    pub async fn try_find_map_locked<F, T, E>(
         &self,
-        wrap_tx: &Transaction,
-        pred: F,
-    ) -> Option<LockedAccount<P, S>>
+        f: F,
+    ) -> Result<Option<(LockedAccount<P, S>, T)>, E>
     where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: Future<Output = bool>,
+        F: (for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, Result<Option<T>, E>>),
     {
-        let wrap_gas_price = wrap_tx.gas_price.unwrap();
-        self.find_locked(|locked_account| async move {
-            locked_account.can_send(wrap_gas_price - 1) && pred(locked_account).await
+        self.map_unordered_locked(|locked_account| {
+            let f = &f;
+            async move { Ok(f(&locked_account).await?.map(move |r| (locked_account, r))) }
         })
+        .try_filter_map(future::ok)
+        .try_next()
         .await
     }
 
-    pub async fn try_find_wrap_and<F, Fut>(
-        &self,
-        wrap_tx: &Transaction,
-        pred: F,
-    ) -> Result<Option<LockedAccount<P, S>>, Fut::Error>
-    where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: TryFuture<Ok = bool>,
-    {
-        let wrap_gas_price = wrap_tx.gas_price.unwrap();
-        self.try_find_locked(|locked_account| async move {
-            if !locked_account.can_send(wrap_gas_price - 1) {
-                return Ok(false);
-            }
-            pred(locked_account).into_future().await
-        })
-    }
-
-    pub async fn find_wrap_map<F, Fut, R>(
+    pub async fn try_find_wrap_and_send_txs<F, E: 'static>(
         &self,
         wrap_tx: &Transaction,
         f: F,
-    ) -> Option<(LockedAccount<P, S>, R)>
+    ) -> Result<Option<Vec<TxHash>>, SendTxError<S, E>>
     where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: Future<Output = Option<R>>,
+        F: for<'b> Fn(
+            &'b LockedAccount<P, S>,
+        ) -> LocalBoxFuture<
+            'b,
+            Result<Option<(Vec<TypedTransaction>, Vec<TypedTransaction>)>, E>,
+        >,
+        P: 'static,
+        S: 'static,
     {
-        let wrap_gas_price = wrap_tx.gas_price.unwrap();
-        self.find_map_locked(|locked_account| async move {
-            if !locked_account.can_send(wrap_gas_price - 1) {
-                return None;
-            }
-            f(locked_account).await
-        })
-    }
+        let wrap_gas_price: U256 = wrap_tx.gas_price.unwrap();
 
-    pub async fn try_find_wrap_map<F, Fut, R>(
-        &self,
-        wrap_tx: &Transaction,
-        f: F,
-    ) -> Result<Option<(LockedAccount<P, S>, R)>, Fut::Error>
-    where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: TryFuture<Output = Option<R>>,
-    {
-        let wrap_gas_price = wrap_tx.gas_price.unwrap();
-        self.find_map_locked(|locked_account| async move {
-            if !locked_account.can_send(wrap_gas_price - 1) {
-                return Ok(None);
-            }
-            f(locked_account).into_future().await
-        })
-    }
-
-    pub async fn try_find_wrap_and_send_txs<F, Fut>(
-        &self,
-        wrap_tx: &Transaction,
-        f: F,
-    ) -> anyhow::Result<Vec<TxHash>>
-    where
-        F: Fn(&LockedAccount<P, S>) -> Fut,
-        Fut: TryFuture<Ok = Option<(Vec<TypedTransaction>, Vec<TypedTransaction>)>>,
-    {
-        let Some((locked_account, (front_run_txs, back_run_txs))) =
-            self.try_find_wrap_map(wrap_tx, f).await? else {
+        let Some((mut locked_account, (front_run_txs, back_run_txs))) =
+            self.try_find_map_locked(|locked_account| {
+                if !locked_account.can_send(wrap_gas_price - 1) {
+                    return future::ok(None).boxed_local()
+                }
+                f(locked_account)
+            }).await? else {
             return Ok(None);
         };
 
         let r = locked_account.send_txs(
             front_run_txs
                 .into_iter()
-                .map(|tx| {
+                .map(|mut tx| {
                     tx.set_gas_price(wrap_gas_price - 1);
                     tx
                 })
-                .chain(back_run_txs.into_iter().map(|tx| {
+                .chain(back_run_txs.into_iter().map(|mut tx| {
                     tx.set_gas_price(wrap_gas_price + 1);
                     tx
                 })),
         );
         drop(locked_account); // we do not need lock anymore
-        r.into_future().await
+        r.into_future()
+            .await
+            .map(Some)
+            .map_err(SendTxError::other_into)
     }
 }
 

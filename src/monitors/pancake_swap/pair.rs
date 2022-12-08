@@ -1,16 +1,17 @@
+use crate::cached::{Cached, CachedAtBlock};
+use crate::contracts::{pancake_factory_v2::PancakeFactoryV2, pancake_pair::PancakePair};
+
 use std::fmt::Display;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use ethers::types::{BlockId, H256};
 use ethers::{
     abi::AbiEncode,
     prelude::{Address, ContractError, Middleware},
 };
-use futures::{future::try_join3, lock::Mutex};
+use futures::future::try_join3;
 use metrics::{register_counter, Counter};
-
-use crate::cached::Aption;
-use crate::contracts::{pancake_factory_v2::PancakeFactoryV2, pancake_pair::PancakePair};
 
 use super::token::Token;
 
@@ -18,7 +19,7 @@ pub struct Pair<M: Middleware> {
     inner: PancakePair<M>,
     tokens: (Token<M>, Token<M>),
     inverse_order: bool,
-    reserves: Mutex<Aption<(f64, f64, u32)>>,
+    reserves: CachedAtBlock<(f64, f64, u32)>,
     hit_times: Counter,
 }
 
@@ -56,7 +57,7 @@ impl<M: Middleware> Pair<M> {
             ),
             tokens: (t0, t1),
             inner: PancakePair::new(pair, client),
-            reserves: Mutex::new(None.into()),
+            reserves: CachedAtBlock::default(),
         })
     }
 
@@ -68,7 +69,8 @@ impl<M: Middleware> Pair<M> {
         &self.tokens
     }
 
-    async fn get_reserves(&self) -> Result<(f64, f64, u32), ContractError<M>> {
+    async fn get_reserves_at(&self, block_hash: H256) -> Result<(f64, f64, u32), ContractError<M>> {
+        // TODO: use block id
         let (mut r0, mut r1, deadline) = self.inner.get_reserves().call().await?;
 
         if self.inverse_order {
@@ -79,17 +81,17 @@ impl<M: Middleware> Pair<M> {
         Ok((t0.as_decimals(r0), t1.as_decimals(r1), deadline))
     }
 
-    pub async fn reserves(&self) -> Result<(f64, f64, u32), ContractError<M>> {
+    pub async fn reserves(
+        &self,
+        block_hash: H256,
+    ) -> Result<(f64, f64, u32), ContractError<M>> {
         self.reserves
-            .lock()
+            .get_at_or_try_insert_with(block_hash, |block_hash| self.get_reserves_at(*block_hash))
             .await
-            .get_or_try_insert_with(|| self.get_reserves())
-            .await
-            .copied()
     }
 
     pub async fn on_block(&self) {
-        self.reserves.lock().await.take();
+        self.reserves.flush().await
     }
 }
 

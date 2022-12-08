@@ -8,7 +8,13 @@ use futures::{
 };
 use metrics::{describe_counter, register_counter, Counter, Unit};
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
+
+use crate::cached::Cached;
+use crate::contracts::pancake_router_v2::{
+    SwapETHForExactTokensCall, SwapExactETHForTokensCall, SwapExactTokensForETHCall,
+};
 
 mod pair;
 mod router;
@@ -17,12 +23,8 @@ mod token;
 use self::pair::Pair;
 use self::router::Router;
 
-use crate::cached::Aption;
-use crate::contracts::pancake_router_v2::{
-    SwapETHForExactTokensCall, SwapExactETHForTokensCall, SwapExactTokensForETHCall,
-};
-
-use super::{FunctionCallMonitor, TxMonitor, StatelessBlockMonitor};
+use super::{FunctionCallMonitor, TxMonitor};
+use crate::accounts::Accounts;
 
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
@@ -39,7 +41,7 @@ pub struct PancakeSwap<M: Middleware> {
     bnb_limit: f64,
     gas_price: f64,
     gas_limit: f64,
-    pair_contracts: HashMap<(Address, Address), Mutex<Aption<Arc<Pair<M>>>>>,
+    pair_contracts: HashMap<(Address, Address), Cached<Arc<Pair<M>>>>,
     metrics: Metrics,
 }
 
@@ -69,7 +71,7 @@ where
             pair_contracts: config
                 .token_pairs
                 .into_iter()
-                .map(|p| (p, Mutex::new(None.into())))
+                .map(|p| (p, None.into()))
                 .collect(),
             metrics: Metrics {
                 to_router: {
@@ -151,70 +153,60 @@ impl<M> TxMonitor for PancakeSwap<M>
 where
     M: Middleware + 'static,
 {
+    type Ok = ();
+    type Error = anyhow::Error;
+
     #[tracing::instrument(skip_all, fields(?tx.hash))]
-    fn on_tx<'a>(
+    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
         &'a self,
         tx: &'a Transaction,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>> {
+        block_hash: H256,
+        accounts: &'a Accounts<P, S>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         if !tx.to.map_or(false, |h| h == self.router.address()) {
             None
         } else {
             self.metrics.to_router.increment(1);
 
             match *tx.input {
-                [127, 243, 106, 181, ..] => <PancakeSwap<M> as FunctionCallMonitor<
-                    SwapExactETHForTokensCall,
-                >>::on_func_raw(self, tx),
+                [127, 243, 106, 181, ..] => {
+                    FunctionCallMonitor::<SwapExactETHForTokensCall>::maybe_process_func_raw(
+                        self, tx, block_hash, accounts,
+                    )
+                }
                 _ => None,
             }
         }
-        .unwrap_or_else(|| future::ok(Vec::new()).boxed())
+        .unwrap_or_else(|| future::ok(()).boxed())
     }
 }
 
-impl<M> StatelessBlockMonitor for PancakeSwap<M>
-where
-    M: Middleware,
-{
-    #[tracing::instrument(skip_all, fields(?block.hash))]
-    fn on_block<'a>(&'a self, block: &'a Block<TxHash>) -> BoxFuture<'a, anyhow::Result<()>> {
-        self.pair_contracts
-            .iter()
-            .map(|(_, p)| async {
-                if let Some(p) = p.lock().await.as_deref() {
-                    p.on_block().await;
-                }
-            })
-            .collect::<FuturesUnordered<_>>()
-            .collect::<()>()
-            .map(Result::Ok)
-            .boxed()
-    }
-}
-
-impl<M> FunctionCallMonitor<SwapExactETHForTokensCall> for PancakeSwap<M>
+impl<'a, M> FunctionCallMonitor<'a, SwapExactETHForTokensCall> for PancakeSwap<M>
 where
     M: Middleware + 'static,
 {
-    fn on_func<'a>(
+    type Ok = ();
+    type Error = anyhow::Error;
+
+    fn process_func<P: JsonRpcClient, S: Signer>(
         &'a self,
         tx: &'a Transaction,
+        block_hash: H256,
         inputs: SwapExactETHForTokensCall,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<TransactionRequest>>> {
+        accounts: &'a Accounts<P, S>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         async move {
             self.metrics.swap_exact_eth_for_tokens.increment(1);
             let (t0_address, t1_address) = match inputs.path[..] {
                 [t0, t1] => (t0, t1),
-                _ => return Ok([].into()),
+                _ => return Ok(()),
             };
             self.metrics.swap_exact_eth_for_tokens2.increment(1);
 
             let pair = match self.pair_contracts.get(&(t0_address, t1_address)) {
-                None => return Ok(Vec::new()),
-                Some(pair) => pair
-                    .lock()
-                    .await
-                    .get_or_try_insert_with(|| {
+                None => return Ok(()),
+                Some(pair) => {
+                    pair.get_or_try_insert_with(|| {
                         Pair::new(
                             self.client.clone(),
                             self.router.factory(),
@@ -223,7 +215,7 @@ where
                         .map_ok(Arc::new)
                     })
                     .await?
-                    .clone(),
+                }
             };
             // TODO: remove this pair if error is this contract does not exist no more
 
@@ -236,9 +228,11 @@ where
                 gas_price: t0.as_decimals(tx.gas_price.unwrap().low_u128()),
                 amount_in: t0.as_decimals(tx.value.low_u128()),
                 amount_out_min: t1.as_decimals(inputs.amount_out_min.low_u128()),
-                reserves: pair.reserves().await.map(|(r0, r1, _)| (r0, r1))?,
+                reserves: pair
+                    .reserves(block_hash)
+                    .await
+                    .map(|(r0, r1, _)| (r0, r1))?,
             };
-
             // let s1 = SwapETHForExactTokensCall {
             //     amount_out: todo!(),
             //     path: todo!(),
@@ -275,7 +269,8 @@ where
             //         ),
             // ]
             // .into())
-            Ok([].into())
+
+            Ok(())
         }
         .boxed()
     }
