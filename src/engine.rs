@@ -4,19 +4,25 @@ use anyhow::Context;
 use ethers::{
     providers::{JsonRpcClient, Middleware, Provider, PubsubClient},
     signers::Signer,
-    types::{Block, Transaction, TxHash, H256},
+    types::{Block, BlockNumber, Transaction, TxHash, H256},
 };
 use futures::{
-    future::{join, Future, FutureExt, TryFutureExt},
+    future::{self, try_join3, Aborted, Future, FutureExt, TryFutureExt},
+    lock::Mutex,
     pin_mut, select_biased,
     stream::{FusedStream, FuturesUnordered, StreamExt, TryStreamExt},
-    try_join,
 };
-use tokio;
+use metrics::{register_counter, register_histogram, Counter, Histogram};
+use tokio::{self, time::Duration};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, trace, warn};
+use tracing::{error, field, info, trace, warn, Instrument, Span};
 
-use crate::{abort::JoinHandleSet, accounts::Accounts, monitors::TxMonitor};
+use crate::{
+    abort::{FutureExt as AbortFutureExt, JoinHandleSet},
+    accounts::Accounts,
+    monitors::TxMonitor,
+    timed::TryFutureExt as TryTimedFutureExt,
+};
 
 pub struct Engine<SC, RC, S, M>
 where
@@ -29,12 +35,8 @@ where
     requesting: Arc<Provider<RC>>,
     accounts: Arc<Accounts<RC, S>>,
     monitor: Arc<M>,
+    metrics: Arc<Metrics>,
 }
-
-pub trait TopTxMonitor: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static {}
-
-impl<M> TopTxMonitor for M where M: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
-{}
 
 impl<SC, RC, S, M> Engine<SC, RC, S, M>
 where
@@ -54,11 +56,15 @@ where
             streaming: streaming.into(),
             requesting: requesting.into(),
             monitor: monitor.into(),
+            metrics: Metrics::default().into(),
         }
     }
 
     pub async fn run(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {
-        let (mut new_blocks, mut pending_txs) = try_join!(
+        let cancelled = cancel.cancelled().fuse();
+        pin_mut!(cancelled);
+
+        let (mut new_blocks, mut pending_txs, last_block) = try_join3(
             self.streaming
                 .subscribe_blocks()
                 .inspect_ok(|st| info!(subscription_id = %st.id, "subscribed to new blocks"))
@@ -69,15 +75,32 @@ where
                     |st| info!(subscription_id = %st.id, "subscribed to new pending transactions"),
                 )
                 .map(|r| r.with_context(|| "failed to subscribe to new pending transactions")),
-        )?;
+            self.requesting
+                .get_block(BlockNumber::Latest)
+                .map_ok(Option::unwrap)
+                .err_into::<anyhow::Error>(),
+        )
+        .with_abort(cancelled.map(|_| Aborted))
+        .await??;
+
+        let last_block_hash = Arc::new(Mutex::new(last_block.hash.unwrap()));
 
         let txs = pending_txs.by_ref().take_until(cancel.cancelled());
         pin_mut!(txs);
+
         let mut blocks = new_blocks
             .by_ref()
             // .inspect(|block|) // TODO: upd height and current block_hash
             .map(Ok)
-            .try_filter_map(|block| self.requesting.get_block_with_txs(block.hash.unwrap()))
+            .and_then(|block| {
+                self.requesting
+                    .get_block_with_txs(block.hash.unwrap())
+                    .try_timed()
+            })
+            .try_filter_map(|(block, elapsed)| {
+                self.metrics.block_resolved(elapsed);
+                future::ok(block)
+            })
             .fuse();
 
         let mut handles = JoinHandleSet::default();
@@ -92,7 +115,9 @@ where
                     handles.abort_all();
                 },
                 block = blocks.select_next_some() => {
-                    tokio::spawn(self.process_block(block?, &mut handles)); // TODO: wait?
+                    let block = block?;
+                    *last_block_hash.lock().await = block.hash.unwrap();
+                    tokio::spawn(self.process_block(block, &mut handles)); // TODO: wait?
                 },
                 r = handles.select_next_some() => if let Err(err) = r {
                     error!(%err, "transaction processing failed");
@@ -102,38 +127,41 @@ where
                     }
                     // TODO: upd statistics
                 },
-                tx_hash = txs.select_next_some() => self.maybe_process_tx(tx_hash, &mut handles),
+                tx_hash = txs.select_next_some() => {
+                    self.maybe_process_tx(tx_hash, &mut handles, &last_block_hash)
+                },
             }
         }
-
-        // manually unsibscribe, since just dropping streams causes panics
-        // from separate tokio task, which actually produces these streams
-        join(
-            pending_txs.unsubscribe().map(|r| match r {
-                Err(err) => error!(%err, "failed to unsubscribe from new pending transactions"),
-                Ok(_) => info!("unsubscribed from new pending transactions"),
-            }),
-            new_blocks.unsubscribe().map(|r| match r {
-                Err(err) => error!(%err, "failed to unsubscribe from new blocks"),
-                Ok(_) => info!("unsubscribed from new blocks"),
-            }),
-        )
-        .await;
 
         first_err.map_or(Ok(()), Err).map_err(Into::into)
     }
 
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            block_hash = ?block.hash.unwrap(),
+            block_number = block.number.unwrap().as_u64(),
+        ),
+    )]
     fn process_block(
         &self,
         block: Block<Transaction>,
         handles: &mut JoinHandleSet<TxHash, anyhow::Result<Option<M::Ok>>>,
     ) -> impl Future<Output = ()> {
+        trace!("got new block");
+
         block
             .transactions
             .into_iter()
-            .rev()
+            .rev() // reverse so that we set only last nonces for accounts
             .inspect(|tx| {
-                handles.abort(&tx.hash);
+                if handles.abort(&tx.hash).is_some() {
+                    trace!(
+                        ?tx.hash,
+                        "transaction has just been mined, cancelling its processing...",
+                    );
+                    self.metrics.tx_missed();
+                };
             })
             .filter_map({
                 let mut seen = HashSet::new();
@@ -148,13 +176,22 @@ where
             })
             .collect::<FuturesUnordered<_>>()
             .collect::<()>()
+            .inspect(|_| {
+                trace!("block processed");
+            })
+            .in_current_span()
     }
 
+    #[tracing::instrument(skip_all, fields(?tx_hash))]
     fn maybe_process_tx(
         &self,
         tx_hash: TxHash,
         handles: &mut JoinHandleSet<TxHash, anyhow::Result<Option<M::Ok>>>,
+        last_block_hash: &Arc<Mutex<H256>>,
     ) {
+        info!("got new transaction");
+        self.metrics.new_tx();
+
         let handle_entry = match handles.try_insert(tx_hash) {
             Ok(v) => v,
             Err(tx_hash) => {
@@ -162,6 +199,7 @@ where
                     ?tx_hash,
                     "this transaction is already being processed, skipping...",
                 );
+                self.metrics.tx_duplicate();
                 return;
             }
         };
@@ -170,29 +208,120 @@ where
             self.requesting.clone(),
             self.monitor.clone(),
             tx_hash,
-            tx_hash,
+            last_block_hash.clone(),
+            self.metrics.clone(),
         ));
     }
 
-    #[tracing::instrument(skip_all, fields(?tx_hash, ?block_hash))]
+    #[tracing::instrument(skip_all, fields(?tx_hash, block_hash = field::Empty))]
     async fn process_tx(
         provider: Arc<Provider<RC>>,
         monitor: Arc<M>,
         tx_hash: H256,
-        block_hash: H256,
+        block_hash: Arc<Mutex<H256>>,
+        metrics: Arc<Metrics>,
     ) -> anyhow::Result<Option<M::Ok>> {
-        let Some(tx) = provider.get_transaction(tx_hash)
-            .await
-            .with_context(|| "failed to get transaction")?
-            else {
-            trace!("fake transaction, skipping...");
-            return Ok(None);
-        };
+        let tx = {
+            let (tx, elapsed) = provider
+                .get_transaction(tx_hash)
+                .try_timed()
+                .await
+                .with_context(|| "failed to get transaction")?;
 
-        monitor
-            .process_tx(&tx, block_hash)
-            .await
-            .map(Some)
-            .map_err(Into::into)
+            metrics.tx_resolved(elapsed);
+
+            match tx {
+                Some(tx) => {
+                    metrics.tx_resolved_as_pending();
+                    tx
+                }
+                None => {
+                    trace!("fake transaction, skipping...");
+                    metrics.fake_tx();
+                    return Ok(None);
+                }
+            }
+        };
+        let block_hash = *block_hash.lock_owned().await;
+        Span::current().record("block_hash", format!("{block_hash:x}"));
+
+        trace!("transaction resolved, processing...");
+
+        let (r, elapsed) = monitor.process_tx(&tx, block_hash).try_timed().await?;
+        trace!("transaction processed");
+        metrics.tx_processed(elapsed);
+
+        Ok(Some(r))
+    }
+}
+
+pub trait TopTxMonitor: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static {}
+
+impl<M> TopTxMonitor for M where M: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
+{}
+
+struct Metrics {
+    seen_txs: Counter,
+    tx_duplicates: Counter,
+    fake_txs: Counter,
+    resolved_txs: Counter,
+    resolved_as_pendning_txs: Counter,
+    resolve_tx_duration: Histogram,
+    process_tx_duration: Histogram,
+    missed_txs: Counter,
+
+    height: Counter,
+    resolve_block_duration: Histogram,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            seen_txs: register_counter!("sandwitch_seen_txs"),
+            tx_duplicates: register_counter!("sandwitch_tx_duplicates"),
+            fake_txs: register_counter!("sandwitch_fake_txs"),
+            resolved_txs: register_counter!("sandwitch_resolved_txs"),
+            resolved_as_pendning_txs: register_counter!("sandwitch_resolved_as_pending_txs"),
+            resolve_tx_duration: register_histogram!("sandwitch_resolve_tx_duration"),
+            process_tx_duration: register_histogram!("sandwitch_process_tx_duration"),
+            missed_txs: register_counter!("sandwitch_missed_txs"),
+            height: register_counter!("sandwitch_height"),
+            resolve_block_duration: register_histogram!("sandwitch_resolve_block_duration"),
+        }
+    }
+}
+
+impl Metrics {
+    fn new_tx(&self) {
+        self.seen_txs.increment(1);
+    }
+
+    fn tx_duplicate(&self) {
+        self.tx_duplicates.increment(1);
+    }
+
+    fn fake_tx(&self) {
+        self.fake_txs.increment(1);
+    }
+
+    fn tx_resolved(&self, duration: Duration) {
+        self.resolved_txs.increment(1);
+        self.resolve_tx_duration.record(duration);
+    }
+
+    fn tx_resolved_as_pending(&self) {
+        self.resolved_as_pendning_txs.increment(1);
+    }
+
+    fn tx_processed(&self, duration: Duration) {
+        self.process_tx_duration.record(duration);
+    }
+
+    fn tx_missed(&self) {
+        self.missed_txs.increment(1);
+    }
+
+    fn block_resolved(&self, duration: Duration) {
+        self.resolve_block_duration.record(duration);
     }
 }

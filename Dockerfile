@@ -1,4 +1,4 @@
-FROM rust AS env
+FROM rust:1.65 AS env
 ARG RUST_TOOLCHAIN=nightly-2022-11-08
 RUN rustup toolchain install \
   --allow-downgrade \

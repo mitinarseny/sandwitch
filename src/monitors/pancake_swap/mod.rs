@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use ethers::{
     abi::AbiEncode,
-    providers::{JsonRpcClient, Middleware, Provider},
+    providers::{JsonRpcClient, Provider},
     signers::Signer,
     types::{Address, Transaction, H256},
 };

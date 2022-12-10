@@ -14,6 +14,7 @@ pub(crate) mod cached;
 pub(crate) mod contracts;
 pub(crate) mod engine;
 pub mod monitors;
+pub(crate) mod timed;
 
 pub use app::{App, Config, EngineConfig, MonitorsConfig};
 

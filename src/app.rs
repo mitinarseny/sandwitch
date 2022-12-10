@@ -57,7 +57,7 @@ where
     S: Signer,
 {
     engine: Engine<SC, RC, S, Box<dyn TopTxMonitor>>,
-    // process_metrics: ProcessMetrics,
+    // process_metrics: ProcessMetrics, // TODO
 }
 
 impl App<Ws, Http, Wallet<SigningKey>> {
