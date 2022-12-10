@@ -263,7 +263,7 @@ where
         match this.futs.poll_next(cx).ready()? {
             Some(r) => match r {
                 Ok((r, id)) => {
-                    this.aborts.remove(&id).expect("TODO"); // TODO
+                    this.aborts.remove(&id);
                     match r {
                         Ok(v) => Poll::Ready(Some(Ok(v))),
                         Err(Aborted) => Poll::Pending,

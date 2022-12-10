@@ -162,7 +162,7 @@ where
         let handle_entry = match handles.try_insert(tx_hash) {
             Ok(v) => v,
             Err(tx_hash) => {
-                warn!(
+                trace!(
                     ?tx_hash,
                     "this transaction is already being processed, skipping...",
                 );
