@@ -7,49 +7,53 @@
     poll_ready
 )]
 
-pub mod abort;
-pub mod accounts;
-mod cached;
-mod contracts;
-mod engine;
+pub(crate) mod abort;
+pub(crate) mod accounts;
+mod app;
+pub(crate) mod cached;
+pub(crate) mod contracts;
+pub(crate) mod engine;
+pub mod monitors;
+
+pub use app::{App, Config, EngineConfig, MonitorsConfig};
+
 // mod metriced;
-mod monitors;
 // mod stream_utils;
 // mod timed;
 // pub mod with;
 
-use self::{
-    accounts::{Account, Accounts},
-    engine::{Engine, TopTxMonitor},
-    monitors::{
-        pancake_swap::{PancakeSwap, PancakeSwapConfig},
-        TxMonitor, TxMonitorExt,
-    },
-};
-
-use std::{
-    io::Result,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-
-use anyhow::anyhow;
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    providers::{Http, JsonRpcClient, Middleware, Provider, PubsubClient, Ws},
-    signers::{Signer, Wallet},
-};
-use futures::{
-    future::{self, try_join},
-    stream::TryStreamExt,
-};
-use metrics::register_counter;
-use serde::Deserialize;
-use tokio::fs;
-use tokio_stream::wrappers::ReadDirStream;
-use tokio_util::sync::CancellationToken;
-use tracing::info;
-use url::Url;
+// use self::{
+//     accounts::{Account, Accounts},
+//     engine::{Engine, TopTxMonitor},
+//     monitors::{
+//         pancake_swap::{PancakeSwap, PancakeSwapConfig},
+//         TxMonitor, TxMonitorExt,
+//     },
+// };
+//
+// use std::{
+//     io::Result,
+//     path::{Path, PathBuf},
+//     sync::Arc,
+// };
+//
+// use anyhow::anyhow;
+// use ethers::{
+//     core::k256::ecdsa::SigningKey,
+//     providers::{Http, JsonRpcClient, Middleware, Provider, PubsubClient, Ws},
+//     signers::{Signer, Wallet},
+// };
+// use futures::{
+//     future::{self, try_join},
+//     stream::TryStreamExt,
+// };
+// use metrics::register_counter;
+// use serde::Deserialize;
+// use tokio::fs;
+// use tokio_stream::wrappers::ReadDirStream;
+// use tokio_util::sync::CancellationToken;
+// use tracing::info;
+// use url::Url;
 
 // use crate::account::Account;
 //
@@ -89,24 +93,6 @@ use url::Url;
 // use tokio_util::sync::CancellationToken;
 // use tracing::{error, info, trace, warn};
 // use url::Url;
-//
-#[derive(Deserialize, Debug)]
-pub struct Config {
-    pub core: CoreConfig,
-    pub monitors: MonitorsConfig,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct CoreConfig {
-    pub wss: Url,
-    pub http: Url,
-    pub accounts_dir: PathBuf,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct MonitorsConfig {
-    pub pancake_swap: Option<PancakeSwapConfig>,
-}
 
 // struct ProcessMetrics {
 //     seen_txs: Counter,
@@ -133,108 +119,6 @@ pub struct MonitorsConfig {
 //     }
 // }
 
-pub struct App<SC, RC, S>
-where
-    SC: PubsubClient,
-    RC: JsonRpcClient,
-    S: Signer,
-{
-    engine: Engine<SC, RC, S, Box<dyn TopTxMonitor>>,
-    // streaming: Arc<Provider<SC>>,
-    // requesting: Arc<Provider<RC>>,
-    // accounts: Accounts<RC, S>,
-    // monitors: Vec<Box<dyn TxMonitor<'static>>>,
-    // process_metrics: ProcessMetrics,
-}
-
-impl App<Ws, Http, Wallet<SigningKey>> {
-    pub async fn from_config(config: Config) -> anyhow::Result<Self> {
-        let streaming = Arc::new(Provider::new(Ws::connect(&config.core.wss).await?));
-        info!("web socket created");
-        let requesting = Arc::new(Provider::new(Http::new(config.core.http.clone())));
-
-        let network_id = {
-            let (streaming_net, requesting_net) =
-                try_join(streaming.get_net_version(), requesting.get_net_version()).await?;
-            if streaming_net != requesting_net {
-                return Err(anyhow!("mismatching network IDs: streaming: {streaming_net}, requesting: {requesting_net}"));
-            }
-            streaming_net
-        };
-        info!(network_id);
-        register_counter!("sandwitch_info", "network_id" => network_id).absolute(1);
-
-        let keys = Self::read_keys(config.core.accounts_dir).await?;
-        info!(
-            count = keys.len(),
-            "keys collected, initializing accounts..."
-        );
-
-        let accounts = Arc::new(Accounts::from_signers(keys, requesting.clone()).await?);
-        info!(count = accounts.len(), "accounts initialized");
-
-        let monitor =
-            Self::make_monitor(requesting.clone(), accounts.clone(), config.monitors).await?;
-
-        Ok(Self {
-            engine: Engine::new(streaming, requesting, accounts, monitor),
-            // process_metrics: ProcessMetrics::new(),
-        })
-    }
-
-    async fn read_keys(dir: impl AsRef<Path>) -> anyhow::Result<Vec<Wallet<SigningKey>>> {
-        ReadDirStream::new(fs::read_dir(dir).await?)
-            .and_then(|e| fs::read(e.path()))
-            .err_into::<anyhow::Error>()
-            .and_then(|k| future::ready(SigningKey::from_bytes(&k).map_err(Into::into)))
-            .map_ok(Into::into)
-            .try_collect::<Vec<_>>()
-            .await
-    }
-}
-
-impl<SC, RC, S> App<SC, RC, S>
-where
-    SC: PubsubClient + 'static,
-    RC: JsonRpcClient + 'static,
-    S: Signer + 'static,
-{
-    pub async fn run(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {
-        self.engine.run(cancel).await
-    }
-
-    async fn make_monitor(
-        provider: impl Into<Arc<Provider<RC>>>,
-        accounts: impl Into<Arc<Accounts<RC, S>>>,
-        config: MonitorsConfig,
-    ) -> anyhow::Result<Box<dyn TopTxMonitor>> {
-        let mut monitors = Self::make_monitors(provider, accounts, config).await?;
-
-        if monitors.is_empty() {
-            return Err(anyhow!("all monitors are disabled"));
-        }
-        Ok(if monitors.len() == 1 {
-            monitors.remove(0)
-        } else {
-            Box::new(monitors.map(|_| ()))
-        })
-    }
-
-    async fn make_monitors(
-        provider: impl Into<Arc<Provider<RC>>>,
-        accounts: impl Into<Arc<Accounts<RC, S>>>,
-        config: MonitorsConfig,
-    ) -> anyhow::Result<Vec<Box<dyn TopTxMonitor>>> {
-        let mut monitors: Vec<Box<dyn TopTxMonitor>> = Vec::new();
-
-        if let Some(cfg) = config.pancake_swap {
-            let pancake = PancakeSwap::from_config(provider, accounts, cfg).await?;
-            monitors.push(Box::new(pancake));
-        }
-
-        Ok(monitors)
-    }
-}
 //
 // impl<ST, RT, S> App<ST, RT, S>
 // where

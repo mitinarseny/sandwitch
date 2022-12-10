@@ -1,8 +1,8 @@
-use std::{collections::HashSet, error::Error as StdError, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::Context;
 use ethers::{
-    providers::{JsonRpcClient, Middleware, Provider, ProviderError, PubsubClient},
+    providers::{JsonRpcClient, Middleware, Provider, PubsubClient},
     signers::Signer,
     types::{Block, Transaction, TxHash, H256},
 };
@@ -16,11 +16,7 @@ use tokio;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 
-use crate::{
-    abort::JoinHandleSet,
-    accounts::{Account, Accounts},
-    monitors::TxMonitor,
-};
+use crate::{abort::JoinHandleSet, accounts::Accounts, monitors::TxMonitor};
 
 pub struct Engine<SC, RC, S, M>
 where

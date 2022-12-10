@@ -3,6 +3,12 @@ name = "sandwitch"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = [
+  "pancake_swap",
+]
+pancake_swap = []
+
 [dependencies]
 anyhow = "1"
 futures = "0.3"
@@ -22,9 +28,9 @@ features = ["derive"]
 [dependencies.ethers]
 version = "0.17"
 features = [
-	"abigen",
-	"rustls",
-	"ws",
+  "abigen",
+  "rustls",
+  "ws",
 ]
 
 [dependencies.metrics-exporter-prometheus]

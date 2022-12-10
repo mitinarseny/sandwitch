@@ -2,27 +2,25 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use futures::future::Aborted;
-use futures::{pin_mut, select_biased, FutureExt};
+use clap::{Parser, ValueHint};
 use metrics::register_counter;
 use metrics_exporter_prometheus::PrometheusBuilder;
-use sandwitch::*;
-
-use clap::{Parser, ValueHint};
-use sandwitch::abort::FutureExt as AbortFutureExt;
-// use sandwitch::shutdown::{CancelToken, Cancelled, FutureExt as CancelFutureExt};
-use tokio::signal::ctrl_c;
-use tokio::{fs, main};
+use tokio::{fs, main, signal::ctrl_c};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
-use tracing::metadata::LevelFilter;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::Registry;
+use tracing::{info, metadata::LevelFilter};
+use tracing_subscriber::{prelude::*, Registry};
+
+use sandwitch::{App, Config};
 
 #[derive(Parser)]
 #[clap(version)]
 struct Args {
-    #[clap(default_value_os_t = PathBuf::from("./sandwitch.toml"), short, long, value_parser, value_hint = ValueHint::FilePath, value_name = "FILE")]
+    #[clap(
+        default_value_os_t = PathBuf::from("./sandwitch.toml"),
+        short, long,
+        value_parser,
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE")]
     config: PathBuf,
 
     /// Increase verbosity (error (deafult) -> warn -> info -> debug -> trace)
@@ -72,28 +70,25 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
-    let cancel = {
-        let cancel = CancellationToken::new();
-        let child = cancel.child_token();
-        tokio::spawn({
-            let cancel_guard = cancel.drop_guard();
-            async move {
-                ctrl_c().await.expect("failed to set CTRL+C handler");
-                info!("shutdown requested...");
-                drop(cancel_guard);
-            }
-        });
-        child
-    };
+    let mut app = App::from_config(config).await?;
 
-    let mut app = {
-        let app = App::from_config(config);
-        let cancelled = cancel.cancelled();
-        pin_mut!(app, cancelled);
-        app.with_abort(cancelled.map(|_| Aborted)).await??
-    };
-
+    let cancel = make_ctrl_c_cancel();
     app.run(cancel.child_token()).await?;
+
     info!("shutdown");
     Ok(())
+}
+
+fn make_ctrl_c_cancel() -> CancellationToken {
+    let cancel = CancellationToken::new();
+    let child = cancel.child_token();
+    tokio::spawn({
+        let cancel_guard = cancel.drop_guard();
+        async move {
+            ctrl_c().await.expect("failed to set CTRL+C handler");
+            info!("shutdown requested...");
+            drop(cancel_guard);
+        }
+    });
+    child
 }

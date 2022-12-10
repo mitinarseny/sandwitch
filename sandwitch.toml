@@ -1,4 +1,4 @@
-[core]
+[engine]
 last_blocks = 50
 
 wss = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"

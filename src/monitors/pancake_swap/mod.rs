@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use ethers::{
     abi::AbiEncode,
@@ -12,17 +11,18 @@ use metrics::{describe_counter, register_counter, Counter, Unit};
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use super::{FunctionCallMonitor, TxMonitor};
 use crate::{
-    accounts::Accounts, cached::Cached, contracts::pancake_router_v2::SwapExactETHForTokensCall,
+    accounts::Accounts,
+    cached::Cached,
+    contracts::pancake_router_v2::SwapExactETHForTokensCall,
+    monitors::{FunctionCallMonitor, TxMonitor},
 };
 
 mod pair;
 mod router;
 mod token;
 
-use self::pair::Pair;
-use self::router::Router;
+use self::{pair::Pair, router::Router};
 
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
@@ -33,7 +33,7 @@ pub struct PancakeSwapConfig {
     pub token_pairs: Vec<(Address, Address)>,
 }
 
-pub struct PancakeSwap<P: JsonRpcClient, S: Signer> {
+pub(crate) struct PancakeSwap<P: JsonRpcClient, S: Signer> {
     client: Arc<Provider<P>>,
     accounts: Arc<Accounts<P, S>>,
     router: Router<P>,
@@ -56,7 +56,7 @@ where
     S: Signer,
 {
     #[tracing::instrument(skip_all)]
-    pub async fn from_config(
+    pub(crate) async fn from_config(
         client: impl Into<Arc<Provider<P>>>,
         accounts: impl Into<Arc<Accounts<P, S>>>,
         config: PancakeSwapConfig,
