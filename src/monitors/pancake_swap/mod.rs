@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ethers::{abi::AbiEncode, prelude::*};
-use futures::lock::Mutex;
-use futures::{
-    future, future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt,
+use ethers::{
+    abi::AbiEncode,
+    providers::{JsonRpcClient, Middleware, Provider},
+    signers::Signer,
+    types::{Address, Transaction, H256},
 };
+use futures::future::{self, BoxFuture, FutureExt, TryFutureExt};
 use metrics::{describe_counter, register_counter, Counter, Unit};
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::cached::Cached;
-use crate::contracts::pancake_router_v2::{
-    SwapETHForExactTokensCall, SwapExactETHForTokensCall, SwapExactTokensForETHCall,
+use super::{FunctionCallMonitor, TxMonitor};
+use crate::{
+    accounts::Accounts, cached::Cached, contracts::pancake_router_v2::SwapExactETHForTokensCall,
 };
 
 mod pair;
@@ -22,9 +23,6 @@ mod token;
 
 use self::pair::Pair;
 use self::router::Router;
-
-use super::{FunctionCallMonitor, TxMonitor};
-use crate::accounts::Accounts;
 
 #[derive(Deserialize, Debug)]
 pub struct PancakeSwapConfig {
@@ -35,13 +33,14 @@ pub struct PancakeSwapConfig {
     pub token_pairs: Vec<(Address, Address)>,
 }
 
-pub struct PancakeSwap<M: Middleware> {
-    client: Arc<M>,
-    router: Router<M>,
+pub struct PancakeSwap<P: JsonRpcClient, S: Signer> {
+    client: Arc<Provider<P>>,
+    accounts: Arc<Accounts<P, S>>,
+    router: Router<P>,
     bnb_limit: f64,
     gas_price: f64,
     gas_limit: f64,
-    pair_contracts: HashMap<(Address, Address), Cached<Arc<Pair<M>>>>,
+    pair_contracts: HashMap<(Address, Address), Cached<Arc<Pair<P>>>>,
     metrics: Metrics,
 }
 
@@ -51,20 +50,24 @@ struct Metrics {
     swap_exact_eth_for_tokens2: Counter,
 }
 
-impl<M> PancakeSwap<M>
+impl<P, S> PancakeSwap<P, S>
 where
-    M: Middleware,
+    P: JsonRpcClient + 'static,
+    S: Signer,
 {
     #[tracing::instrument(skip_all)]
-    pub async fn from_config(client: Arc<M>, config: PancakeSwapConfig) -> anyhow::Result<Self>
-    where
-        M: Clone + 'static,
-    {
+    pub async fn from_config(
+        client: impl Into<Arc<Provider<P>>>,
+        accounts: impl Into<Arc<Accounts<P, S>>>,
+        config: PancakeSwapConfig,
+    ) -> anyhow::Result<Self> {
+        let client: Arc<_> = client.into();
         let router = Router::new(client.clone(), config.router).await?;
         let factory = router.factory();
         info!(router = ?router.address(), factory = ?factory.address());
 
         Ok(Self {
+            accounts: accounts.into(),
             bnb_limit: config.bnb_limit,
             gas_price: config.gas_price,
             gas_limit: config.gas_limit,
@@ -111,7 +114,7 @@ where
     }
 }
 
-impl<M: Middleware> PancakeSwap<M> {
+impl<P: JsonRpcClient, S: Signer> PancakeSwap<P, S> {
     fn tx_fee(&self) -> f64 {
         self.gas_price * self.gas_limit
     }
@@ -149,19 +152,19 @@ struct Swap {
     reserves: (f64, f64),
 }
 
-impl<M> TxMonitor for PancakeSwap<M>
+impl<P, S> TxMonitor for PancakeSwap<P, S>
 where
-    M: Middleware + 'static,
+    P: JsonRpcClient + 'static,
+    S: Signer,
 {
     type Ok = ();
     type Error = anyhow::Error;
 
     #[tracing::instrument(skip_all, fields(?tx.hash))]
-    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
+    fn process_tx<'a>(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         if !tx.to.map_or(false, |h| h == self.router.address()) {
             None
@@ -171,7 +174,7 @@ where
             match *tx.input {
                 [127, 243, 106, 181, ..] => {
                     FunctionCallMonitor::<SwapExactETHForTokensCall>::maybe_process_func_raw(
-                        self, tx, block_hash, accounts,
+                        self, tx, block_hash,
                     )
                 }
                 _ => None,
@@ -181,19 +184,19 @@ where
     }
 }
 
-impl<'a, M> FunctionCallMonitor<'a, SwapExactETHForTokensCall> for PancakeSwap<M>
+impl<'a, P, S> FunctionCallMonitor<'a, SwapExactETHForTokensCall> for PancakeSwap<P, S>
 where
-    M: Middleware + 'static,
+    P: JsonRpcClient + 'static,
+    S: Signer,
 {
     type Ok = ();
     type Error = anyhow::Error;
 
-    fn process_func<P: JsonRpcClient, S: Signer>(
+    fn process_func(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
         inputs: SwapExactETHForTokensCall,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         async move {
             self.metrics.swap_exact_eth_for_tokens.increment(1);

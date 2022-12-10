@@ -1,15 +1,12 @@
-use std::{convert::Infallible, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use ethers::{
     contract::EthCall,
     providers::JsonRpcClient,
     signers::Signer,
-    types::{transaction::eip2718::TypedTransaction, Block, Bytes, Transaction, TxHash, H256},
+    types::{Transaction, H256},
 };
-use futures::{
-    future::BoxFuture, lock::Mutex, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt,
-    TryStreamExt,
-};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, TryFutureExt, TryStreamExt};
 
 use crate::accounts::Accounts;
 
@@ -19,23 +16,20 @@ pub trait TxMonitor {
     type Ok;
     type Error;
 
-    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
+    fn process_tx<'a>(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>;
+}
 
-    fn process_tx_owned<'a, P: JsonRpcClient + 'a, S: Signer + 'a>(
-        self: Arc<Self>,
-        tx: Arc<Transaction>,
-        block_hash: H256,
-        accounts: Arc<Accounts<P, S>>,
-    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>
+pub trait TxMonitorExt: TxMonitor {
+    fn map<F, T>(self, f: F) -> Map<Self, F>
     where
-        Self: Sync + Send + 'a,
+        Self: Sized,
+        F: Fn(Self::Ok) -> T + Sync,
     {
-        async move { self.process_tx(&tx, block_hash, &accounts).await }.boxed()
+        Map { inner: self, f }
     }
 
     fn map_err<F, E>(self, f: F) -> MapErr<Self, F>
@@ -58,6 +52,8 @@ pub trait TxMonitor {
     }
 }
 
+impl<M> TxMonitorExt for M where M: TxMonitor {}
+
 impl<M: ?Sized> TxMonitor for Box<M>
 where
     M: TxMonitor,
@@ -65,32 +61,31 @@ where
     type Ok = M::Ok;
     type Error = M::Error;
 
-    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
+    fn process_tx<'a>(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
-        (**self).process_tx(tx, block_hash, accounts)
+        (**self).process_tx(tx, block_hash)
     }
 }
 
-impl<M: ?Sized + Sync + Send> TxMonitor for Arc<M>
-where
-    M: TxMonitor,
-{
-    type Ok = M::Ok;
-    type Error = M::Error;
-
-    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
-        &'a self,
-        tx: &'a Transaction, // TODO: arc?
-        block_hash: H256,
-        accounts: &'a Accounts<P, S>,
-    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
-        (**self).process_tx(tx, block_hash, accounts)
-    }
-}
+// impl<M: ?Sized + Sync + Send> TxMonitor for Arc<M>
+// where
+//     M: TxMonitor,
+// {
+//     type Ok = M::Ok;
+//     type Error = M::Error;
+//
+//     fn process_tx<'a, P: JsonRpcClient, S: Signer>(
+//         &'a self,
+//         tx: &'a Transaction, // TODO: arc?
+//         block_hash: H256,
+//         accounts: &'a Accounts<P, S>,
+//     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+//         (**self).process_tx(tx, block_hash, accounts)
+//     }
+// }
 
 impl<M> TxMonitor for [M]
 where
@@ -100,17 +95,33 @@ where
     type Ok = Vec<M::Ok>;
     type Error = M::Error;
 
-    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
+    fn process_tx<'a>(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         self.iter()
-            .map(|m| m.process_tx(tx, block_hash, accounts))
+            .map(|m| m.process_tx(tx, block_hash))
             .collect::<FuturesUnordered<_>>()
             .try_collect()
             .boxed()
+    }
+}
+
+impl<M> TxMonitor for Vec<M>
+where
+    M: TxMonitor,
+    M::Ok: Send,
+{
+    type Ok = Vec<M::Ok>;
+    type Error = M::Error;
+
+    fn process_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        (**self).process_tx(tx, block_hash)
     }
 }
 
@@ -118,22 +129,67 @@ pub trait FunctionCallMonitor<'a, C: EthCall + 'a> {
     type Ok;
     type Error;
 
-    fn process_func<P: JsonRpcClient, S: Signer>(
+    fn process_func(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
         inputs: C,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>;
 
-    fn maybe_process_func_raw<P: JsonRpcClient, S: Signer>(
+    fn maybe_process_func_raw(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
-        accounts: &'a Accounts<P, S>,
     ) -> Option<BoxFuture<'a, Result<Self::Ok, Self::Error>>> {
         let inputs = C::decode(&tx.input).ok()?;
-        Some(self.process_func(tx, block_hash, inputs, accounts))
+        Some(self.process_func(tx, block_hash, inputs))
+    }
+}
+
+pub struct Map<M, F> {
+    inner: M,
+    f: F,
+}
+
+impl<M, F, T> TxMonitor for Map<M, F>
+where
+    M: TxMonitor,
+    F: Fn(M::Ok) -> T + Sync,
+{
+    type Ok = T;
+    type Error = M::Error;
+
+    fn process_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        self.inner
+            .process_tx(tx, block_hash)
+            .map_ok(&self.f)
+            .boxed()
+    }
+}
+
+impl<'a, M, C, F, T> FunctionCallMonitor<'a, C> for Map<M, F>
+where
+    C: EthCall + 'a,
+    M: FunctionCallMonitor<'a, C>,
+    F: Fn(M::Ok) -> T + Sync,
+{
+    type Ok = T;
+    type Error = M::Error;
+
+    fn process_func(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+        inputs: C,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        self.inner
+            .process_func(tx, block_hash, inputs)
+            .map_ok(&self.f)
+            .boxed()
     }
 }
 
@@ -150,14 +206,13 @@ where
     type Ok = M::Ok;
     type Error = E;
 
-    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
+    fn process_tx<'a>(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         self.inner
-            .process_tx(tx, block_hash, accounts)
+            .process_tx(tx, block_hash)
             .map_err(&self.f)
             .boxed()
     }
@@ -172,15 +227,14 @@ where
     type Ok = M::Ok;
     type Error = E;
 
-    fn process_func<P: JsonRpcClient, S: Signer>(
+    fn process_func(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
         inputs: C,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         self.inner
-            .process_func(tx, block_hash, inputs, accounts)
+            .process_func(tx, block_hash, inputs)
             .map_err(&self.f)
             .boxed()
     }
@@ -199,16 +253,12 @@ where
     type Ok = M::Ok;
     type Error = E;
 
-    fn process_tx<'a, P: JsonRpcClient, S: Signer>(
+    fn process_tx<'a>(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
-        self.inner
-            .process_tx(tx, block_hash, accounts)
-            .err_into()
-            .boxed()
+        self.inner.process_tx(tx, block_hash).err_into().boxed()
     }
 }
 
@@ -221,15 +271,14 @@ where
     type Ok = M::Ok;
     type Error = E;
 
-    fn process_func<P: JsonRpcClient, S: Signer>(
+    fn process_func(
         &'a self,
         tx: &'a Transaction,
         block_hash: H256,
         inputs: C,
-        accounts: &'a Accounts<P, S>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         self.inner
-            .process_func(tx, block_hash, inputs, accounts)
+            .process_func(tx, block_hash, inputs)
             .err_into()
             .boxed()
     }

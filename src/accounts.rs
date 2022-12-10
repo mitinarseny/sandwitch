@@ -1,4 +1,5 @@
-use anyhow::Context;
+use std::{collections::HashMap, convert::Infallible, ops::Deref, panic, sync::Arc};
+
 use ethers::{
     providers::{JsonRpcClient, Middleware, Provider, ProviderError},
     signers::Signer,
@@ -12,10 +13,6 @@ use futures::{
     stream::{FusedStream, FuturesUnordered, StreamExt},
     Future, FutureExt, TryFuture, TryFutureExt, TryStreamExt,
 };
-use std::panic;
-use std::sync::Arc;
-use std::{collections::HashMap, convert::Infallible};
-use std::{ops::Deref, rc::Rc};
 use thiserror::Error;
 
 use crate::cached::{CachedAt, CachedAtBlock};
@@ -31,7 +28,7 @@ impl PendingState {
         self.last_gas_price.map_or(true, |g| g <= gas_price)
     }
 
-    fn next_nonce(&mut self, gas_price: U256) -> U256 {
+    fn alloc_next_nonce(&mut self, gas_price: U256) -> U256 {
         if self.last_gas_price.map_or(false, |g| g > gas_price) {
             panic!(); // TODO
         }
@@ -41,11 +38,19 @@ impl PendingState {
         nonce
     }
 
-    fn set_next_nonce<'a, 'b: 'a>(
+    fn assign_next_nonce<'a, 'b: 'a>(
         &'a mut self,
         tx: &'b mut TypedTransaction,
     ) -> &'b mut TypedTransaction {
-        tx.set_nonce(self.next_nonce(tx.gas_price().unwrap()))
+        tx.set_nonce(self.alloc_next_nonce(tx.gas_price().unwrap()))
+    }
+
+    fn nonce_mined(&mut self, nonce_mined: U256) {
+        let new_next_nonce = nonce_mined + 1;
+        if new_next_nonce >= self.next_nonce {
+            self.next_nonce = new_next_nonce;
+            self.last_gas_price = None;
+        }
     }
 }
 
@@ -190,6 +195,11 @@ impl<P: JsonRpcClient, S: Signer> Deref for LockedAccount<P, S> {
 }
 
 impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
+    // TODO: non-pub?
+    pub fn nonce_mined(&mut self, nonce_mined: U256) {
+        self.pending_state.nonce_mined(nonce_mined)
+    }
+
     pub fn can_send(&self, gas_price: U256) -> bool {
         self.pending_state.can_send(gas_price)
     }
@@ -202,7 +212,7 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
         P: 'static,
         S: 'static,
     {
-        self.pending_state.set_next_nonce(&mut tx);
+        self.pending_state.assign_next_nonce(&mut tx);
         tokio::spawn({
             let inner = self.inner.clone();
             async move { inner.send_tx(tx).await }
@@ -220,7 +230,7 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
     {
         let txs = txs.into_iter().map({
             |mut tx| {
-                self.pending_state.set_next_nonce(&mut tx);
+                self.pending_state.assign_next_nonce(&mut tx);
                 tx
             }
         });
@@ -240,7 +250,6 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
     }
 }
 
-#[derive(Default)]
 pub struct Accounts<P: JsonRpcClient, S: Signer>(HashMap<Address, Account<P, S>>);
 
 impl<P: JsonRpcClient, S: Signer> Extend<Account<P, S>> for Accounts<P, S> {
@@ -249,9 +258,34 @@ impl<P: JsonRpcClient, S: Signer> Extend<Account<P, S>> for Accounts<P, S> {
     }
 }
 
+impl<P: JsonRpcClient, S: Signer> Default for Accounts<P, S> {
+    fn default() -> Self {
+        Self(HashMap::default())
+    }
+}
+
 impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
+    pub async fn from_signers(
+        signers: impl IntoIterator<Item = S>,
+        provider: impl Into<Arc<Provider<P>>>,
+    ) -> Result<Self, ProviderError> {
+        signers
+            .into_iter()
+            .map({
+                let provider = provider.into();
+                move |s| Account::new(provider.clone(), s)
+            })
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .await
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn get(&self, address: &Address) -> Option<Account<P, S>> {
+        self.0.get(&address).cloned()
     }
 
     fn map_unordered<'a, F, Fut>(&'a self, f: F) -> impl FusedStream<Item = Fut::Output> + 'a

@@ -38,12 +38,12 @@ impl<T> Timed<T> {
 
     #[inline]
     pub fn at(&self) -> Instant {
-        *self.0.with()
+        *AsRef::<Instant>::as_ref(&self.0)
     }
 
     #[inline]
     pub fn elapsed(&self) -> Duration {
-        self.0.with().elapsed()
+        self.at().elapsed()
     }
 
 

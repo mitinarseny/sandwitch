@@ -72,45 +72,28 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
-    let cancel_token = CancellationToken::new();
-
-    let app = {
-        let cancel_token = &cancel_token;
-        async move {
-            let mut app = {
-                let app = App::from_config(config);
-                let cancel = cancel_token.cancelled();
-                pin_mut!(app, cancel);
-                app.with_abort(cancel.map(|_| Aborted)).await??
-            };
-            info!("initializing");
-
-            info!("run");
-            app.run(cancel_token).await?;
-
-            Ok::<_, anyhow::Error>(())
-        }
-        .fuse()
+    let cancel = {
+        let cancel = CancellationToken::new();
+        let child = cancel.child_token();
+        tokio::spawn({
+            let cancel_guard = cancel.drop_guard();
+            async move {
+                ctrl_c().await.expect("failed to set CTRL+C handler");
+                info!("shutdown requested...");
+                drop(cancel_guard);
+            }
+        });
+        child
     };
-    pin_mut!(app);
 
-    select_biased! {
-        r = ctrl_c().fuse() => {
-            r?;
-            info!("shutting down...");
-            cancel_token.cancel();
-        },
-        r = app => {
-            return r;
-        }
-    }
+    let mut app = {
+        let app = App::from_config(config);
+        let cancelled = cancel.cancelled();
+        pin_mut!(app, cancelled);
+        app.with_abort(cancelled.map(|_| Aborted)).await??
+    };
 
-    match app.await {
-        Err(err) if err.is::<Aborted>() => {
-            info!("shutdown succeeded");
-            Ok(())
-        }
-        Err(err) => Err(err),
-        Ok(v) => Ok(v),
-    }
+    app.run(cancel.child_token()).await?;
+    info!("shutdown");
+    Ok(())
 }

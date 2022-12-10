@@ -10,6 +10,7 @@ itertools = "0.10"
 lazy_static = "1.4"
 metrics = "0.20"
 pin-project = "1"
+thiserror = "1"
 tokio-util = "0.7"
 toml = "0.5"
 tracing = "0.1"
@@ -41,7 +42,10 @@ features = ["full"]
 
 [dependencies.tokio-stream]
 version = "0.1"
-features = ["sync"]
+features = [
+	"fs",
+	"sync",
+]
 
 [dependencies.tracing-subscriber]
 version = "0.3"

@@ -1,42 +1,43 @@
-use crate::cached::{Cached, CachedAtBlock};
-use crate::contracts::{pancake_factory_v2::PancakeFactoryV2, pancake_pair::PancakePair};
+use std::{fmt::Display, ops::Deref, sync::Arc};
 
-use std::fmt::Display;
-use std::ops::Deref;
-use std::sync::Arc;
-
-use ethers::types::{BlockId, H256};
 use ethers::{
     abi::AbiEncode,
     prelude::{Address, ContractError, Middleware},
+    providers::{JsonRpcClient, Provider},
+    types::H256,
 };
 use futures::future::try_join3;
 use metrics::{register_counter, Counter};
 
 use super::token::Token;
+use crate::{
+    cached::CachedAtBlock,
+    contracts::{pancake_factory_v2::PancakeFactoryV2, pancake_pair::PancakePair},
+};
 
-pub struct Pair<M: Middleware> {
-    inner: PancakePair<M>,
-    tokens: (Token<M>, Token<M>),
+pub struct Pair<P: JsonRpcClient> {
+    inner: PancakePair<Provider<P>>,
+    tokens: (Token<P>, Token<P>),
     inverse_order: bool,
     reserves: CachedAtBlock<(f64, f64, u32)>,
     hit_times: Counter,
 }
 
-impl<M: Middleware> Deref for Pair<M> {
-    type Target = PancakePair<M>;
+impl<P: JsonRpcClient> Deref for Pair<P> {
+    type Target = PancakePair<Provider<P>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<M: Middleware> Pair<M> {
+impl<P: JsonRpcClient> Pair<P> {
     pub async fn new(
-        client: Arc<M>,
-        factory: &PancakeFactoryV2<M>,
+        client: impl Into<Arc<Provider<P>>>,
+        factory: &PancakeFactoryV2<Provider<P>>,
         (t0, t1): (Address, Address),
-    ) -> Result<Self, ContractError<M>> {
+    ) -> Result<Self, ContractError<Provider<P>>> {
+        let client: Arc<_> = client.into();
         let (pair, t0, t1) = try_join3(
             factory.get_pair(t0, t1).call(),
             Token::new(client.clone(), t0),
@@ -65,11 +66,14 @@ impl<M: Middleware> Pair<M> {
         self.hit_times.increment(1)
     }
 
-    pub fn tokens(&self) -> &(Token<M>, Token<M>) {
+    pub fn tokens(&self) -> &(Token<P>, Token<P>) {
         &self.tokens
     }
 
-    async fn get_reserves_at(&self, block_hash: H256) -> Result<(f64, f64, u32), ContractError<M>> {
+    async fn get_reserves_at(
+        &self,
+        block_hash: H256,
+    ) -> Result<(f64, f64, u32), ContractError<Provider<P>>> {
         // TODO: use block id
         let (mut r0, mut r1, deadline) = self.inner.get_reserves().call().await?;
 
@@ -84,7 +88,7 @@ impl<M: Middleware> Pair<M> {
     pub async fn reserves(
         &self,
         block_hash: H256,
-    ) -> Result<(f64, f64, u32), ContractError<M>> {
+    ) -> Result<(f64, f64, u32), ContractError<Provider<P>>> {
         self.reserves
             .get_at_or_try_insert_with(block_hash, |block_hash| self.get_reserves_at(*block_hash))
             .await
@@ -95,7 +99,7 @@ impl<M: Middleware> Pair<M> {
     }
 }
 
-impl<M: Middleware> Display for Pair<M> {
+impl<P: JsonRpcClient> Display for Pair<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

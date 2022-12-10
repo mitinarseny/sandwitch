@@ -42,7 +42,7 @@ impl<T, U> With<T, U> {
 
     #[inline]
     pub fn as_ref(&self) -> With<&T, &U> {
-        With::new_with(self, self.with())
+        With::new_with(&self.inner, &self.with)
     }
 
     #[inline]
@@ -59,11 +59,20 @@ impl<T, U> With<T, U> {
     }
 
     #[inline]
-    pub fn as_deref_mut(&mut self) -> With<&<T as Deref>::Target, &mut U>
+    pub fn as_deref_mut(&mut self) -> With<&mut <T as Deref>::Target, &mut U>
     where
         T: DerefMut,
     {
         With::new_with(self.inner.deref_mut(), &mut self.with)
+    }
+
+    #[inline]
+    pub fn with(&self) -> &U {
+        &self.with
+    }
+
+    pub fn with_mut(&mut self) -> &mut U {
+        &mut self.with
     }
 
     #[inline]
@@ -79,16 +88,6 @@ impl<T, U> With<T, U> {
     #[inline]
     pub fn into_tuple(self) -> (T, U) {
         (self.inner, self.with)
-    }
-
-    #[inline]
-    pub fn with(&self) -> &U {
-        &self.with
-    }
-
-    #[inline]
-    pub fn with_mut(&mut self) -> &mut U {
-        &mut self.with
     }
 
     #[inline]

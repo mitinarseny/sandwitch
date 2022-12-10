@@ -1,6 +1,9 @@
 [core]
+last_blocks = 50
+
 wss = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
 http = "https://rpc.ankr.com/bsc/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+accounts_dir = "./accounts"
 # wss = "wss://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
 # http = "https://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
 # url = "wss://bsc-mainnet.nodereal.io/ws/v1/ea16a1827ea944ceb4464da4beb88cd1"

@@ -1,10 +1,7 @@
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
-use std::hash::Hash;
-use std::sync::Arc;
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 use ethers::types::H256;
-use futures::lock::Mutex;
-use futures::{Future, TryFuture, TryFutureExt};
+use futures::{lock::Mutex, Future, TryFuture, TryFutureExt};
 
 #[derive(Default)]
 pub struct Cached<T>(Mutex<Option<T>>);
@@ -22,6 +19,7 @@ impl<T> AsMut<Option<T>> for Cached<T> {
 }
 
 impl<T> Cached<T> {
+    #[allow(dead_code)]
     pub async fn map<R, F>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut T) -> R,
@@ -29,6 +27,7 @@ impl<T> Cached<T> {
         self.0.lock().await.as_mut().map(f)
     }
 
+    #[allow(dead_code)]
     pub async fn then<F, Fut>(&self, f: F) -> Option<Fut::Output>
     where
         F: FnOnce(&mut T) -> Fut,
@@ -39,6 +38,7 @@ impl<T> Cached<T> {
         Some(f(v).await)
     }
 
+    #[allow(dead_code)]
     pub async fn get_or_insert_with_map<F, Fut, M, R>(&self, f: F, m: M) -> R
     where
         F: FnOnce() -> Fut,
@@ -52,6 +52,7 @@ impl<T> Cached<T> {
         m(unsafe { g.as_mut().unwrap_unchecked() })
     }
 
+    #[allow(dead_code)]
     pub async fn get_or_insert_with<F, Fut>(&self, f: F) -> T
     where
         F: FnOnce() -> Fut,
@@ -61,6 +62,7 @@ impl<T> Cached<T> {
         self.get_or_insert_with_map(f, |v| v.clone()).await
     }
 
+    #[allow(dead_code)]
     pub async fn get_or_try_insert_with_map<F, Fut, M, R>(
         &self,
         f: F,
@@ -78,6 +80,7 @@ impl<T> Cached<T> {
         Ok(m(unsafe { g.as_mut().unwrap_unchecked() }))
     }
 
+    #[allow(dead_code)]
     pub async fn get_or_try_insert_with<F, Fut>(&self, f: F) -> Result<T, Fut::Error>
     where
         F: FnOnce() -> Fut,
@@ -87,6 +90,7 @@ impl<T> Cached<T> {
         self.get_or_try_insert_with_map(f, |v| v.clone()).await
     }
 
+    #[allow(dead_code)]
     pub async fn flush(&self) {
         *self.0.lock().await = None
     }
@@ -106,6 +110,7 @@ where
         m.entry(at).or_insert_with(|| Arc::new(None.into())).clone()
     }
 
+    #[allow(dead_code)]
     pub async fn get_at_or_insert_with<F, Fut>(&self, at: ID, f: F) -> T
     where
         F: FnOnce(&ID) -> Fut,
@@ -117,6 +122,7 @@ where
             .await
     }
 
+    #[allow(dead_code)]
     pub async fn get_at_or_try_insert_with<F, Fut>(&self, at: ID, f: F) -> Result<T, Fut::Error>
     where
         F: FnOnce(&ID) -> Fut,
@@ -128,6 +134,7 @@ where
             .await
     }
 
+    #[allow(dead_code)]
     pub async fn retain<F>(&self, mut pred: F)
     where
         F: FnMut(&ID) -> bool,
@@ -137,6 +144,7 @@ where
         m.shrink_to_fit();
     }
 
+    #[allow(dead_code)]
     pub async fn flush(&self) {
         let mut m = self.0.lock().await;
         m.clear();
