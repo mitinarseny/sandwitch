@@ -5,7 +5,6 @@ use std::{
         HashMap,
     },
     hash::Hash,
-    ops::{Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -53,88 +52,6 @@ pub trait StreamExt: Stream + Sized {
 }
 
 impl<St> StreamExt for St where St: Stream {}
-
-#[derive(Default)]
-pub struct AbortSet<ID>(HashMap<ID, AbortHandle>)
-where
-    ID: Eq + Hash;
-
-impl<ID> Deref for AbortSet<ID>
-where
-    ID: Eq + Hash,
-{
-    type Target = HashMap<ID, AbortHandle>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<ID> DerefMut for AbortSet<ID>
-where
-    ID: Eq + Hash,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<ID> AbortSet<ID>
-where
-    ID: Eq + Hash,
-{
-    pub fn try_insert(&mut self, id: ID) -> Result<AbortRegistration, ID>
-    where
-        ID: Clone,
-    {
-        match self.0.entry(id) {
-            Entry::Vacant(e) => {
-                let (h, reg) = AbortHandle::new_pair();
-                e.insert(h);
-                Ok(reg)
-            }
-            Entry::Occupied(e) => Err(e.key().clone()),
-        }
-    }
-
-    pub fn abort<Q: ?Sized>(&mut self, id: &Q) -> Option<ID>
-    where
-        ID: Borrow<Q>,
-        Q: Eq + Hash,
-    {
-        self.0.remove_entry(id).map(|(id, h)| {
-            h.abort();
-            id
-        })
-    }
-
-    pub fn abort_iter<'a, Q: ?Sized + 'a>(
-        &'a mut self,
-        ids: impl IntoIterator<Item = &'a Q> + 'a,
-    ) -> impl Iterator<Item = ID> + 'a
-    where
-        ID: Borrow<Q>,
-        Q: Eq + Hash,
-    {
-        ids.into_iter().filter_map(|id| self.abort(id))
-    }
-
-    pub fn abort_all(&mut self) -> impl Iterator<Item = ID> + '_ {
-        self.0.drain().map(|(id, h)| {
-            h.abort();
-            id
-        })
-    }
-}
-
-impl<ID> Drop for AbortSet<ID>
-where
-    ID: Eq + Hash,
-{
-    fn drop(&mut self) {
-        self.abort_all().for_each(drop);
-    }
-}
 
 #[pin_project(PinnedDrop)]
 #[must_use = "futures do nothing unless polled"]

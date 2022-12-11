@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, ops::Deref, panic, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, ops::Deref, sync::Arc};
 
 use ethers::{
     providers::{JsonRpcClient, Middleware, Provider, ProviderError},
@@ -13,54 +13,132 @@ use futures::{
     stream::{FusedStream, FuturesUnordered, StreamExt, TryStreamExt},
 };
 use thiserror::Error;
+use tracing::warn;
 
 use crate::cached::{CachedAt, CachedAtBlock};
 
-struct PendingState {
-    last_gas_price: Option<U256>,
-    next_nonce: U256,
-    // TODO: metrics per account + balance
+mod pending_state {
+    use std::mem;
+
+    use ethers::types::{BlockNumber, Transaction};
+    use futures::future::try_join;
+    use metrics::{register_counter, register_gauge, Counter, Gauge};
+
+    use super::{
+        Address, JsonRpcClient, Middleware, Provider, ProviderError, TypedTransaction, U256,
+    };
+
+    pub(super) struct PendingState {
+        last_gas_price: Option<U256>,
+        last_pending_gas_price: Gauge, // gauge for last_gas_price, -1 means None
+
+        next_nonce: U256,
+        txs_count: Counter, // counter for next_nonce
+    }
+
+    impl PendingState {
+        // return Ok(None) if account already has some pending transactions
+        pub(super) async fn new<P: JsonRpcClient>(
+            provider: &Provider<P>,
+            address: Address,
+        ) -> Result<Option<Self>, ProviderError> {
+            let next_nonce = {
+                let (next_nonce, pending_count) = try_join(
+                    provider.get_transaction_count(address, Some(BlockNumber::Latest.into())),
+                    provider.get_transaction_count(address, Some(BlockNumber::Pending.into())),
+                )
+                .await?;
+                if next_nonce != pending_count {
+                    return Ok(None);
+                }
+                next_nonce
+            };
+
+            let mut s = Self {
+                last_gas_price: None,
+                last_pending_gas_price: register_gauge!(
+                    "sandwitch_last_pending_gas_price",
+                    "address" => format!("{address:x}"),
+                ),
+                next_nonce: 0.into(),
+                txs_count: register_counter!(
+                    "sandwitch_txs_count",
+                    "address" => format!("{address:x}"),
+                ),
+            };
+            s.set_last_gas_price(None);
+            s.set_next_nonce(next_nonce);
+            Ok(Some(s))
+        }
+
+        pub(super) fn can_send(&self, gas_price: U256) -> bool {
+            self.last_gas_price.map_or(true, move |g| g >= gas_price)
+        }
+
+        fn alloc_next_nonce(&mut self, gas_price: U256) -> Option<U256> {
+            if !self.set_last_gas_price(gas_price) {
+                return None;
+            }
+            self.set_next_nonce(self.next_nonce())
+        }
+
+        pub(super) fn assign_next_nonce<'a>(
+            &mut self,
+            tx: &'a mut TypedTransaction,
+        ) -> Option<&'a mut TypedTransaction> {
+            self.alloc_next_nonce(tx.gas_price().unwrap())
+                .map(move |n| tx.set_nonce(n))
+        }
+
+        pub(super) fn tx_mined(&mut self, tx: &Transaction) {
+            if self.set_next_nonce(tx.nonce + 1).is_some() {
+                self.set_last_gas_price(None);
+            }
+        }
+
+        fn next_nonce(&self) -> U256 {
+            self.next_nonce + 1
+        }
+
+        fn set_next_nonce(&mut self, next_nonce: U256) -> Option<U256> {
+            if next_nonce < self.next_nonce {
+                return None;
+            }
+            let prev_nonce = mem::replace(&mut self.next_nonce, next_nonce);
+            self.txs_count.absolute(self.next_nonce.as_u64());
+            Some(prev_nonce)
+        }
+
+        fn set_last_gas_price(&mut self, gas_price: impl Into<Option<U256>>) -> bool {
+            match gas_price.into() {
+                Some(gas_price) => {
+                    if !self.can_send(gas_price) {
+                        return false;
+                    }
+                    self.last_gas_price = Some(gas_price);
+                    self.last_pending_gas_price.set(gas_price.as_u64() as f64);
+                    true
+                }
+                None => {
+                    self.last_gas_price = None;
+                    self.last_pending_gas_price.set(-1f64);
+                    false
+                }
+            }
+        }
+    }
 }
 
-impl PendingState {
-    fn can_send(&self, gas_price: U256) -> bool {
-        self.last_gas_price.map_or(true, |g| g <= gas_price)
-    }
+use self::pending_state::PendingState;
 
-    fn alloc_next_nonce(&mut self, gas_price: U256) -> U256 {
-        if self.last_gas_price.map_or(false, |g| g > gas_price) {
-            panic!(); // TODO
-        }
-        self.last_gas_price = Some(gas_price);
-        let nonce = self.next_nonce;
-        self.next_nonce += 1.into();
-        nonce
-    }
-
-    fn assign_next_nonce<'a, 'b: 'a>(
-        &'a mut self,
-        tx: &'b mut TypedTransaction,
-    ) -> &'b mut TypedTransaction {
-        tx.set_nonce(self.alloc_next_nonce(tx.gas_price().unwrap()))
-    }
-
-    fn nonce_mined(&mut self, nonce_mined: U256) {
-        let new_next_nonce = nonce_mined + 1;
-        if new_next_nonce >= self.next_nonce {
-            self.next_nonce = new_next_nonce;
-            self.last_gas_price = None;
-        }
-    }
-}
-
-pub struct InnerAccount<P: JsonRpcClient, S: Signer> {
+pub(crate) struct InnerAccount<P: JsonRpcClient, S: Signer> {
     provider: Arc<Provider<P>>,
     signer: S,
     balance: CachedAtBlock<U256>,
 }
 
 #[derive(Error, Debug)]
-pub enum SendTxError<S: Signer, E = Infallible> {
+pub(crate) enum SendTxError<S: Signer, E = Infallible> {
     #[error("signer")]
     Sign(S::Error),
 
@@ -71,43 +149,44 @@ pub enum SendTxError<S: Signer, E = Infallible> {
     Other(#[from] E),
 }
 
-impl<S: Signer> SendTxError<S, Infallible> {
-    pub fn other_into<E>(self) -> SendTxError<S, E> {
+impl<S: Signer, E> SendTxError<S, E> {
+    pub(crate) fn map_other<F, W>(self, f: F) -> SendTxError<S, W>
+    where
+        F: FnOnce(E) -> W,
+    {
         match self {
-            SendTxError::Sign(e) => SendTxError::Sign(e),
-            SendTxError::Provider(e) => SendTxError::Provider(e),
-            SendTxError::Other(_) => unreachable!(),
+            Self::Sign(e) => SendTxError::Sign(e),
+            Self::Provider(e) => SendTxError::Provider(e),
+            Self::Other(e) => SendTxError::Other(f(e)),
         }
+    }
+
+    pub(crate) fn other_into<W>(self) -> SendTxError<S, W>
+    where
+        E: Into<W>,
+    {
+        self.map_other(Into::into)
+    }
+}
+
+impl<S: Signer> SendTxError<S, Infallible> {
+    pub(crate) fn from_never<E>(self) -> SendTxError<S, E> {
+        self.map_other(|_| unreachable!())
     }
 }
 
 impl<P: JsonRpcClient, S: Signer> InnerAccount<P, S> {
-    pub fn address(&self) -> Address {
+    pub(crate) fn address(&self) -> Address {
         self.signer.address()
     }
 
-    pub async fn balance_at(&self, block_hash: H256) -> Result<U256, ProviderError> {
+    pub(crate) async fn balance_at(&self, block_hash: H256) -> Result<U256, ProviderError> {
         self.balance
             .get_at_or_try_insert_with(block_hash, |block_hash| {
                 self.provider
                     .get_balance(self.address(), BlockId::Hash(*block_hash).into())
             })
             .await
-    }
-
-    async fn get_pending_state(
-        &self,
-        block: impl Into<Option<BlockId>>,
-    ) -> Result<PendingState, ProviderError> {
-        let next_nonce = self
-            .provider
-            .get_transaction_count(self.address(), block.into())
-            .await?;
-        // TODO: count pending nonces and gas prices???
-        Ok(PendingState {
-            last_gas_price: None,
-            next_nonce,
-        })
     }
 
     async fn send_tx(&self, tx: TypedTransaction) -> Result<TxHash, SendTxError<S>> {
@@ -127,7 +206,7 @@ impl<P: JsonRpcClient, S: Signer> InnerAccount<P, S> {
     }
 }
 
-pub struct Account<P: JsonRpcClient, S: Signer> {
+pub(crate) struct Account<P: JsonRpcClient, S: Signer> {
     inner: Arc<InnerAccount<P, S>>,
     pending_state: Arc<Mutex<PendingState>>,
 }
@@ -150,37 +229,43 @@ impl<P: JsonRpcClient, S: Signer> Deref for Account<P, S> {
 }
 
 impl<P: JsonRpcClient, S: Signer> Account<P, S> {
-    pub async fn new(
+    // return Ok(None) if account already has some pending transactions
+    pub(crate) async fn new(
         provider: impl Into<Arc<Provider<P>>>,
         signer: S,
-    ) -> Result<Self, ProviderError> {
-        let inner = InnerAccount {
-            provider: provider.into(),
-            signer,
-            balance: CachedAt::default(),
+    ) -> Result<Option<Self>, ProviderError> {
+        let provider = provider.into();
+
+        let Some(pending_state) = PendingState::new(&provider, signer.address()).await? else {
+            return Ok(None);
         };
-        let pending_state = inner.get_pending_state(None).await?;
-        Ok(Self {
+
+        Ok(Some(Self {
             pending_state: Arc::new(Mutex::new(pending_state)),
-            inner: Arc::new(inner),
-        })
+            inner: Arc::new(InnerAccount {
+                provider,
+                signer,
+                balance: CachedAt::default(),
+            }),
+        }))
     }
 
-    pub async fn lock(self) -> LockedAccount<P, S> {
+    pub(crate) async fn lock(self) -> LockedAccount<P, S> {
         LockedAccount {
             inner: self.inner,
             pending_state: self.pending_state.lock_owned().await,
         }
     }
 
-    pub async fn sync_pending_state(&self, block: BlockId) -> Result<(), ProviderError> {
-        let mut pending_nonces = self.pending_state.lock().await;
-        *pending_nonces = self.inner.get_pending_state(block).await?;
-        Ok(())
-    }
+    // TODO
+    // pub(crate) async fn sync_pending_state(&self, block: BlockId) -> Result<(), ProviderError> {
+    //     let mut pending_nonces = self.pending_state.lock().await;
+    //     *pending_nonces = self.inner.get_pending_state(block).await?;
+    //     Ok(())
+    // }
 }
 
-pub struct LockedAccount<P: JsonRpcClient, S: Signer> {
+pub(crate) struct LockedAccount<P: JsonRpcClient, S: Signer> {
     inner: Arc<InnerAccount<P, S>>,
     pending_state: OwnedMutexGuard<PendingState>,
 }
@@ -195,15 +280,18 @@ impl<P: JsonRpcClient, S: Signer> Deref for LockedAccount<P, S> {
 
 impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
     // TODO: non-pub?
-    pub fn nonce_mined(&mut self, nonce_mined: U256) {
-        self.pending_state.nonce_mined(nonce_mined)
+    pub(crate) fn tx_mined(&mut self, tx: &Transaction) {
+        if tx.from != self.address() {
+            return;
+        }
+        self.pending_state.tx_mined(tx)
     }
 
-    pub fn can_send(&self, gas_price: U256) -> bool {
+    pub(crate) fn can_send(&self, gas_price: U256) -> bool {
         self.pending_state.can_send(gas_price)
     }
 
-    pub fn send_tx(
+    pub(crate) fn send_tx(
         &mut self,
         mut tx: TypedTransaction,
     ) -> impl TryFuture<Ok = TxHash, Error = SendTxError<S>>
@@ -219,7 +307,7 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
         .map(Result::unwrap)
     }
 
-    pub fn send_txs(
+    pub(crate) fn send_txs(
         &mut self,
         txs: impl IntoIterator<Item = TypedTransaction>,
     ) -> impl TryFuture<Ok = Vec<TxHash>, Error = SendTxError<S>>
@@ -249,7 +337,7 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
     }
 }
 
-pub struct Accounts<P: JsonRpcClient, S: Signer>(HashMap<Address, Account<P, S>>);
+pub(crate) struct Accounts<P: JsonRpcClient, S: Signer>(HashMap<Address, Account<P, S>>);
 
 impl<P: JsonRpcClient, S: Signer> Extend<Account<P, S>> for Accounts<P, S> {
     fn extend<T: IntoIterator<Item = Account<P, S>>>(&mut self, iter: T) {
@@ -264,7 +352,7 @@ impl<P: JsonRpcClient, S: Signer> Default for Accounts<P, S> {
 }
 
 impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
-    pub async fn from_signers(
+    pub(crate) async fn from_signers(
         signers: impl IntoIterator<Item = S>,
         provider: impl Into<Arc<Provider<P>>>,
     ) -> Result<Self, ProviderError> {
@@ -272,18 +360,30 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
             .into_iter()
             .map({
                 let provider = provider.into();
-                move |s| Account::new(provider.clone(), s)
+                move |s| {
+                    let address = s.address();
+                    Account::new(provider.clone(), s).inspect_ok(move |a| {
+                        if a.is_none() {
+                            warn!(
+                                ?address,
+                                "this account already has some pending transactions \
+                                    and can not be used, skipping...",
+                            );
+                        }
+                    })
+                }
             })
             .collect::<FuturesUnordered<_>>()
+            .try_filter_map(future::ok)
             .try_collect()
             .await
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub fn get(&self, address: &Address) -> Option<Account<P, S>> {
+    pub(crate) fn get(&self, address: &Address) -> Option<Account<P, S>> {
         self.0.get(&address).cloned()
     }
 
@@ -303,7 +403,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         self.map_unordered(move |account| account.clone().lock().then(f.clone()))
     }
 
-    pub async fn find<F>(&self, pred: F) -> Option<Account<P, S>>
+    pub(crate) async fn find<F>(&self, pred: F) -> Option<Account<P, S>>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, bool>,
     {
@@ -317,7 +417,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .cloned()
     }
 
-    pub async fn try_find<F, E>(&self, pred: F) -> Result<Option<Account<P, S>>, E>
+    pub(crate) async fn try_find<F, E>(&self, pred: F) -> Result<Option<Account<P, S>>, E>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Result<bool, E>>,
     {
@@ -331,7 +431,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .map(|o| o.cloned())
     }
 
-    pub async fn find_map<F, T>(&self, f: F) -> Option<(Account<P, S>, T)>
+    pub(crate) async fn find_map<F, T>(&self, f: F) -> Option<(Account<P, S>, T)>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Option<T>>,
     {
@@ -344,7 +444,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
-    pub async fn try_find_map<F, T, E>(&self, f: F) -> Result<Option<(Account<P, S>, T)>, E>
+    pub(crate) async fn try_find_map<F, T, E>(&self, f: F) -> Result<Option<(Account<P, S>, T)>, E>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Result<Option<T>, E>>,
     {
@@ -357,7 +457,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
-    pub async fn find_locked<F>(&self, pred: F) -> Option<LockedAccount<P, S>>
+    pub(crate) async fn find_locked<F>(&self, pred: F) -> Option<LockedAccount<P, S>>
     where
         F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, bool>,
     {
@@ -370,7 +470,10 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
-    pub async fn try_find_locked<F, E>(&self, pred: F) -> Result<Option<LockedAccount<P, S>>, E>
+    pub(crate) async fn try_find_locked<F, E>(
+        &self,
+        pred: F,
+    ) -> Result<Option<LockedAccount<P, S>>, E>
     where
         F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, Result<bool, E>>,
     {
@@ -383,7 +486,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
-    pub async fn find_map_locked<F, T>(&self, f: F) -> Option<(LockedAccount<P, S>, T)>
+    pub(crate) async fn find_map_locked<F, T>(&self, f: F) -> Option<(LockedAccount<P, S>, T)>
     where
         F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, Option<T>>,
     {
@@ -396,7 +499,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
-    pub async fn try_find_map_locked<F, T, E>(
+    pub(crate) async fn try_find_map_locked<F, T, E>(
         &self,
         f: F,
     ) -> Result<Option<(LockedAccount<P, S>, T)>, E>
@@ -412,7 +515,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
-    pub async fn try_find_wrap_and_send_txs<F, E: 'static>(
+    pub(crate) async fn try_find_wrap_and_send_txs<F, E: 'static>(
         &self,
         wrap_tx: &Transaction,
         f: F,
@@ -427,34 +530,36 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         P: 'static,
         S: 'static,
     {
-        let wrap_gas_price: U256 = wrap_tx.gas_price.unwrap();
+        {
+            let wrap_gas_price = wrap_tx.gas_price.unwrap();
 
-        let Some((mut locked_account, (front_run_txs, back_run_txs))) =
-            self.try_find_map_locked(|locked_account| {
-                if !locked_account.can_send(wrap_gas_price - 1) {
-                    return future::ok(None).boxed_local()
-                }
-                f(locked_account)
-            }).await? else {
-            return Ok(None);
-        };
+            let Some((mut locked_account, (front_run_txs, back_run_txs))) =
+                self.try_find_map_locked(|locked_account| {
+                    if !locked_account.can_send(wrap_gas_price - 1) {
+                        return future::ok(None).boxed_local()
+                    }
+                    f(locked_account)
+                }).await? else {
+                return Ok(None);
+            };
 
-        let r = locked_account.send_txs(
-            front_run_txs
-                .into_iter()
-                .map(|mut tx| {
-                    tx.set_gas_price(wrap_gas_price - 1);
-                    tx
-                })
-                .chain(back_run_txs.into_iter().map(|mut tx| {
-                    tx.set_gas_price(wrap_gas_price + 1);
-                    tx
-                })),
-        );
-        drop(locked_account); // we do not need lock anymore
-        r.into_future()
-            .await
-            .map(Some)
-            .map_err(SendTxError::other_into)
+            locked_account.send_txs(
+                front_run_txs
+                    .into_iter()
+                    .map(move |mut tx| {
+                        tx.set_gas_price(wrap_gas_price - 1);
+                        tx
+                    })
+                    .chain(back_run_txs.into_iter().map(move |mut tx| {
+                        tx.set_gas_price(wrap_gas_price + 1);
+                        tx
+                    })),
+            )
+            // locked_account is dropped here
+        }
+        .into_future()
+        .await
+        .map(Some)
+        .map_err(SendTxError::from_never)
     }
 }

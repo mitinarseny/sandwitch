@@ -4,7 +4,7 @@ use ethers::types::H256;
 use futures::{lock::Mutex, Future, TryFuture, TryFutureExt};
 
 #[derive(Default)]
-pub struct Cached<T>(Mutex<Option<T>>);
+pub(crate) struct Cached<T>(Mutex<Option<T>>);
 
 impl<T, O: Into<Option<T>>> From<O> for Cached<T> {
     fn from(o: O) -> Self {
@@ -20,7 +20,7 @@ impl<T> AsMut<Option<T>> for Cached<T> {
 
 impl<T> Cached<T> {
     #[allow(dead_code)]
-    pub async fn map<R, F>(&self, f: F) -> Option<R>
+    pub(crate) async fn map<R, F>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut T) -> R,
     {
@@ -28,7 +28,7 @@ impl<T> Cached<T> {
     }
 
     #[allow(dead_code)]
-    pub async fn then<F, Fut>(&self, f: F) -> Option<Fut::Output>
+    pub(crate) async fn then<F, Fut>(&self, f: F) -> Option<Fut::Output>
     where
         F: FnOnce(&mut T) -> Fut,
         Fut: Future,
@@ -39,7 +39,7 @@ impl<T> Cached<T> {
     }
 
     #[allow(dead_code)]
-    pub async fn get_or_insert_with_map<F, Fut, M, R>(&self, f: F, m: M) -> R
+    pub(crate) async fn get_or_insert_with_map<F, Fut, M, R>(&self, f: F, m: M) -> R
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = T>,
@@ -53,7 +53,7 @@ impl<T> Cached<T> {
     }
 
     #[allow(dead_code)]
-    pub async fn get_or_insert_with<F, Fut>(&self, f: F) -> T
+    pub(crate) async fn get_or_insert_with<F, Fut>(&self, f: F) -> T
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = T>,
@@ -63,7 +63,7 @@ impl<T> Cached<T> {
     }
 
     #[allow(dead_code)]
-    pub async fn get_or_try_insert_with_map<F, Fut, M, R>(
+    pub(crate) async fn get_or_try_insert_with_map<F, Fut, M, R>(
         &self,
         f: F,
         m: M,
@@ -81,7 +81,7 @@ impl<T> Cached<T> {
     }
 
     #[allow(dead_code)]
-    pub async fn get_or_try_insert_with<F, Fut>(&self, f: F) -> Result<T, Fut::Error>
+    pub(crate) async fn get_or_try_insert_with<F, Fut>(&self, f: F) -> Result<T, Fut::Error>
     where
         F: FnOnce() -> Fut,
         Fut: TryFuture<Ok = T>,
@@ -91,13 +91,13 @@ impl<T> Cached<T> {
     }
 
     #[allow(dead_code)]
-    pub async fn flush(&self) {
+    pub(crate) async fn flush(&self) {
         *self.0.lock().await = None
     }
 }
 
 #[derive(Default)]
-pub struct CachedAt<ID, T>(Mutex<HashMap<ID, Arc<Cached<T>>>>);
+pub(crate) struct CachedAt<ID, T>(Mutex<HashMap<ID, Arc<Cached<T>>>>);
 
 impl<ID, T> CachedAt<ID, T>
 where
@@ -111,7 +111,7 @@ where
     }
 
     #[allow(dead_code)]
-    pub async fn get_at_or_insert_with<F, Fut>(&self, at: ID, f: F) -> T
+    pub(crate) async fn get_at_or_insert_with<F, Fut>(&self, at: ID, f: F) -> T
     where
         F: FnOnce(&ID) -> Fut,
         Fut: Future<Output = T>,
@@ -123,7 +123,7 @@ where
     }
 
     #[allow(dead_code)]
-    pub async fn get_at_or_try_insert_with<F, Fut>(&self, at: ID, f: F) -> Result<T, Fut::Error>
+    pub(crate) async fn get_at_or_try_insert_with<F, Fut>(&self, at: ID, f: F) -> Result<T, Fut::Error>
     where
         F: FnOnce(&ID) -> Fut,
         Fut: TryFuture<Ok = T>,
@@ -135,7 +135,7 @@ where
     }
 
     #[allow(dead_code)]
-    pub async fn retain<F>(&self, mut pred: F)
+    pub(crate) async fn retain<F>(&self, mut pred: F)
     where
         F: FnMut(&ID) -> bool,
     {
@@ -145,11 +145,11 @@ where
     }
 
     #[allow(dead_code)]
-    pub async fn flush(&self) {
+    pub(crate) async fn flush(&self) {
         let mut m = self.0.lock().await;
         m.clear();
         m.shrink_to_fit();
     }
 }
 
-pub type CachedAtBlock<T> = CachedAt<H256, T>;
+pub(crate) type CachedAtBlock<T> = CachedAt<H256, T>;

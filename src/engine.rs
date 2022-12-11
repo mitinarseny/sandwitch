@@ -24,7 +24,7 @@ use crate::{
     timed::TryFutureExt as TryTimedFutureExt,
 };
 
-pub struct Engine<SC, RC, S, M>
+pub(crate) struct Engine<SC, RC, S, M>
 where
     SC: PubsubClient,
     RC: JsonRpcClient,
@@ -45,7 +45,7 @@ where
     S: Signer + 'static,
     M: TopTxMonitor,
 {
-    pub fn new(
+    pub(crate) fn new(
         streaming: impl Into<Arc<Provider<SC>>>,
         requesting: impl Into<Arc<Provider<RC>>>,
         accounts: impl Into<Arc<Accounts<RC, S>>>,
@@ -60,11 +60,11 @@ where
         }
     }
 
-    pub async fn run(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {
+    pub(crate) async fn run(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {
         let cancelled = cancel.cancelled().fuse();
         pin_mut!(cancelled);
 
-        let (mut new_blocks, mut pending_txs, last_block) = try_join3(
+        let (blocks, txs, last_block) = try_join3(
             self.streaming
                 .subscribe_blocks()
                 .inspect_ok(|st| info!(subscription_id = %st.id, "subscribed to new blocks"))
@@ -85,11 +85,10 @@ where
 
         let last_block_hash = Arc::new(Mutex::new(last_block.hash.unwrap()));
 
-        let txs = pending_txs.by_ref().take_until(cancel.cancelled());
+        let txs = txs.take_until(cancel.cancelled());
         pin_mut!(txs);
 
-        let mut blocks = new_blocks
-            .by_ref()
+        let mut blocks = blocks
             .map(Ok)
             .try_filter_map(|block| {
                 self.requesting
@@ -124,7 +123,6 @@ where
                         cancel.cancel();
                         first_err = Some(err);
                     }
-                    // TODO: upd statistics
                 },
                 tx_hash = txs.select_next_some() => {
                     self.maybe_process_tx(tx_hash, &mut handles, &last_block_hash)
@@ -167,7 +165,7 @@ where
                 move |tx| {
                     if let Some(account) = self.accounts.get(&tx.from) {
                         if seen.insert(account.address()) {
-                            return Some(account.lock().map(move |mut a| a.nonce_mined(tx.nonce)));
+                            return Some(account.lock().map(move |mut a| a.tx_mined(&tx)));
                         }
                     }
                     None
@@ -244,7 +242,10 @@ where
     }
 }
 
-pub trait TopTxMonitor: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static {}
+pub(crate) trait TopTxMonitor:
+    TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
+{
+}
 
 impl<M> TopTxMonitor for M where M: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
 {}

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use ethers::prelude::{Address, ContractError, Middleware};
+use ethers::prelude::{Address, ContractError};
 use ethers::providers::{JsonRpcClient, Provider};
 
 use crate::contracts::pancake_factory_v2::PancakeFactoryV2;
