@@ -2,7 +2,7 @@ use std::{fmt::Display, ops::Deref, sync::Arc};
 
 use ethers::{
     abi::AbiEncode,
-    prelude::{Address, ContractError, Middleware},
+    prelude::{Address, ContractError},
     providers::{JsonRpcClient, Provider},
     types::H256,
 };

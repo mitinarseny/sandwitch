@@ -20,8 +20,19 @@ struct Args {
         short, long,
         value_parser,
         value_hint = ValueHint::FilePath,
-        value_name = "FILE")]
+        value_name = "FILE",
+    )]
     config: PathBuf,
+
+    #[clap(
+        default_value_os_t = PathBuf::from("./accounts"),
+        short,
+        long,
+        value_parser,
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE",
+    )]
+    accounts_dir: PathBuf,
 
     /// Increase verbosity (error (deafult) -> warn -> info -> debug -> trace)
     #[clap(short, long, action = clap::ArgAction::Count)]
@@ -70,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
-    let mut app = App::from_config(config).await?;
+    let mut app = App::from_config(config, args.accounts_dir).await?;
 
     let cancel = make_ctrl_c_cancel();
     app.run(cancel.child_token()).await?;

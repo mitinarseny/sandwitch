@@ -7,7 +7,7 @@ use ethers::{
     types::{Block, BlockNumber, Transaction, TxHash, H256},
 };
 use futures::{
-    future::{self, try_join3, Aborted, Future, FutureExt, TryFutureExt},
+    future::{try_join3, Aborted, Future, FutureExt, TryFutureExt},
     lock::Mutex,
     pin_mut, select_biased,
     stream::{FusedStream, FuturesUnordered, StreamExt, TryStreamExt},
@@ -90,16 +90,15 @@ where
 
         let mut blocks = new_blocks
             .by_ref()
-            // .inspect(|block|) // TODO: upd height and current block_hash
             .map(Ok)
-            .and_then(|block| {
+            .try_filter_map(|block| {
                 self.requesting
                     .get_block_with_txs(block.hash.unwrap())
                     .try_timed()
-            })
-            .try_filter_map(|(block, elapsed)| {
-                self.metrics.block_resolved(elapsed);
-                future::ok(block)
+                    .map_ok(|(block, elapsed)| {
+                        self.metrics.block_resolved(&block, elapsed);
+                        block
+                    })
             })
             .fuse();
 
@@ -221,30 +220,20 @@ where
         block_hash: Arc<Mutex<H256>>,
         metrics: Arc<Metrics>,
     ) -> anyhow::Result<Option<M::Ok>> {
-        let tx = {
-            let (tx, elapsed) = provider
-                .get_transaction(tx_hash)
-                .try_timed()
-                .await
-                .with_context(|| "failed to get transaction")?;
+        let (tx, elapsed) = provider
+            .get_transaction(tx_hash)
+            .try_timed()
+            .await
+            .with_context(|| "failed to get transaction")?;
+        metrics.tx_resolved(&tx, elapsed);
 
-            metrics.tx_resolved(elapsed);
-
-            match tx {
-                Some(tx) => {
-                    metrics.tx_resolved_as_pending();
-                    tx
-                }
-                None => {
-                    trace!("fake transaction, skipping...");
-                    metrics.fake_tx();
-                    return Ok(None);
-                }
-            }
+        let Some(tx) = tx else {
+            trace!("fake transaction, skipping...");
+            return Ok(None);
         };
+
         let block_hash = *block_hash.lock_owned().await;
         Span::current().record("block_hash", format!("{block_hash:x}"));
-
         trace!("transaction resolved, processing...");
 
         let (r, elapsed) = monitor.process_tx(&tx, block_hash).try_timed().await?;
@@ -272,6 +261,7 @@ struct Metrics {
 
     height: Counter,
     resolve_block_duration: Histogram,
+    fake_blocks: Counter,
 }
 
 impl Default for Metrics {
@@ -287,6 +277,7 @@ impl Default for Metrics {
             missed_txs: register_counter!("sandwitch_missed_txs"),
             height: register_counter!("sandwitch_height"),
             resolve_block_duration: register_histogram!("sandwitch_resolve_block_duration"),
+            fake_blocks: register_counter!("sandwitch_fake_blocks"),
         }
     }
 }
@@ -304,13 +295,14 @@ impl Metrics {
         self.fake_txs.increment(1);
     }
 
-    fn tx_resolved(&self, duration: Duration) {
+    fn tx_resolved(&self, tx: &Option<Transaction>, duration: Duration) {
         self.resolved_txs.increment(1);
         self.resolve_tx_duration.record(duration);
-    }
-
-    fn tx_resolved_as_pending(&self) {
-        self.resolved_as_pendning_txs.increment(1);
+        if tx.is_some() {
+            self.resolved_as_pendning_txs.increment(1);
+        } else {
+            self.fake_txs.increment(1);
+        }
     }
 
     fn tx_processed(&self, duration: Duration) {
@@ -321,7 +313,12 @@ impl Metrics {
         self.missed_txs.increment(1);
     }
 
-    fn block_resolved(&self, duration: Duration) {
+    fn block_resolved(&self, block: &Option<Block<Transaction>>, duration: Duration) {
         self.resolve_block_duration.record(duration);
+        let Some(block) = block else {
+            self.fake_blocks.increment(1);
+            return;
+        };
+        self.height.absolute(block.number.unwrap().as_u64());
     }
 }

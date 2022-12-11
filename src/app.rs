@@ -1,8 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    vec::Vec,
-};
+use std::{path::Path, sync::Arc, vec::Vec};
 
 #[cfg(feature = "pancake_swap")]
 use crate::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
@@ -41,7 +37,6 @@ pub struct Config {
 pub struct EngineConfig {
     pub wss: Url,
     pub http: Url,
-    pub accounts_dir: PathBuf,
 }
 
 #[derive(Deserialize, Debug)]
@@ -61,7 +56,10 @@ where
 }
 
 impl App<Ws, Http, Wallet<SigningKey>> {
-    pub async fn from_config(config: Config) -> anyhow::Result<Self> {
+    pub async fn from_config(
+        config: Config,
+        accounts_dir: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
         let streaming = Arc::new(Provider::new(Ws::connect(config.engine.wss).await?));
         info!("web socket created");
         let requesting = Arc::new(Provider::new(Http::new(config.engine.http)));
@@ -77,9 +75,10 @@ impl App<Ws, Http, Wallet<SigningKey>> {
         info!(network_id);
         register_counter!("sandwitch_info", "network_id" => network_id).absolute(1);
 
-        let keys = Self::read_keys(&config.engine.accounts_dir).await?;
+        let accounts_dir = accounts_dir.as_ref();
+        let keys = Self::read_keys(accounts_dir).await?;
         if keys.is_empty() {
-            warn!("no keys found in {}", config.engine.accounts_dir.display());
+            warn!("no keys found in {}", accounts_dir.display());
         } else {
             info!(
                 count = keys.len(),

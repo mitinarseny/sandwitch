@@ -1,7 +1,7 @@
 use std::{fmt::Display, ops::Deref, sync::Arc};
 
 use ethers::providers::{JsonRpcClient, Provider};
-use ethers::{contract::ContractError, providers::Middleware, types::Address};
+use ethers::{contract::ContractError, types::Address};
 use futures::future::try_join;
 
 use crate::contracts::pancake_token::PancakeToken;

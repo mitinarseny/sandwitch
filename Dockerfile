@@ -24,7 +24,11 @@ RUN cargo build --release --bin sandwitch
 
 FROM gcr.io/distroless/cc
 COPY --from=builder /app/target/release/sandwitch /usr/local/bin/
-ENTRYPOINT ["/usr/local/bin/sandwitch", "--config", "/etc/sandwitch/sandwitch.toml"]
+ENTRYPOINT [\
+  "/usr/local/bin/sandwitch",\
+  "--config", "/etc/sandwitch/sandwitch.toml",\
+  "--accounts-dir", "/etc/sandwitch/accounts"\
+]
 EXPOSE 9000/tcp
 HEALTHCHECK --interval=15s --timeout=5s \
   CMD curl -sf http://127.0.0.1:9000/metrics || exit 1
