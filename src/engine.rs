@@ -100,7 +100,7 @@ where
                         move |(block, elapsed)| {
                             metrics.block_resolved(elapsed);
                             if block.is_none() {
-                                trace!(?block_hash, "invalid block, skipping...");
+                                warn!(?block_hash, "invalid block, skipping...");
                             }
                             block
                         }
@@ -200,7 +200,7 @@ where
         let handle_entry = match handles.try_insert(tx_hash) {
             Ok(v) => v,
             Err(tx_hash) => {
-                trace!(
+                warn!(
                     ?tx_hash,
                     "this transaction is already being processed, skipping...",
                 );
