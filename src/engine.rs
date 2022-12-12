@@ -2,7 +2,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use anyhow::Context;
 use ethers::{
-    providers::{JsonRpcClient, Middleware, Provider, PubsubClient},
+    providers::{Middleware, Provider, PubsubClient},
     signers::Signer,
     types::{Block, BlockNumber, Transaction, TxHash, H256},
 };
@@ -13,7 +13,10 @@ use futures::{
     stream::{FusedStream, FuturesUnordered, StreamExt, TryStreamExt},
 };
 use metrics::{register_counter, register_histogram, Counter, Histogram};
-use tokio::{self, time::Duration};
+use tokio::{
+    self,
+    time::{timeout, Duration},
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, field, info, trace, warn, Instrument, Span};
 
@@ -24,37 +27,32 @@ use crate::{
     timed::TryFutureExt as TryTimedFutureExt,
 };
 
-pub(crate) struct Engine<SC, RC, S, M>
+pub(crate) struct Engine<P, S, M>
 where
-    SC: PubsubClient,
-    RC: JsonRpcClient,
+    P: PubsubClient,
     S: Signer,
     M: TopTxMonitor,
 {
-    streaming: Arc<Provider<SC>>,
-    requesting: Arc<Provider<RC>>,
-    accounts: Arc<Accounts<RC, S>>,
+    client: Arc<Provider<P>>,
+    accounts: Arc<Accounts<P, S>>,
     monitor: Arc<M>,
     metrics: Arc<Metrics>,
 }
 
-impl<SC, RC, S, M> Engine<SC, RC, S, M>
+impl<P, S, M> Engine<P, S, M>
 where
-    SC: PubsubClient + 'static,
-    RC: JsonRpcClient + 'static,
+    P: PubsubClient + 'static,
     S: Signer + 'static,
     M: TopTxMonitor,
 {
     pub(crate) fn new(
-        streaming: impl Into<Arc<Provider<SC>>>,
-        requesting: impl Into<Arc<Provider<RC>>>,
-        accounts: impl Into<Arc<Accounts<RC, S>>>,
+        client: impl Into<Arc<Provider<P>>>,
+        accounts: impl Into<Arc<Accounts<P, S>>>,
         monitor: impl Into<Arc<M>>,
     ) -> Self {
         Self {
             accounts: accounts.into(),
-            streaming: streaming.into(),
-            requesting: requesting.into(),
+            client: client.into(),
             monitor: monitor.into(),
             metrics: Metrics::default().into(),
         }
@@ -65,17 +63,17 @@ where
         pin_mut!(cancelled);
 
         let (blocks, txs, last_block) = try_join3(
-            self.streaming
+            self.client
                 .subscribe_blocks()
                 .inspect_ok(|st| info!(subscription_id = %st.id, "subscribed to new blocks"))
                 .map(|r| r.with_context(|| "failed to subscribe to new blocks")),
-            self.streaming
+            self.client
                 .subscribe_pending_txs()
                 .inspect_ok(
                     |st| info!(subscription_id = %st.id, "subscribed to new pending transactions"),
                 )
                 .map(|r| r.with_context(|| "failed to subscribe to new pending transactions")),
-            self.requesting
+            self.client
                 .get_block(BlockNumber::Latest)
                 .map_ok(Option::unwrap)
                 .err_into::<anyhow::Error>(),
@@ -92,7 +90,7 @@ where
             .map(Ok)
             .try_filter_map(|block| {
                 let block_hash = block.hash.unwrap();
-                self.requesting
+                self.client
                     .get_block_with_txs(block_hash)
                     .try_timed()
                     .map_ok({
@@ -209,7 +207,7 @@ where
         };
 
         handle_entry.spawn(Self::process_tx(
-            self.requesting.clone(),
+            self.client.clone(),
             self.monitor.clone(),
             tx_hash,
             last_block_hash.clone(),
@@ -219,13 +217,14 @@ where
 
     #[tracing::instrument(skip_all, fields(?tx_hash, block_hash = field::Empty))]
     async fn process_tx(
-        provider: Arc<Provider<RC>>,
+        client: Arc<Provider<P>>,
         monitor: Arc<M>,
         tx_hash: H256,
         block_hash: Arc<Mutex<H256>>,
         metrics: Arc<Metrics>,
     ) -> anyhow::Result<Option<M::Ok>> {
-        let (tx, elapsed) = provider
+        // TODO: timeouts
+        let (tx, elapsed) = client
             .get_transaction(tx_hash)
             .try_timed()
             .await

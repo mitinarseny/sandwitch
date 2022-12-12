@@ -3,11 +3,11 @@ use std::{path::Path, sync::Arc, vec::Vec};
 use anyhow::anyhow;
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    providers::{Http, JsonRpcClient, Middleware, Provider, PubsubClient, Ws},
+    providers::{Middleware, Provider, PubsubClient, Ws},
     signers::{Signer, Wallet},
 };
 use futures::{
-    future::{self, try_join, FutureExt, LocalBoxFuture, TryFutureExt},
+    future::{self, FutureExt, LocalBoxFuture, TryFutureExt},
     stream::{FuturesUnordered, TryStreamExt},
 };
 use metrics::register_counter;
@@ -36,7 +36,6 @@ pub struct Config {
 #[derive(Deserialize, Debug)]
 pub struct EngineConfig {
     pub wss: Url,
-    pub http: Url,
 }
 
 #[derive(Deserialize, Debug)]
@@ -45,34 +44,27 @@ pub struct MonitorsConfig {
     pub pancake_swap: Option<PancakeSwapConfig>,
 }
 
-pub struct App<SC, RC, S>
+pub struct App<P, S>
 where
-    SC: PubsubClient,
-    RC: JsonRpcClient,
+    P: PubsubClient,
     S: Signer,
 {
-    engine: Engine<SC, RC, S, Box<dyn TopTxMonitor>>,
+    engine: Engine<P, S, Box<dyn TopTxMonitor>>,
 }
 
-impl App<Ws, Http, Wallet<SigningKey>> {
+impl App<Ws, Wallet<SigningKey>> {
     pub async fn from_config(
         config: Config,
         accounts_dir: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
-        let streaming = Arc::new(Provider::new(Ws::connect(config.engine.wss).await?));
+        let client = Arc::new(Provider::new(Ws::connect(config.engine.wss).await?));
         info!("web socket created");
-        let requesting = Arc::new(Provider::new(Http::new(config.engine.http)));
 
-        let network_id = {
-            let (streaming_net, requesting_net) =
-                try_join(streaming.get_net_version(), requesting.get_net_version()).await?;
-            if streaming_net != requesting_net {
-                return Err(anyhow!("mismatching network IDs: streaming: {streaming_net}, requesting: {requesting_net}"));
-            }
-            streaming_net
-        };
-        info!(network_id);
-        register_counter!("sandwitch_info", "network_id" => network_id).absolute(1);
+        {
+            let network_id = client.get_net_version().await?;
+            info!(network_id);
+            register_counter!("sandwitch_info", "network_id" => network_id).absolute(1);
+        }
 
         let accounts_dir = accounts_dir.as_ref();
         let keys = Self::read_keys(accounts_dir).await?;
@@ -85,14 +77,13 @@ impl App<Ws, Http, Wallet<SigningKey>> {
             );
         }
 
-        let accounts = Arc::new(Accounts::from_signers(keys, requesting.clone()).await?);
+        let accounts = Arc::new(Accounts::from_signers(keys, client.clone()).await?);
         info!(count = accounts.len(), "accounts initialized");
 
-        let monitor =
-            Self::make_monitor(requesting.clone(), accounts.clone(), config.monitors).await?;
+        let monitor = Self::make_monitor(client.clone(), accounts.clone(), config.monitors).await?;
 
         Ok(Self {
-            engine: Engine::new(streaming, requesting, accounts, monitor),
+            engine: Engine::new(client, accounts, monitor),
         })
     }
 
@@ -107,10 +98,9 @@ impl App<Ws, Http, Wallet<SigningKey>> {
     }
 }
 
-impl<SC, RC, S> App<SC, RC, S>
+impl<P, S> App<P, S>
 where
-    SC: PubsubClient + 'static,
-    RC: JsonRpcClient + 'static,
+    P: PubsubClient + 'static,
     S: Signer + 'static,
 {
     pub async fn run(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {
@@ -118,11 +108,11 @@ where
     }
 
     async fn make_monitor(
-        provider: impl Into<Arc<Provider<RC>>>,
-        accounts: impl Into<Arc<Accounts<RC, S>>>,
+        client: impl Into<Arc<Provider<P>>>,
+        accounts: impl Into<Arc<Accounts<P, S>>>,
         config: MonitorsConfig,
     ) -> anyhow::Result<Box<dyn TopTxMonitor>> {
-        let mut monitors = Self::make_monitors(provider, accounts, config).await?;
+        let mut monitors = Self::make_monitors(client, accounts, config).await?;
 
         if monitors.is_empty() {
             return Err(anyhow!("all monitors are disabled"));
@@ -135,16 +125,17 @@ where
     }
 
     async fn make_monitors(
-        provider: impl Into<Arc<Provider<RC>>>,
-        accounts: impl Into<Arc<Accounts<RC, S>>>,
+        client: impl Into<Arc<Provider<P>>>,
+        accounts: impl Into<Arc<Accounts<P, S>>>,
         config: MonitorsConfig,
     ) -> anyhow::Result<Vec<Box<dyn TopTxMonitor>>> {
+        let client = client.into();
         let futs = FuturesUnordered::<LocalBoxFuture<Result<Box<dyn TopTxMonitor>, _>>>::new();
 
         #[cfg(feature = "pancake_swap")]
         if let Some(cfg) = config.pancake_swap {
             futs.push(
-                PancakeSwap::from_config(provider, accounts, cfg)
+                PancakeSwap::from_config(client.clone(), accounts, cfg)
                     .map_ok(|m| Box::new(m) as Box<dyn TopTxMonitor>)
                     .boxed_local(),
             );
