@@ -8,3 +8,4 @@ target/
 prometheus.yml
 grafana.ini
 grafana/
+accounts/

@@ -91,12 +91,19 @@ where
         let mut blocks = blocks
             .map(Ok)
             .try_filter_map(|block| {
+                let block_hash = block.hash.unwrap();
                 self.requesting
-                    .get_block_with_txs(block.hash.unwrap())
+                    .get_block_with_txs(block_hash)
                     .try_timed()
-                    .map_ok(|(block, elapsed)| {
-                        self.metrics.block_resolved(&block, elapsed);
-                        block
+                    .map_ok({
+                        let metrics = &self.metrics;
+                        move |(block, elapsed)| {
+                            metrics.block_resolved(elapsed);
+                            if block.is_none() {
+                                trace!(?block_hash, "invalid block, skipping...");
+                            }
+                            block
+                        }
                     })
             })
             .fuse();
@@ -146,6 +153,7 @@ where
         handles: &mut JoinHandleSet<TxHash, anyhow::Result<Option<M::Ok>>>,
     ) -> impl Future<Output = ()> {
         trace!("got new block");
+        self.metrics.block_valid(&block);
 
         block
             .transactions
@@ -186,7 +194,7 @@ where
         handles: &mut JoinHandleSet<TxHash, anyhow::Result<Option<M::Ok>>>,
         last_block_hash: &Arc<Mutex<H256>>,
     ) {
-        info!("got new transaction");
+        trace!("got new transaction");
         self.metrics.new_tx();
 
         let handle_entry = match handles.try_insert(tx_hash) {
@@ -196,7 +204,6 @@ where
                     ?tx_hash,
                     "this transaction is already being processed, skipping...",
                 );
-                self.metrics.tx_duplicate();
                 return;
             }
         };
@@ -223,16 +230,22 @@ where
             .try_timed()
             .await
             .with_context(|| "failed to get transaction")?;
-        metrics.tx_resolved(&tx, elapsed);
+        metrics.tx_resolved(elapsed);
 
         let Some(tx) = tx else {
-            trace!("fake transaction, skipping...");
+            trace!("invalid tx, skipping...");
             return Ok(None);
         };
+        metrics.tx_valid();
+        if tx.block_hash.is_some() {
+            trace!("transaction resolved as already mined, skipping...");
+            return Ok(None);
+        }
+        metrics.tx_resolved_as_pending();
 
         let block_hash = *block_hash.lock_owned().await;
         Span::current().record("block_hash", format!("{block_hash:x}"));
-        trace!("transaction resolved, processing...");
+        trace!("transaction resolved as pending, processing...");
 
         let (r, elapsed) = monitor.process_tx(&tx, block_hash).try_timed().await?;
         trace!("transaction processed");
@@ -252,33 +265,29 @@ impl<M> TopTxMonitor for M where M: TxMonitor<Ok = (), Error = anyhow::Error> + 
 
 struct Metrics {
     seen_txs: Counter,
-    tx_duplicates: Counter,
-    fake_txs: Counter,
-    resolved_txs: Counter,
-    resolved_as_pendning_txs: Counter,
     resolve_tx_duration: Histogram,
+    valid_txs: Counter,
+    resolved_as_pendning_txs: Counter,
     process_tx_duration: Histogram,
     missed_txs: Counter,
 
     height: Counter,
     resolve_block_duration: Histogram,
-    fake_blocks: Counter,
+    txs_in_block: Histogram,
 }
 
 impl Default for Metrics {
     fn default() -> Self {
         Self {
             seen_txs: register_counter!("sandwitch_seen_txs"),
-            tx_duplicates: register_counter!("sandwitch_tx_duplicates"),
-            fake_txs: register_counter!("sandwitch_fake_txs"),
-            resolved_txs: register_counter!("sandwitch_resolved_txs"),
-            resolved_as_pendning_txs: register_counter!("sandwitch_resolved_as_pending_txs"),
             resolve_tx_duration: register_histogram!("sandwitch_resolve_tx_duration"),
+            valid_txs: register_counter!("sandwitch_valid_txs"),
+            resolved_as_pendning_txs: register_counter!("sandwitch_resolved_as_pending_txs"),
             process_tx_duration: register_histogram!("sandwitch_process_tx_duration"),
             missed_txs: register_counter!("sandwitch_missed_txs"),
             height: register_counter!("sandwitch_height"),
             resolve_block_duration: register_histogram!("sandwitch_resolve_block_duration"),
-            fake_blocks: register_counter!("sandwitch_fake_blocks"),
+            txs_in_block: register_histogram!("sandwitch_txs_in_block"),
         }
     }
 }
@@ -288,38 +297,32 @@ impl Metrics {
         self.seen_txs.increment(1);
     }
 
-    fn tx_duplicate(&self) {
-        self.tx_duplicates.increment(1);
+    fn tx_resolved(&self, elapsed: Duration) {
+        self.resolve_tx_duration.record(elapsed)
     }
 
-    fn fake_tx(&self) {
-        self.fake_txs.increment(1);
+    fn tx_valid(&self) {
+        self.valid_txs.increment(1);
     }
 
-    fn tx_resolved(&self, tx: &Option<Transaction>, duration: Duration) {
-        self.resolved_txs.increment(1);
-        self.resolve_tx_duration.record(duration);
-        if tx.is_some() {
-            self.resolved_as_pendning_txs.increment(1);
-        } else {
-            self.fake_txs.increment(1);
-        }
+    fn tx_resolved_as_pending(&self) {
+        self.resolved_as_pendning_txs.increment(1);
     }
 
-    fn tx_processed(&self, duration: Duration) {
-        self.process_tx_duration.record(duration);
+    fn tx_processed(&self, elapsed: Duration) {
+        self.process_tx_duration.record(elapsed);
     }
 
     fn tx_missed(&self) {
         self.missed_txs.increment(1);
     }
 
-    fn block_resolved(&self, block: &Option<Block<Transaction>>, duration: Duration) {
-        self.resolve_block_duration.record(duration);
-        let Some(block) = block else {
-            self.fake_blocks.increment(1);
-            return;
-        };
+    fn block_resolved(&self, elapsed: Duration) {
+        self.resolve_block_duration.record(elapsed);
+    }
+
+    fn block_valid(&self, block: &Block<Transaction>) {
         self.height.absolute(block.number.unwrap().as_u64());
+        self.txs_in_block.record(block.transactions.len() as f64);
     }
 }

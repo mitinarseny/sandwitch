@@ -26,6 +26,8 @@ FROM gcr.io/distroless/cc
 COPY --from=builder /app/target/release/sandwitch /usr/local/bin/
 ENTRYPOINT [\
   "/usr/local/bin/sandwitch",\
+  "--metrics-host", "0.0.0.0",\
+  "--metrics-port", "9000",\
   "--config", "/etc/sandwitch/sandwitch.toml",\
   "--accounts-dir", "/etc/sandwitch/accounts"\
 ]

@@ -1,8 +1,5 @@
 use std::{path::Path, sync::Arc, vec::Vec};
 
-#[cfg(feature = "pancake_swap")]
-use crate::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-
 use anyhow::anyhow;
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -10,7 +7,7 @@ use ethers::{
     signers::{Signer, Wallet},
 };
 use futures::{
-    future::{self, try_join, TryFutureExt},
+    future::{self, try_join, FutureExt, LocalBoxFuture, TryFutureExt},
     stream::{FuturesUnordered, TryStreamExt},
 };
 use metrics::register_counter;
@@ -26,6 +23,9 @@ use crate::{
     engine::{Engine, TopTxMonitor},
     monitors::TxMonitorExt,
 };
+
+#[cfg(feature = "pancake_swap")]
+use crate::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -52,7 +52,6 @@ where
     S: Signer,
 {
     engine: Engine<SC, RC, S, Box<dyn TopTxMonitor>>,
-    // process_metrics: ProcessMetrics, // TODO
 }
 
 impl App<Ws, Http, Wallet<SigningKey>> {
@@ -94,7 +93,6 @@ impl App<Ws, Http, Wallet<SigningKey>> {
 
         Ok(Self {
             engine: Engine::new(streaming, requesting, accounts, monitor),
-            // process_metrics: ProcessMetrics::new(),
         })
     }
 
@@ -141,13 +139,14 @@ where
         accounts: impl Into<Arc<Accounts<RC, S>>>,
         config: MonitorsConfig,
     ) -> anyhow::Result<Vec<Box<dyn TopTxMonitor>>> {
-        let futs = FuturesUnordered::new();
+        let futs = FuturesUnordered::<LocalBoxFuture<Result<Box<dyn TopTxMonitor>, _>>>::new();
 
         #[cfg(feature = "pancake_swap")]
         if let Some(cfg) = config.pancake_swap {
             futs.push(
                 PancakeSwap::from_config(provider, accounts, cfg)
-                    .map_ok(|m| Box::new(m) as Box<dyn TopTxMonitor>),
+                    .map_ok(|m| Box::new(m) as Box<dyn TopTxMonitor>)
+                    .boxed_local(),
             );
         }
 

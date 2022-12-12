@@ -5,7 +5,7 @@ use anyhow::Context;
 use clap::{Parser, ValueHint};
 use metrics::register_counter;
 use metrics_exporter_prometheus::PrometheusBuilder;
-use tokio::{fs, main, signal::ctrl_c};
+use tokio::{fs, main, net, signal::ctrl_c};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, metadata::LevelFilter};
 use tracing_subscriber::{prelude::*, Registry};
@@ -13,29 +13,50 @@ use tracing_subscriber::{prelude::*, Registry};
 use sandwitch::{App, Config};
 
 #[derive(Parser)]
-#[clap(version)]
+#[command(version)]
 struct Args {
     #[clap(
-        default_value_os_t = PathBuf::from("./sandwitch.toml"),
         short, long,
         value_parser,
         value_hint = ValueHint::FilePath,
         value_name = "FILE",
+        default_value_os_t = PathBuf::from("./sandwitch.toml"),
     )]
     config: PathBuf,
 
-    #[clap(
-        default_value_os_t = PathBuf::from("./accounts"),
+    #[arg(
         short,
         long,
         value_parser,
-        value_hint = ValueHint::FilePath,
+        value_hint = ValueHint::DirPath,
         value_name = "FILE",
+        default_value_os_t = PathBuf::from("./accounts"),
     )]
     accounts_dir: PathBuf,
 
+    #[arg(
+        long,
+        value_hint = ValueHint::Hostname,
+        value_name = "HOST",
+        default_value_t = String::from("127.0.0.1"),
+    )]
+    /// Host for Prometheus metrics
+    metrics_host: String,
+
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u16).range(1..),
+        value_name = "PORT",
+        default_value_t = 9000,
+    )]
+    /// Port for Prometheus metrics
+    metrics_port: u16,
+
+    #[arg(
+        short, long,
+        action = clap::ArgAction::Count,
+    )]
     /// Increase verbosity (error (deafult) -> warn -> info -> debug -> trace)
-    #[clap(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 }
 
@@ -77,6 +98,23 @@ async fn main() -> anyhow::Result<()> {
     )?;
 
     PrometheusBuilder::new()
+        .with_http_listener(
+            net::lookup_host((args.metrics_host.as_ref(), args.metrics_port))
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to lookup host: {}:{}",
+                        args.metrics_host, args.metrics_port
+                    )
+                })?
+                .next()
+                .unwrap(),
+        )
+        .set_buckets(&[
+            0.01, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.225, 0.25, 0.275, 0.3, 0.35, 0.4,
+            0.5, 0.6, 0.7, 0.8, 1.,
+        ])
+        .unwrap()
         .install()
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);

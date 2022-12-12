@@ -150,6 +150,7 @@ pub(crate) enum SendTxError<S: Signer, E = Infallible> {
 }
 
 impl<S: Signer, E> SendTxError<S, E> {
+    #[allow(dead_code)]
     pub(crate) fn map_other<F, W>(self, f: F) -> SendTxError<S, W>
     where
         F: FnOnce(E) -> W,
@@ -161,6 +162,7 @@ impl<S: Signer, E> SendTxError<S, E> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn other_into<W>(self) -> SendTxError<S, W>
     where
         E: Into<W>,
@@ -170,6 +172,7 @@ impl<S: Signer, E> SendTxError<S, E> {
 }
 
 impl<S: Signer> SendTxError<S, Infallible> {
+    #[allow(dead_code)]
     pub(crate) fn from_never<E>(self) -> SendTxError<S, E> {
         self.map_other(|_| unreachable!())
     }
@@ -180,6 +183,7 @@ impl<P: JsonRpcClient, S: Signer> InnerAccount<P, S> {
         self.signer.address()
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn balance_at(&self, block_hash: H256) -> Result<U256, ProviderError> {
         self.balance
             .get_at_or_try_insert_with(block_hash, |block_hash| {
@@ -287,10 +291,12 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
         self.pending_state.tx_mined(tx)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn can_send(&self, gas_price: U256) -> bool {
         self.pending_state.can_send(gas_price)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn send_tx(
         &mut self,
         mut tx: TypedTransaction,
@@ -307,6 +313,7 @@ impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
         .map(Result::unwrap)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn send_txs(
         &mut self,
         txs: impl IntoIterator<Item = TypedTransaction>,
@@ -403,6 +410,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         self.map_unordered(move |account| account.clone().lock().then(f.clone()))
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn find<F>(&self, pred: F) -> Option<Account<P, S>>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, bool>,
@@ -417,6 +425,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .cloned()
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn try_find<F, E>(&self, pred: F) -> Result<Option<Account<P, S>>, E>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Result<bool, E>>,
@@ -431,6 +440,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .map(|o| o.cloned())
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn find_map<F, T>(&self, f: F) -> Option<(Account<P, S>, T)>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Option<T>>,
@@ -444,6 +454,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn try_find_map<F, T, E>(&self, f: F) -> Result<Option<(Account<P, S>, T)>, E>
     where
         F: for<'b> Fn(&'b Account<P, S>) -> LocalBoxFuture<'b, Result<Option<T>, E>>,
@@ -457,6 +468,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn find_locked<F>(&self, pred: F) -> Option<LockedAccount<P, S>>
     where
         F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, bool>,
@@ -470,6 +482,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn try_find_locked<F, E>(
         &self,
         pred: F,
@@ -486,6 +499,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn find_map_locked<F, T>(&self, f: F) -> Option<(LockedAccount<P, S>, T)>
     where
         F: for<'b> Fn(&'b LockedAccount<P, S>) -> LocalBoxFuture<'b, Option<T>>,
@@ -499,6 +513,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn try_find_map_locked<F, T, E>(
         &self,
         f: F,
@@ -515,6 +530,7 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn try_find_wrap_and_send_txs<F, E: 'static>(
         &self,
         wrap_tx: &Transaction,
