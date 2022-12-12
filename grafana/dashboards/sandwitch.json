@@ -326,7 +326,19 @@
           {
             "matcher": {
               "id": "byFrameRefID",
-              "options": "in_flight"
+              "options": "resolving"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "txs"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "processing"
             },
             "properties": [
               {
@@ -383,6 +395,18 @@
           "legendFormat": "Seen",
           "range": true,
           "refId": "seen"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sandwitch_seen_txs{instance=\"${instance}\"} - sandwitch_resolve_tx_duration_count{instance=\"${instance}\"}",
+          "hide": false,
+          "legendFormat": "Resolving",
+          "range": true,
+          "refId": "resolving"
         },
         {
           "datasource": {
@@ -1063,8 +1087,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -1128,8 +1151,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "#EAB839",
@@ -1274,8 +1296,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
