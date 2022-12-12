@@ -133,7 +133,7 @@ impl<ID, T> Stream for JoinHandleSet<ID, T>
 where
     ID: Eq + Hash,
 {
-    type Item = Result<T, JoinError>;
+    type Item = Result<(T, ID), JoinError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
@@ -142,7 +142,7 @@ where
                 Ok((r, id)) => {
                     this.aborts.remove(&id);
                     match r {
-                        Ok(v) => Poll::Ready(Some(Ok(v))),
+                        Ok(v) => Poll::Ready(Some(Ok((v, id)))),
                         Err(Aborted) => Poll::Pending,
                     }
                 }

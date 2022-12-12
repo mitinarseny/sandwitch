@@ -20,7 +20,10 @@ use crate::cached::{CachedAt, CachedAtBlock};
 mod pending_state {
     use std::mem;
 
-    use ethers::types::{BlockNumber, Transaction};
+    use ethers::{
+        abi::AbiEncode,
+        types::{BlockNumber, Transaction},
+    };
     use futures::future::try_join;
     use metrics::{register_counter, register_gauge, Counter, Gauge};
 
@@ -58,12 +61,12 @@ mod pending_state {
                 last_gas_price: None,
                 last_pending_gas_price: register_gauge!(
                     "sandwitch_last_pending_gas_price",
-                    "address" => format!("{address:x}"),
+                    "address" => address.encode_hex(),
                 ),
                 next_nonce: 0.into(),
                 txs_count: register_counter!(
                     "sandwitch_txs_count",
-                    "address" => format!("{address:x}"),
+                    "address" => address.encode_hex(),
                 ),
             };
             s.set_last_gas_price(None);
