@@ -26,7 +26,8 @@ version = "4.0"
 features = ["derive"]
 
 [dependencies.ethers]
-version = "0.17"
+version = "1"
+default-features = false
 features = [
   "abigen",
   "rustls",
@@ -44,7 +45,12 @@ features = ["derive"]
 
 [dependencies.tokio]
 version = "1"
-features = ["full"]
+default-features = false
+features = [
+  "fs",
+  "time",
+  "rt-multi-thread",
+]
 
 [dependencies.tokio-stream]
 version = "0.1"
@@ -63,5 +69,6 @@ features = ["serde"]
 
 
 [build-dependencies.ethers-contract]
-version = "0.17"
+version = "1"
+default-features = false
 features = ["abigen"]

@@ -136,20 +136,22 @@ where
     type Item = Result<(T, ID), JoinError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        match this.futs.poll_next(cx).ready()? {
-            Some(r) => match r {
+        let mut this = self.project();
+        Poll::Ready(loop {
+            let Some(r) = this.futs.as_mut().poll_next(cx).ready()? else {
+                break None;
+            };
+            match r {
                 Ok((r, id)) => {
                     this.aborts.remove(&id);
                     match r {
-                        Ok(v) => Poll::Ready(Some(Ok((v, id)))),
-                        Err(Aborted) => Poll::Pending,
+                        Ok(v) => break Some(Ok((v, id))),
+                        Err(Aborted) => continue,
                     }
                 }
-                Err(e) => Poll::Ready(Some(Err(e))),
-            },
-            None => Poll::Ready(None),
-        }
+                Err(e) => break Some(Err(e)),
+            }
+        })
     }
 }
 
