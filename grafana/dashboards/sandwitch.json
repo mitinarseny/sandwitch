@@ -316,7 +316,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/ing$/"
+              "options": "/^(Resolving|Processing)$/"
             },
             "properties": [
               {
@@ -330,6 +330,10 @@
               {
                 "id": "unit",
                 "value": "txs"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -388,7 +392,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sandwitch_seen_txs{instance=\"${instance}\"} - sandwitch_resolve_tx_duration_count{instance=\"${instance}\"}",
+          "expr": "sandwitch_resolving_txs{instance=\"${instance}\"}",
           "hide": false,
           "legendFormat": "Resolving",
           "range": true,
@@ -426,7 +430,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sandwitch_resolved_as_pending_txs{instance=\"${instance}\"} - sandwitch_process_tx_duration_count{instance=\"${instance}\"}",
+          "expr": "sandwitch_processing_txs{instance=\"${instance}\"}",
           "hide": false,
           "instant": false,
           "legendFormat": "Processing",
@@ -1236,8 +1240,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           },
@@ -1302,8 +1305,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "#EAB839",
@@ -1449,8 +1451,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }

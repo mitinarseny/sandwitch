@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc, vec::Vec};
+use std::{path::Path, sync::Arc, time::Duration, vec::Vec};
 
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -22,6 +22,7 @@ use crate::{
     accounts::Accounts,
     engine::{Engine, TopTxMonitor},
     monitors::{Noop, TxMonitorExt},
+    timeout::TimeoutProvider,
 };
 
 #[cfg(feature = "pancake_swap")]
@@ -44,9 +45,12 @@ pub struct MonitorsConfig {
     pub pancake_swap: Option<PancakeSwapConfig>,
 }
 
+const TIMEOUT: Duration = Duration::from_secs(5);
+
 pub struct App<P, S>
 where
-    P: PubsubClient,
+    P: PubsubClient + 'static,
+    P::Error: Send + Sync + 'static,
     S: Signer,
 {
     engine: Engine<P, S, Box<dyn TopTxMonitor>>,
@@ -57,7 +61,10 @@ impl App<Ws, Wallet<SigningKey>> {
         config: Config,
         accounts_dir: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
-        let client = Arc::new(Provider::new(Ws::connect(config.engine.wss).await?));
+        let client = Arc::new(Provider::new(TimeoutProvider::new(
+            Ws::connect(config.engine.wss).await?,
+            TIMEOUT,
+        )));
         info!("web socket created");
 
         {
@@ -80,7 +87,7 @@ impl App<Ws, Wallet<SigningKey>> {
         let accounts = Arc::new(Accounts::from_signers(keys, client.clone()).await?);
         info!(count = accounts.len(), "accounts initialized");
 
-        let monitor = Self::make_monitor(client.clone(), accounts.clone(), config.monitors).await?;
+        let monitor = App::make_monitor(client.clone(), accounts.clone(), config.monitors).await?;
 
         Ok(Self {
             engine: Engine::new(client, accounts, monitor),
@@ -101,6 +108,7 @@ impl App<Ws, Wallet<SigningKey>> {
 impl<P, S> App<P, S>
 where
     P: PubsubClient + 'static,
+    P::Error: Send + Sync,
     S: Signer + 'static,
 {
     pub async fn run(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {

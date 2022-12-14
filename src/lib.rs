@@ -15,5 +15,6 @@ pub(crate) mod contracts;
 pub(crate) mod engine;
 pub mod monitors;
 pub(crate) mod timed;
+pub mod timeout;
 
 pub use app::{App, Config, EngineConfig, MonitorsConfig};

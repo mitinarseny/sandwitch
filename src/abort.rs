@@ -18,6 +18,7 @@ use futures::{
     },
     stream::{FusedStream, FuturesOrdered, FuturesUnordered, Stream},
 };
+use metrics::Gauge;
 use pin_project::{pin_project, pinned_drop};
 use tokio::task::{JoinError, JoinHandle};
 
@@ -55,7 +56,7 @@ pub trait StreamExt: Stream + Sized {
 
 impl<St> StreamExt for St where St: Stream {}
 
-pub(crate) trait FuturesQueue<Fut>: FusedStream<Item = Fut::Output> + Default
+pub(crate) trait FuturesQueue<Fut>: FusedStream<Item = Fut::Output>
 where
     Fut: Future,
 {
@@ -189,11 +190,11 @@ where
 impl<ID, FQ, Fut> Default for AbortSet<ID, FQ, Fut>
 where
     ID: Eq + Hash,
-    FQ: FuturesQueue<WithID<Fut, ID>>,
+    FQ: FuturesQueue<WithID<Fut, ID>> + Default,
     Fut: Future,
 {
     fn default() -> Self {
-        Self::new()
+        Self::new(FQ::default())
     }
 }
 
@@ -203,9 +204,9 @@ where
     FQ: FuturesQueue<WithID<Fut, ID>>,
     Fut: Future,
 {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(futs: FQ) -> Self {
         Self {
-            futs: FQ::default(),
+            futs,
             aborts: HashMap::new(),
             _phantom_data: PhantomData,
         }
@@ -339,5 +340,74 @@ impl<T> PinnedDrop for AbortTaskGuard<T> {
     }
 }
 
-pub(crate) type AbortUnorderedSet<ID, Fut> = AbortSet<ID, FuturesUnordered<WithID<Fut, ID>>, Fut>;
-pub(crate) type AbortOrderedSet<ID, Fut> = AbortSet<ID, FuturesOrdered<WithID<Fut, ID>>, Fut>;
+#[pin_project]
+#[must_use = "streams do nothing unless polled"]
+pub(crate) struct MetricedFuturesQueue<FQ, Fut>
+where
+    FQ: FuturesQueue<Fut>,
+    Fut: Future,
+{
+    #[pin]
+    inner: FQ,
+    gauge: Gauge,
+    _fut: PhantomData<Fut>,
+}
+
+impl<FQ, Fut> MetricedFuturesQueue<FQ, Fut>
+where
+    FQ: FuturesQueue<Fut>,
+    Fut: Future,
+{
+    pub fn new(inner: FQ, gauge: Gauge) -> Self {
+        Self {
+            inner,
+            gauge,
+            _fut: PhantomData,
+        }
+    }
+
+    pub fn new_with_default(gauge: Gauge) -> Self
+    where
+        FQ: Default,
+    {
+        Self::new(FQ::default(), gauge)
+    }
+}
+
+impl<FQ, Fut> Stream for MetricedFuturesQueue<FQ, Fut>
+where
+    FQ: FuturesQueue<Fut>,
+    Fut: Future,
+{
+    type Item = Fut::Output;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        let r = this.inner.poll_next(cx).ready()?;
+        if r.is_some() {
+            this.gauge.decrement(1f64);
+        }
+        Poll::Ready(r)
+    }
+}
+
+impl<FQ, Fut> FusedStream for MetricedFuturesQueue<FQ, Fut>
+where
+    FQ: FuturesQueue<Fut>,
+    Fut: Future,
+{
+    fn is_terminated(&self) -> bool {
+        self.inner.is_terminated()
+    }
+}
+
+impl<FQ, Fut> FuturesQueue<Fut> for MetricedFuturesQueue<FQ, Fut>
+where
+    FQ: FuturesQueue<Fut>,
+    Fut: Future,
+{
+    fn push(&mut self, f: Fut) {
+        self.inner.push(f);
+        self.gauge.increment(1f64);
+    }
+}
