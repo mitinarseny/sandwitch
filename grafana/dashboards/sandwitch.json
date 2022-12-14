@@ -122,74 +122,6 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "How many valid transactions, which then were resolved as pending, we have processed ",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "text",
-            "mode": "fixed"
-          },
-          "mappings": [],
-          "max": -84,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 2,
-        "x": 2,
-        "y": 0
-      },
-      "id": 35,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sandwitch_process_tx_duration_count",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Txs Processed",
-      "transparent": true,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
       "description": "How many valid blocks we actually have processed",
       "fieldConfig": {
         "defaults": {
@@ -215,7 +147,7 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 4,
+        "x": 2,
         "y": 0
       },
       "id": 36,
@@ -258,6 +190,74 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "How many valid and still pending transactions we have processed ",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
+          "mappings": [],
+          "max": -84,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 4,
+        "y": 0
+      },
+      "id": 35,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "sandwitch_process_tx_duration_count",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Txs Processed",
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -267,8 +267,8 @@
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "Transactions rate",
-            "axisPlacement": "auto",
+            "axisLabel": "tx rate",
+            "axisPlacement": "right",
             "axisSoftMin": 0,
             "barAlignment": 0,
             "drawStyle": "line",
@@ -315,22 +315,18 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byFrameRefID",
-              "options": "resolving"
+              "id": "byRegexp",
+              "options": "/ing$/"
             },
             "properties": [
               {
-                "id": "unit",
+                "id": "custom.axisLabel",
                 "value": "txs"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "processing"
-            },
-            "properties": [
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "left"
+              },
               {
                 "id": "unit",
                 "value": "txs"
@@ -340,7 +336,7 @@
         ]
       },
       "gridPos": {
-        "h": 12,
+        "h": 10,
         "w": 18,
         "x": 6,
         "y": 0
@@ -468,7 +464,161 @@
       ],
       "title": "Pending Transactions",
       "transformations": [],
+      "transparent": true,
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How many valid transaction were resolved as still pending ",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "purple",
+                "value": 40
+              },
+              {
+                "color": "#EAB839",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 3
+      },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "1 - (rate(sandwitch_resolved_as_pending_txs{instance=\"${instance}\"}[$__rate_interval]) / rate(sandwitch_valid_txs{instance=\"${instance}\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Resolved as Already Mined",
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How many processing transactions were canceled as they have been included in just mined block",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "purple",
+                "value": 40
+              },
+              {
+                "color": "#EAB839",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 3
+      },
+      "id": 39,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "1 - (rate(sandwitch_process_tx_duration_count{instance=\"${instance}\"}[$__rate_interval]) / rate(sandwitch_resolved_as_pending_txs{instance=\"${instance}\"}[$__rate_interval]))",
+          "interval": "",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Missed Tx Rate",
+      "transparent": true,
+      "type": "stat"
     },
     {
       "datasource": {
@@ -502,7 +652,7 @@
         "h": 3,
         "w": 2,
         "x": 0,
-        "y": 3
+        "y": 7
       },
       "id": 16,
       "links": [
@@ -583,7 +733,7 @@
         "h": 3,
         "w": 2,
         "x": 2,
-        "y": 3
+        "y": 7
       },
       "id": 38,
       "options": {
@@ -648,7 +798,7 @@
         "h": 3,
         "w": 2,
         "x": 4,
-        "y": 3
+        "y": 7
       },
       "id": 20,
       "options": {
@@ -684,86 +834,12 @@
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "percentage",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "purple",
-                "value": 40
-              },
-              {
-                "color": "#EAB839",
-                "value": 60
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 6,
-        "x": 0,
-        "y": 6
-      },
-      "id": 11,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "1 - (rate(sandwitch_resolved_as_pending_txs{instance=\"${instance}\"}[$__rate_interval]) / rate(sandwitch_valid_txs{instance=\"${instance}\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Resolved as Already Mined TX Rate",
-      "type": "stat"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 10
       },
       "id": 29,
       "panels": [],
@@ -799,7 +875,7 @@
         "h": 8,
         "w": 13,
         "x": 0,
-        "y": 13
+        "y": 11
       },
       "id": 27,
       "options": {
@@ -833,6 +909,7 @@
         }
       ],
       "title": "Resolve Txs",
+      "transparent": true,
       "type": "bargauge"
     },
     {
@@ -872,7 +949,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 13
+        "y": 11
       },
       "id": 25,
       "options": {
@@ -953,6 +1030,7 @@
         }
       ],
       "title": "Resolve Txs φ-quantiles",
+      "transparent": true,
       "type": "bargauge"
     },
     {
@@ -984,7 +1062,7 @@
         "h": 8,
         "w": 13,
         "x": 0,
-        "y": 21
+        "y": 19
       },
       "id": 32,
       "options": {
@@ -1018,6 +1096,7 @@
         }
       ],
       "title": "Process Txs",
+      "transparent": true,
       "type": "bargauge"
     },
     {
@@ -1057,7 +1136,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 21
+        "y": 19
       },
       "id": 33,
       "options": {
@@ -1138,6 +1217,7 @@
         }
       ],
       "title": "Process Txs φ-quantiles",
+      "transparent": true,
       "type": "bargauge"
     },
     {
@@ -1169,7 +1249,7 @@
         "h": 8,
         "w": 13,
         "x": 0,
-        "y": 29
+        "y": 27
       },
       "id": 30,
       "options": {
@@ -1203,6 +1283,7 @@
         }
       ],
       "title": "Resolve Blocks",
+      "transparent": true,
       "type": "bargauge"
     },
     {
@@ -1242,7 +1323,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 29
+        "y": 27
       },
       "id": 31,
       "options": {
@@ -1323,6 +1404,7 @@
         }
       ],
       "title": "Resolve Blocks φ-quantiles",
+      "transparent": true,
       "type": "bargauge"
     },
     {
@@ -1331,7 +1413,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 35
       },
       "id": 9,
       "panels": [],
@@ -1404,7 +1486,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 36
       },
       "id": 7,
       "links": [

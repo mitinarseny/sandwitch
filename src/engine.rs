@@ -4,12 +4,12 @@ use anyhow::Context;
 use ethers::{
     providers::{Middleware, Provider, PubsubClient},
     signers::Signer,
-    types::{Block, BlockNumber, Transaction, TxHash, H256},
+    types::{Block, BlockNumber, Transaction, H256},
 };
 use futures::{
     future::{try_join3, Aborted, FusedFuture, Future, FutureExt, TryFuture, TryFutureExt},
     pin_mut, select_biased,
-    stream::{FusedStream, FuturesOrdered, FuturesUnordered, StreamExt},
+    stream::{FusedStream, FuturesUnordered, StreamExt},
 };
 use metrics::{register_counter, register_histogram, Counter, Histogram};
 use tokio::{self, time::Duration};
@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn, Instrument};
 
 use crate::{
-    abort::{FutureExt as AbortFutureExt, JoinHandleSet},
+    abort::{AbortOrderedSet, AbortUnorderedSet, FutureExt as AbortFutureExt},
     accounts::Accounts,
     monitors::TxMonitor,
     timed::{FutureExt as TimedFutureExt, TryFutureExt as TryTimedFutureExt},
@@ -78,17 +78,17 @@ where
         .await??;
 
         let mut last_block_hash = last_block.hash.unwrap();
+        info!(?last_block_hash, "starting from last block...");
         self.metrics.new_block(&last_block);
+        self.metrics.block_valid(&last_block);
 
         let tx_hashes = tx_hashes.take_until(cancel.cancelled());
-        let mut txs = FuturesUnordered::new();
-        // TODO: do not resolve twice
-        let mut process_tx_handles: JoinHandleSet<TxHash, Result<((), Duration), anyhow::Error>> =
-            JoinHandleSet::default();
+        let mut txs = AbortUnorderedSet::new();
+        let mut process_txs = AbortUnorderedSet::new();
 
         let blocks = blocks.take_until(cancel.cancelled());
-        let mut blocks_with_txs = FuturesOrdered::new();
-        let mut process_block_handles = JoinHandleSet::default();
+        let mut blocks_with_txs = AbortOrderedSet::new();
+        let mut process_blocks = AbortOrderedSet::default();
 
         let cancelled = cancel.cancelled().fuse();
         pin_mut!(tx_hashes, blocks, cancelled);
@@ -96,53 +96,54 @@ where
         let mut first_err: Option<anyhow::Error> = None;
 
         while !(cancelled.is_terminated()
-            && process_tx_handles.is_terminated()
-            && process_block_handles.is_terminated())
+            && process_txs.is_terminated()
+            && process_blocks.is_terminated())
         {
             if let Err(err) = 'result: {
                 select_biased! {
                     _ = cancelled => {
-                        process_tx_handles.abort_all();
-                        process_block_handles.abort_all();
+                        txs.abort_all();
+                        process_txs.abort_all();
+                        blocks_with_txs.abort_all();
+                        process_blocks.abort_all();
                     },
-                    r = process_block_handles.select_next_some() => {
-                        match r.map_err(Into::<anyhow::Error>::into) {
-                            Ok(((_, elapsed), block_hash)) => {
+                    (r, block_hash) = process_blocks.select_next_some() => {
+                        let r: Result<_, _> = r;
+                        match r.with_context(|| "block processing failed for: {block_hash}") {
+                            Ok((_, elapsed)) => {
                                 trace!(?block_hash, ?elapsed, "block proceesed");
                                 self.metrics.block_processed(elapsed);
                             },
-                            Err(err) => {
-                                break 'result Err(err.context("block processing failed"));
-                            },
+                            Err(err) => break 'result Err(err),
                         }
                     },
-                    r = process_tx_handles.select_next_some() => {
-                        match r.map(|(r, tx_hash)| r.map(move |v| (v, tx_hash)))
-                            .map_err(Into::into)
-                            .flatten() {
-                            Ok(((_, elapsed), tx_hash)) => {
+                    (r, tx_hash) = process_txs.select_next_some() => {
+                        let r: Result<_, _> = r;
+                        match r
+                            .map_err(Into::<anyhow::Error>::into)
+                            .flatten()
+                            .with_context(|| "transaction processing failed for: {tx_hash}") {
+                            Ok((_, elapsed)) => {
                                 trace!(?tx_hash, ?elapsed, "transaction processed");
                                 self.metrics.tx_processed(elapsed);
                             },
-                            Err(err) => {
-                                break 'result Err(err.context("transaction processing failed"));
-                            },
+                            Err(err) => break 'result Err(err),
                         }
                     },
-                    block = blocks_with_txs.select_next_some() => {
+                    (block, block_hash) = blocks_with_txs.select_next_some() => {
                         let block: Result<_, _> = block;
-                        match block.map_err(Into::<anyhow::Error>::into) {
-                            Ok(((block, block_hash), elapsed)) => {
+                        match block.with_context(|| "failed to get block: {block_hash}") {
+                            Ok((block, elapsed)) => {
                                 trace!(?block_hash, ?elapsed, "block resolved");
                                 self.metrics.block_resolved(elapsed);
 
                                 let Some(block): Option<Block<Transaction>> = block else {
-                                    trace!(?block_hash, "invalid block, skipping...");
+                                    warn!(?block_hash, "invalid block, skipping...");
                                     break 'result Ok(());
                                 };
                                 self.metrics.block_valid(&block);
 
-                                let Ok(h) = process_block_handles.try_insert(block_hash) else {
+                                let Ok(h) = process_blocks.try_insert(block_hash) else {
                                     warn!(
                                         ?block_hash,
                                         "this block is already being processed, skipping...",
@@ -151,11 +152,14 @@ where
                                 };
 
                                 for tx in &block.transactions {
-                                    if process_tx_handles.abort(&tx.hash).is_some() {
+                                    if txs.abort(&tx.hash)
+                                        .or(process_txs.abort(&tx.hash))
+                                        .is_some() {
                                         trace!(
                                             ?tx.hash,
                                             ?block_hash,
-                                            "transaction has just been mined, cancelling its processing...",
+                                            "transaction has just been mined, \
+                                                cancelling its processing...",
                                         );
                                         self.metrics.tx_missed();
                                     };
@@ -163,9 +167,7 @@ where
 
                                 h.spawn(self.process_block(block).timed());
                             },
-                            Err(err) => {
-                                break 'result Err(err.context("failed to get block with txs"));
-                            },
+                            Err(err) => break 'result Err(err),
                         }
                     },
                     block = blocks.select_next_some() => {
@@ -178,17 +180,29 @@ where
                         );
                         self.metrics.new_block(&block);
 
-                        blocks_with_txs.push_back(
-                            self.client
-                                .get_block_with_txs(last_block_hash)
-                                .map_ok(move |b| (b, last_block_hash))
-                                .try_timed(),
-                        );
+                        if process_blocks.contains(&last_block_hash) {
+                            warn!(
+                                block_hash = ?last_block_hash,
+                                "this block is already being processing, skipping...",
+                            );
+                            break 'result Ok(());
+                        }
+
+                        let Ok(h) = blocks_with_txs.try_insert(last_block_hash) else {
+                            warn!(
+                                block_hash = ?last_block_hash,
+                                "this block is already being resolved, skipping...",
+                            );
+                            break 'result Ok(());
+                        };
+
+                        // TODO: timeout
+                        h.insert(self.client.get_block_with_txs(last_block_hash).try_timed());
                     },
-                    tx = txs.select_next_some() => {
+                    (tx, tx_hash) = txs.select_next_some() => {
                         let tx: Result<_, _> = tx;
-                        match tx.map_err(Into::<anyhow::Error>::into) {
-                            Ok(((tx, tx_hash), elapsed)) => {
+                        match tx.with_context(|| "failed to resolve transaction: {tx_hash}") {
+                            Ok((tx, elapsed)) => {
                                 self.metrics.tx_resolved(elapsed);
                                 trace!(?tx_hash, ?elapsed, "transaction resolved");
 
@@ -208,7 +222,7 @@ where
                                 }
                                 self.metrics.tx_resolved_as_pending();
 
-                                let Ok(h) = process_tx_handles.try_insert(tx_hash) else {
+                                let Ok(h) = process_txs.try_insert(tx_hash) else {
                                     warn!(
                                         ?tx_hash,
                                         "this transaction is already being processed, skipping...",
@@ -228,20 +242,31 @@ where
                                         .try_timed(),
                                 );
                             },
-                            Err(err) => {
-                                break 'result Err(err.context("failed to resolve transaction"));
-                            },
+                            Err(err) => break 'result Err(err),
                         }
                     },
                     tx_hash = tx_hashes.select_next_some() => {
                         trace!(?tx_hash, "got new transaction hash");
                         self.metrics.new_tx();
-                        txs.push(
-                            self.client
-                                .get_transaction(tx_hash)
-                                .map_ok(move |tx| (tx, tx_hash))
-                                .try_timed(),
-                        );
+
+                        if process_txs.contains(&tx_hash) {
+                            warn!(
+                                ?tx_hash,
+                                "this transaction is already being processed, skipping...",
+                            );
+                            break 'result Ok(());
+                        }
+
+                        let Ok(h) = txs.try_insert(tx_hash) else {
+                            warn!(
+                                ?tx_hash,
+                                "this transaction is already being resolving, skipping...",
+                            );
+                            break 'result Ok(());
+                        };
+
+                        // TODO: timeout
+                        h.insert(self.client.get_transaction(tx_hash).try_timed());
                     },
                 }
                 Ok(())

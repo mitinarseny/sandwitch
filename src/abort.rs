@@ -4,7 +4,9 @@ use std::{
         hash_map::{Entry, VacantEntry},
         HashMap,
     },
+    convert,
     hash::Hash,
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -14,7 +16,7 @@ use futures::{
         select, AbortHandle, AbortRegistration, Abortable, Aborted, Either, Future,
         FutureExt as StdFutureExt, Map, Select,
     },
-    stream::{FusedStream, FuturesUnordered, Stream},
+    stream::{FusedStream, FuturesOrdered, FuturesUnordered, Stream},
 };
 use pin_project::{pin_project, pinned_drop};
 use tokio::task::{JoinError, JoinHandle};
@@ -53,66 +55,185 @@ pub trait StreamExt: Stream + Sized {
 
 impl<St> StreamExt for St where St: Stream {}
 
-#[pin_project(PinnedDrop)]
-#[must_use = "futures do nothing unless polled"]
-pub struct JoinHandleSet<ID, T>
+pub(crate) trait FuturesQueue<Fut>: FusedStream<Item = Fut::Output> + Default
 where
-    ID: Eq + Hash,
+    Fut: Future,
 {
-    #[pin]
-    futs: FuturesUnordered<JoinHandle<(Result<T, Aborted>, ID)>>,
-    aborts: HashMap<ID, AbortHandle>,
+    fn push(&mut self, f: Fut);
 }
 
-impl<ID, T> Default for JoinHandleSet<ID, T>
+impl<Fut> FuturesQueue<Fut> for FuturesUnordered<Fut>
 where
-    ID: Eq + Hash,
+    Fut: Future,
 {
-    fn default() -> Self {
+    fn push(&mut self, f: Fut) {
+        FuturesUnordered::push(&self, f)
+    }
+}
+
+impl<Fut> FuturesQueue<Fut> for FuturesOrdered<Fut>
+where
+    Fut: Future,
+{
+    fn push(&mut self, f: Fut) {
+        FuturesOrdered::push_back(self, f)
+    }
+}
+
+#[pin_project]
+#[must_use = "futures do nothing unless polled"]
+pub(crate) struct WithID<Fut, ID> {
+    #[pin]
+    inner: Fut,
+    id: Option<ID>,
+}
+
+impl<Fut, ID> WithID<Fut, ID>
+where
+    Fut: Future,
+{
+    fn new(f: Fut, id: ID) -> Self {
         Self {
-            futs: FuturesUnordered::new(),
-            aborts: HashMap::new(),
+            inner: f,
+            id: Some(id),
         }
     }
 }
 
-pub struct JoinEntry<'a, ID, T> {
-    futs: &'a mut FuturesUnordered<JoinHandle<(Result<T, Aborted>, ID)>>,
-    abort_entry: VacantEntry<'a, ID, AbortHandle>,
-}
+impl<Fut, ID> Future for WithID<Fut, ID>
+where
+    Fut: Future,
+{
+    type Output = (Fut::Output, ID);
 
-impl<'a, ID, T> JoinEntry<'a, ID, T> {
-    pub fn spawn<Fut>(self, f: Fut)
-    where
-        ID: Clone + Send + 'static,
-        Fut: Future<Output = T> + Send + 'static,
-        T: Send + 'static,
-    {
-        let (h, reg) = AbortHandle::new_pair();
-        let id = self.abort_entry.insert_entry(h).key().clone();
-        self.futs
-            .push(tokio::spawn(f.with_abort_reg(reg).map(move |v| (v, id))));
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        let v = this.inner.poll(cx).ready()?;
+        Poll::Ready((v, this.id.take().expect("cannot poll AbortableID twice")))
     }
 }
 
-impl<ID, T> JoinHandleSet<ID, T>
+pub(crate) struct AbortEntry<'a, ID, FQ, Fut>
 where
     ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Fut, ID>>,
+    Fut: Future,
 {
-    pub fn try_insert(&mut self, id: ID) -> Result<JoinEntry<'_, ID, T>, ID>
+    futs: &'a mut FQ,
+    entry: VacantEntry<'a, ID, AbortHandle>,
+    _phantom_data: PhantomData<Fut>,
+}
+
+impl<'a, ID, FQ, Fut> AbortEntry<'a, ID, FQ, Fut>
+where
+    ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Fut, ID>>,
+    Fut: Future,
+{
+    fn insert_with<F, IFut>(self, inner: IFut, f: F)
+    where
+        ID: Clone,
+        IFut: Future,
+        F: Fn(Abortable<IFut>) -> Fut,
+    {
+        let (h, reg) = AbortHandle::new_pair();
+        let id = self.entry.insert_entry(h).key().clone();
+        self.futs
+            .push(WithID::new(f(inner.with_abort_reg(reg)), id))
+    }
+}
+
+impl<'a, ID, FQ, Fut> AbortEntry<'a, ID, FQ, Abortable<Fut>>
+where
+    ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Abortable<Fut>, ID>>,
+    Fut: Future,
+{
+    pub(crate) fn insert(self, f: Fut)
+    where
+        ID: Clone,
+    {
+        self.insert_with(f, convert::identity)
+    }
+}
+
+impl<'a, ID, FQ, T> AbortEntry<'a, ID, FQ, AbortTaskGuard<Result<T, Aborted>>>
+where
+    ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<AbortTaskGuard<Result<T, Aborted>>, ID>>,
+{
+    pub(crate) fn spawn<Fut>(self, f: Fut)
+    where
+        ID: Clone,
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.insert_with(f, AbortTaskGuard::spawn)
+    }
+}
+
+#[pin_project]
+#[must_use = "streams do nothing unless polled"]
+pub(crate) struct AbortSet<ID, FQ, Fut>
+where
+    ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Fut, ID>>,
+    Fut: Future,
+{
+    #[pin]
+    futs: FQ,
+    aborts: HashMap<ID, AbortHandle>,
+    _phantom_data: PhantomData<Fut>,
+}
+
+impl<ID, FQ, Fut> Default for AbortSet<ID, FQ, Fut>
+where
+    ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Fut, ID>>,
+    Fut: Future,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<ID, FQ, Fut> AbortSet<ID, FQ, Fut>
+where
+    ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Fut, ID>>,
+    Fut: Future,
+{
+    pub(crate) fn new() -> Self {
+        Self {
+            futs: FQ::default(),
+            aborts: HashMap::new(),
+            _phantom_data: PhantomData,
+        }
+    }
+
+    pub(crate) fn try_insert(&mut self, id: ID) -> Result<AbortEntry<'_, ID, FQ, Fut>, ID>
     where
         ID: Clone,
     {
         match self.aborts.entry(id) {
-            Entry::Vacant(e) => Ok(JoinEntry {
+            Entry::Vacant(e) => Ok(AbortEntry {
                 futs: &mut self.futs,
-                abort_entry: e,
+                entry: e,
+                _phantom_data: PhantomData,
             }),
             Entry::Occupied(e) => Err(e.key().clone()),
         }
     }
 
-    pub fn abort<Q>(&mut self, id: &Q) -> Option<ID>
+    pub(crate) fn contains<Q>(&self, id: &Q) -> bool
+    where
+        ID: Borrow<Q>,
+        Q: Eq + Hash,
+    {
+        self.aborts.contains_key(id)
+    }
+
+    pub(crate) fn abort<Q>(&mut self, id: &Q) -> Option<ID>
     where
         ID: Borrow<Q>,
         Q: Eq + Hash,
@@ -122,54 +243,101 @@ where
         Some(id)
     }
 
-    pub fn abort_all(&mut self) {
+    pub(crate) fn abort_all(&mut self) {
         self.aborts.drain().for_each(|(_id, h)| {
             h.abort();
         });
     }
-}
 
-impl<ID, T> Stream for JoinHandleSet<ID, T>
-where
-    ID: Eq + Hash,
-{
-    type Item = Result<(T, ID), JoinError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next_with<F, T>(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut f: F,
+    ) -> Poll<Option<(T, ID)>>
+    where
+        F: FnMut(Fut::Output) -> Option<T>,
+    {
         let mut this = self.project();
         Poll::Ready(loop {
-            let Some(r) = this.futs.as_mut().poll_next(cx).ready()? else {
+            let Some((r, id)) = this.futs.as_mut().poll_next(cx).ready()? else {
                 break None;
             };
-            match r {
-                Ok((r, id)) => {
-                    this.aborts.remove(&id);
-                    match r {
-                        Ok(v) => break Some(Ok((v, id))),
-                        Err(Aborted) => continue,
-                    }
-                }
-                Err(e) => break Some(Err(e)),
-            }
+            this.aborts.remove(&id);
+            break Some((
+                match f(r) {
+                    Some(v) => v,
+                    None => continue,
+                },
+                id,
+            ));
         })
     }
 }
 
-impl<ID, T> FusedStream for JoinHandleSet<ID, T>
+impl<ID, FQ, Fut> FusedStream for AbortSet<ID, FQ, Fut>
 where
+    Self: Stream,
     ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Fut, ID>>,
+    Fut: Future,
 {
     fn is_terminated(&self) -> bool {
         self.futs.is_terminated()
     }
 }
 
-#[pinned_drop]
-impl<ID, T> PinnedDrop for JoinHandleSet<ID, T>
+impl<ID, FQ, Fut> Stream for AbortSet<ID, FQ, Abortable<Fut>>
 where
     ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<Abortable<Fut>, ID>>,
+    Fut: Future,
 {
-    fn drop(self: Pin<&mut Self>) {
-        self.get_mut().abort_all()
+    type Item = (Fut::Output, ID);
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.poll_next_with(cx, Result::ok)
     }
 }
+
+impl<ID, FQ, T> Stream for AbortSet<ID, FQ, AbortTaskGuard<Result<T, Aborted>>>
+where
+    ID: Eq + Hash,
+    FQ: FuturesQueue<WithID<AbortTaskGuard<Result<T, Aborted>>, ID>>,
+{
+    type Item = (Result<T, JoinError>, ID);
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.poll_next_with(cx, |r| r.map(Result::ok).transpose())
+    }
+}
+
+#[pin_project(PinnedDrop)]
+pub(crate) struct AbortTaskGuard<T>(#[pin] JoinHandle<T>);
+
+impl<T> AbortTaskGuard<T> {
+    fn spawn<Fut>(fut: Fut) -> Self
+    where
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        Self(tokio::spawn(fut))
+    }
+}
+
+impl<T> Future for AbortTaskGuard<T> {
+    type Output = <JoinHandle<T> as Future>::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().0.poll(cx)
+    }
+}
+
+#[pinned_drop]
+impl<T> PinnedDrop for AbortTaskGuard<T> {
+    fn drop(self: Pin<&mut Self>) {
+        self.project().0.as_mut().abort();
+    }
+}
+
+pub(crate) type AbortUnorderedSet<ID, Fut> = AbortSet<ID, FuturesUnordered<WithID<Fut, ID>>, Fut>;
+pub(crate) type AbortOrderedSet<ID, Fut> = AbortSet<ID, FuturesOrdered<WithID<Fut, ID>>, Fut>;
