@@ -1,10 +1,14 @@
-use std::marker::PhantomData;
+use std::{convert::Infallible, marker::PhantomData};
 
 use ethers::{
     contract::EthCall,
     types::{Transaction, H256},
 };
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, TryFutureExt, TryStreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    stream::FuturesUnordered,
+    FutureExt, TryFutureExt, TryStreamExt,
+};
 
 #[cfg(feature = "pancake_swap")]
 pub mod pancake_swap;
@@ -102,6 +106,21 @@ where
         block_hash: H256,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         (**self).process_tx(tx, block_hash)
+    }
+}
+
+pub(crate) struct Noop;
+
+impl TxMonitor for Noop {
+    type Ok = ();
+    type Error = Infallible;
+
+    fn process_tx<'a>(
+        &'a self,
+        _tx: &'a Transaction,
+        _block_hash: H256,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        future::ok(()).boxed()
     }
 }
 

@@ -1,11 +1,11 @@
 use std::{path::Path, sync::Arc, vec::Vec};
 
-use anyhow::anyhow;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     providers::{Middleware, Provider, PubsubClient, Ws},
     signers::{Signer, Wallet},
 };
+#[allow(unused_imports)]
 use futures::{
     future::{self, FutureExt, LocalBoxFuture, TryFutureExt},
     stream::{FuturesUnordered, TryStreamExt},
@@ -21,7 +21,7 @@ use url::Url;
 use crate::{
     accounts::Accounts,
     engine::{Engine, TopTxMonitor},
-    monitors::TxMonitorExt,
+    monitors::{Noop, TxMonitorExt},
 };
 
 #[cfg(feature = "pancake_swap")]
@@ -114,16 +114,20 @@ where
     ) -> anyhow::Result<Box<dyn TopTxMonitor>> {
         let mut monitors = Self::make_monitors(client, accounts, config).await?;
 
-        if monitors.is_empty() {
-            return Err(anyhow!("all monitors are disabled"));
-        }
-        Ok(if monitors.len() == 1 {
-            monitors.remove(0)
+        Ok(if monitors.is_empty() {
+            warn!("all monitors are disabled, starting in watch mode...");
+            Box::new(Noop.map_err(|_| unreachable!()))
         } else {
-            Box::new(monitors.map(|_| ()))
+            info!(count = monitors.len(), "monitors initialized");
+            if monitors.len() == 1 {
+                monitors.remove(0)
+            } else {
+                Box::new(monitors.map(|_| ()))
+            }
         })
     }
 
+    #[allow(unused_variables)]
     async fn make_monitors(
         client: impl Into<Arc<Provider<P>>>,
         accounts: impl Into<Arc<Accounts<P, S>>>,
