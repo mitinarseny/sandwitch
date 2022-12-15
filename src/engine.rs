@@ -9,7 +9,7 @@ use ethers::{
 use futures::{
     future::{self, try_join3, Aborted, Future, FutureExt, TryFuture, TryFutureExt},
     pin_mut, select_biased,
-    stream::{FusedStream, FuturesUnordered, StreamExt, FuturesOrdered},
+    stream::{FusedStream, FuturesOrdered, FuturesUnordered, StreamExt},
 };
 use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use tokio::{self, task::JoinError, time::Duration};
@@ -181,6 +181,7 @@ where
                                 );
                                 continue;
                             };
+                            // TODO: check block timestamp?
 
                             last_block_hash = block_hash;
                             self.metrics.block_valid(&block);
@@ -374,7 +375,10 @@ struct Metrics {
 
     height: Counter,
     resolve_block_duration: Histogram,
+    block_gas_used: Histogram,
+    block_gas_limit: Histogram,
     txs_in_block: Histogram,
+    tx_gas_price: Histogram,
     process_block_duration: Histogram,
 }
 
@@ -389,7 +393,10 @@ impl Default for Metrics {
             missed_txs: register_counter!("sandwitch_missed_txs"),
             height: register_counter!("sandwitch_height"),
             resolve_block_duration: register_histogram!("sandwitch_resolve_block_duration"),
+            block_gas_used: register_histogram!("sandwitch_block_gas_used"),
+            block_gas_limit: register_histogram!("sandwitch_block_gas_limit"),
             txs_in_block: register_histogram!("sandwitch_txs_in_block"),
+            tx_gas_price: register_histogram!("sandwitch_tx_gas_price"),
             process_block_duration: register_histogram!("sandwitch_process_block_duration"),
         }
     }
@@ -428,8 +435,14 @@ impl Metrics {
         self.resolve_block_duration.record(elapsed);
     }
 
-    fn block_valid<TX>(&self, block: &Block<TX>) {
+    fn block_valid(&self, block: &Block<Transaction>) {
+        self.block_gas_used.record(block.gas_used.as_u128() as f64);
+        self.block_gas_limit
+            .record(block.gas_limit.as_u128() as f64);
         self.txs_in_block.record(block.transactions.len() as f64);
+        for gas_price in block.transactions.iter().filter_map(|tx| tx.gas_price) {
+            self.tx_gas_price.record(gas_price.as_u128() as f64);
+        }
     }
 
     fn block_processed(&self, elapsed: Duration) {

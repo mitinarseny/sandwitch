@@ -80,13 +80,13 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 2,
+        "w": 3,
         "x": 0,
         "y": 0
       },
       "id": 14,
       "options": {
-        "colorMode": "value",
+        "colorMode": "none",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -146,8 +146,8 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 2,
-        "x": 2,
+        "w": 3,
+        "x": 3,
         "y": 0
       },
       "id": 36,
@@ -215,7 +215,7 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 4,
+        "x": 6,
         "y": 0
       },
       "id": 35,
@@ -316,7 +316,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/ing$/"
+              "options": "/^(Resolving|Processing)$/"
             },
             "properties": [
               {
@@ -330,15 +330,19 @@
               {
                 "id": "unit",
                 "value": "txs"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
         ]
       },
       "gridPos": {
-        "h": 10,
-        "w": 18,
-        "x": 6,
+        "h": 14,
+        "w": 16,
+        "x": 8,
         "y": 0
       },
       "id": 2,
@@ -388,7 +392,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sandwitch_seen_txs{instance=\"${instance}\"} - sandwitch_resolve_tx_duration_count{instance=\"${instance}\"}",
+          "expr": "sandwitch_resolving_txs{instance=\"${instance}\"}",
           "hide": false,
           "legendFormat": "Resolving",
           "range": true,
@@ -426,7 +430,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sandwitch_resolved_as_pending_txs{instance=\"${instance}\"} - sandwitch_process_tx_duration_count{instance=\"${instance}\"}",
+          "expr": "sandwitch_processing_txs{instance=\"${instance}\"}",
           "hide": false,
           "instant": false,
           "legendFormat": "Processing",
@@ -472,31 +476,105 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "How many valid transaction were resolved as still pending ",
+      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 0,
+        "y": 3
+      },
+      "id": 16,
+      "links": [
+        {
+          "targetBlank": true,
+          "title": "EtherScan",
+          "url": "https://etherscan.io/blocks"
+        },
+        {
+          "targetBlank": true,
+          "title": "BscScan",
+          "url": "https://bscscan.com/blocks"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "1/rate(sandwitch_height{instance=\"${instance}\"}[$__range])",
+          "format": "time_series",
+          "instant": false,
+          "interval": "",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Block Rate",
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How much, on average, of block gas limit was actually used across all mined blocks over specified range ",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
             "mode": "continuous-GrYlRd"
           },
           "mappings": [],
+          "max": 1,
+          "min": 0,
           "thresholds": {
             "mode": "percentage",
             "steps": [
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "purple",
-                "value": 40
-              },
-              {
-                "color": "#EAB839",
-                "value": 60
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -505,10 +583,287 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 3,
-        "x": 0,
+        "h": 6,
+        "w": 4,
+        "x": 2,
         "y": 3
+      },
+      "id": 43,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(sandwitch_block_gas_used_sum[$__range]) / rate(sandwitch_block_gas_limit_sum[$__range])",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Network Congestion",
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Average transaction count across blocks",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "txs"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 6,
+        "y": 3
+      },
+      "id": 20,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(sandwitch_txs_in_block_sum[$__range]) / rate(sandwitch_txs_in_block_count[$__range])",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Txs in Block",
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Ratio between how many valid transactions we receive and  how many are then included in blocks",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "continuous-RdYlGr"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 0,
+        "y": 6
+      },
+      "id": 38,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(sandwitch_valid_txs{instance=\"${instance}\"}[$__range]) / (rate(sandwitch_height{instance=\"${instance}\"}[$__range]) * rate(sandwitch_txs_in_block_sum{instance=\"${instance}\"}[$__range]) / rate(sandwitch_txs_in_block_count{instance=\"${instance}\"}[$__range]))",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Tx Observe Rate",
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Average transaction gas price across blocks over specified range",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "continuous-GrYlRd"
+          },
+          "links": [],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "Gwei"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 6,
+        "y": 6
+      },
+      "id": 41,
+      "links": [
+        {
+          "targetBlank": true,
+          "title": "EtherScan Gas Tracker",
+          "url": "https://etherscan.io/gastracker"
+        },
+        {
+          "targetBlank": true,
+          "title": "BscScan Gas Tracker",
+          "url": "https://bscscan.com/gastracker"
+        }
+      ],
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(sandwitch_tx_gas_price_sum[$__range]) / rate(sandwitch_tx_gas_price_count[$__range]) / 10^9",
+          "legendFormat": "Avg",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Gas Price",
+      "transformations": [],
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How many valid transaction were resolved as still pending ",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 9
       },
       "id": 11,
       "options": {
@@ -581,10 +936,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 3,
-        "x": 3,
-        "y": 3
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 9
       },
       "id": 39,
       "options": {
@@ -621,225 +976,12 @@
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "text",
-            "mode": "fixed"
-          },
-          "decimals": 1,
-          "mappings": [],
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 2,
-        "x": 0,
-        "y": 7
-      },
-      "id": 16,
-      "links": [
-        {
-          "targetBlank": true,
-          "title": "EtherScan",
-          "url": "https://etherscan.io/blocks"
-        },
-        {
-          "targetBlank": true,
-          "title": "BscScan",
-          "url": "https://bscscan.com/blocks"
-        }
-      ],
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "1/rate(sandwitch_height{instance=\"${instance}\"}[$__range])",
-          "format": "time_series",
-          "instant": false,
-          "interval": "",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Avg Block Rate",
-      "transparent": true,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Ratio between how many valid transactions we receive and  how many are then included in blocks",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "text",
-            "mode": "continuous-GrYlRd"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "percentage",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 2,
-        "x": 2,
-        "y": 7
-      },
-      "id": 38,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "rate(sandwitch_valid_txs{instance=\"${instance}\"}[$__range]) / (rate(sandwitch_height{instance=\"${instance}\"}[$__range]) * rate(sandwitch_txs_in_block_sum{instance=\"${instance}\"}[$__range]) / rate(sandwitch_txs_in_block_count{instance=\"${instance}\"}[$__range]))",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Tx Observe Rate",
-      "transparent": true,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Average transaction count across blocks",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "text",
-            "mode": "fixed"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "txs"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 2,
-        "x": 4,
-        "y": 7
-      },
-      "id": 20,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "rate(sandwitch_txs_in_block_sum[$__range]) / rate(sandwitch_txs_in_block_count[$__range])",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Avg Txs in Block",
-      "transparent": true,
-      "type": "stat"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 14
       },
       "id": 29,
       "panels": [],
@@ -875,7 +1017,7 @@
         "h": 8,
         "w": 13,
         "x": 0,
-        "y": 11
+        "y": 15
       },
       "id": 27,
       "options": {
@@ -949,7 +1091,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 11
+        "y": 15
       },
       "id": 25,
       "options": {
@@ -1062,7 +1204,7 @@
         "h": 8,
         "w": 13,
         "x": 0,
-        "y": 19
+        "y": 23
       },
       "id": 32,
       "options": {
@@ -1136,7 +1278,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 19
+        "y": 23
       },
       "id": 33,
       "options": {
@@ -1249,7 +1391,7 @@
         "h": 8,
         "w": 13,
         "x": 0,
-        "y": 27
+        "y": 31
       },
       "id": 30,
       "options": {
@@ -1323,7 +1465,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 27
+        "y": 31
       },
       "id": 31,
       "options": {
@@ -1413,7 +1555,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 39
       },
       "id": 9,
       "panels": [],
@@ -1449,8 +1591,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1486,7 +1627,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 40
       },
       "id": 7,
       "links": [
@@ -1636,13 +1777,13 @@
     ]
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "Sandwitch",
   "uid": "KcM5MOGVk",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
