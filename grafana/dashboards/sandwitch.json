@@ -316,7 +316,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/^(Resolving|Processing)$/"
+              "options": "/ing$/"
             },
             "properties": [
               {
@@ -330,10 +330,6 @@
               {
                 "id": "unit",
                 "value": "txs"
-              },
-              {
-                "id": "decimals",
-                "value": 0
               }
             ]
           }
@@ -392,7 +388,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sandwitch_resolving_txs{instance=\"${instance}\"}",
+          "expr": "sandwitch_seen_txs{instance=\"${instance}\"} - sandwitch_resolve_tx_duration_count{instance=\"${instance}\"}",
           "hide": false,
           "legendFormat": "Resolving",
           "range": true,
@@ -430,7 +426,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sandwitch_processing_txs{instance=\"${instance}\"}",
+          "expr": "sandwitch_resolved_as_pending_txs{instance=\"${instance}\"} - sandwitch_process_tx_duration_count{instance=\"${instance}\"}",
           "hide": false,
           "instant": false,
           "legendFormat": "Processing",
@@ -613,7 +609,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "1 - (rate(sandwitch_process_tx_duration_count{instance=\"${instance}\"}[$__rate_interval]) / rate(sandwitch_resolved_as_pending_txs{instance=\"${instance}\"}[$__rate_interval]))",
+          "expr": "clamp_min(1 - (rate(sandwitch_process_tx_duration_count{instance=\"${instance}\"}[$__rate_interval]) / rate(sandwitch_resolved_as_pending_txs{instance=\"${instance}\"}[$__rate_interval])), 0)",
           "interval": "",
           "legendFormat": "__auto",
           "range": true,
@@ -1240,7 +1236,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               }
             ]
           },
@@ -1305,7 +1302,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "#EAB839",
@@ -1451,7 +1449,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               }
             ]
           }
@@ -1637,7 +1636,7 @@
     ]
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},

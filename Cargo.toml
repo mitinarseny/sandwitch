@@ -5,6 +5,9 @@ edition = "2021"
 
 [features]
 default = [
+  "bsc",
+]
+bsc = [
   "pancake_swap",
 ]
 pancake_swap = []
