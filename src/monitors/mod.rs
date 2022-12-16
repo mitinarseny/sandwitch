@@ -1,13 +1,12 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use ethers::{
     contract::EthCall,
     types::{Block, Transaction, H256},
 };
 use futures::{
-    future::{self, BoxFuture},
-    stream::FuturesUnordered,
-    FutureExt, TryFutureExt, TryStreamExt,
+    future::{self, try_join, try_join_all, BoxFuture},
+    FutureExt, TryFutureExt,
 };
 
 #[cfg(feature = "pancake_swap")]
@@ -160,10 +159,42 @@ where
     }
 }
 
+impl<M: ?Sized> TxMonitor for Arc<M>
+where
+    M: TxMonitor,
+{
+    type Ok = M::Ok;
+    type Error = M::Error;
+
+    fn process_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        (**self).process_tx(tx, block_hash)
+    }
+}
+
+impl<M: ?Sized> BlockMonitor for Arc<M>
+where
+    M: BlockMonitor,
+{
+    type Ok = M::Ok;
+    type Error = M::Error;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        (**self).process_block(block)
+    }
+}
+
 impl<M> TxMonitor for [M]
 where
     M: TxMonitor,
     M::Ok: Send,
+    M::Error: Send,
 {
     type Ok = Vec<M::Ok>;
     type Error = M::Error;
@@ -173,11 +204,7 @@ where
         tx: &'a Transaction,
         block_hash: H256,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
-        self.iter()
-            .map(|m| m.process_tx(tx, block_hash))
-            .collect::<FuturesUnordered<_>>()
-            .try_collect()
-            .boxed()
+        try_join_all(self.iter().map(|m| m.process_tx(tx, block_hash))).boxed()
     }
 }
 
@@ -185,6 +212,7 @@ impl<M> BlockMonitor for [M]
 where
     M: BlockMonitor,
     M::Ok: Send,
+    M::Error: Send,
 {
     type Ok = Vec<M::Ok>;
     type Error = M::Error;
@@ -193,11 +221,7 @@ where
         &'a self,
         block: &'a Block<Transaction>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
-        self.iter()
-            .map(|m| m.process_block(block))
-            .collect::<FuturesUnordered<_>>()
-            .try_collect()
-            .boxed()
+        try_join_all(self.iter().map(|m| m.process_block(block))).boxed()
     }
 }
 
@@ -205,6 +229,7 @@ impl<M> TxMonitor for Vec<M>
 where
     M: TxMonitor,
     M::Ok: Send,
+    M::Error: Send,
 {
     type Ok = Vec<M::Ok>;
     type Error = M::Error;
@@ -222,6 +247,7 @@ impl<M> BlockMonitor for Vec<M>
 where
     M: BlockMonitor,
     M::Ok: Send,
+    M::Error: Send,
 {
     type Ok = Vec<M::Ok>;
     type Error = M::Error;
@@ -419,7 +445,6 @@ where
     }
 }
 
-
 impl<'a, M, C, E> FunctionCallMonitor<'a, C> for ErrInto<M, E>
 where
     C: EthCall + 'a,
@@ -439,5 +464,50 @@ where
             .process_func(tx, block_hash, inputs)
             .err_into()
             .boxed()
+    }
+}
+
+impl<E, M1, M2> TxMonitor for (M1, M2)
+where
+    E: Send + 'static,
+    M1: TxMonitor<Error = E>,
+    M1::Ok: Send,
+    M2: TxMonitor<Error = E>,
+    M2::Ok: Send,
+{
+    type Ok = (M1::Ok, M2::Ok);
+
+    type Error = E;
+
+    fn process_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        try_join(
+            self.0.process_tx(tx, block_hash),
+            self.1.process_tx(tx, block_hash),
+        )
+        .boxed()
+    }
+}
+
+impl<E, M1, M2> BlockMonitor for (M1, M2)
+where
+    E: Send + 'static,
+    M1: BlockMonitor<Error = E>,
+    M1::Ok: Send,
+    M2: BlockMonitor<Error = E>,
+    M2::Ok: Send,
+{
+    type Ok = (M1::Ok, M2::Ok);
+
+    type Error = E;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        try_join(self.0.process_block(block), self.1.process_block(block)).boxed()
     }
 }

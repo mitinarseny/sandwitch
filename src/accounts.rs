@@ -1,4 +1,9 @@
-use std::{collections::HashMap, convert::Infallible, ops::Deref, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    ops::Deref,
+    sync::Arc,
+};
 
 use ethers::{
     providers::{JsonRpcClient, Middleware, Provider, ProviderError},
@@ -8,14 +13,17 @@ use ethers::{
     },
 };
 use futures::{
-    future::{self, Future, FutureExt, LocalBoxFuture, TryFuture, TryFutureExt},
+    future::{self, BoxFuture, Future, FutureExt, LocalBoxFuture, TryFuture, TryFutureExt},
     lock::{Mutex, OwnedMutexGuard},
     stream::{FusedStream, FuturesUnordered, StreamExt, TryStreamExt},
 };
 use thiserror::Error;
 use tracing::warn;
 
-use crate::cached::{CachedAt, CachedAtBlock};
+use crate::{
+    cached::{CachedAt, CachedAtBlock},
+    monitors::BlockMonitor,
+};
 
 mod pending_state {
     use std::mem;
@@ -286,8 +294,7 @@ impl<P: JsonRpcClient, S: Signer> Deref for LockedAccount<P, S> {
 }
 
 impl<P: JsonRpcClient, S: Signer> LockedAccount<P, S> {
-    // TODO: non-pub?
-    pub(crate) fn tx_mined(&mut self, tx: &Transaction) {
+    fn tx_mined(&mut self, tx: &Transaction) {
         if tx.from != self.address() {
             return;
         }
@@ -580,5 +587,36 @@ impl<P: JsonRpcClient, S: Signer> Accounts<P, S> {
         .await
         .map(Some)
         .map_err(SendTxError::from_never)
+    }
+}
+
+impl<P: JsonRpcClient, S: Signer> BlockMonitor for Accounts<P, S> {
+    type Ok = ();
+
+    type Error = Infallible;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a ethers::types::Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        block
+            .transactions
+            .iter()
+            .rev()
+            .filter_map({
+                let mut seen = HashSet::new();
+                move |tx| {
+                    if let Some(account) = self.get(&tx.from) {
+                        if seen.insert(account.address()) {
+                            return Some(account.lock().map(move |mut a| a.tx_mined(&tx)));
+                        }
+                    }
+                    None
+                }
+            })
+            .collect::<FuturesUnordered<_>>()
+            .collect::<()>()
+            .map(Ok)
+            .boxed()
     }
 }

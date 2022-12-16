@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Context;
 use ethers::{
@@ -10,7 +10,6 @@ use futures::{
     future::{self, try_join3, Aborted, FutureExt, TryFuture, TryFutureExt},
     pin_mut, select_biased,
     stream::{FusedStream, FuturesOrdered, FuturesUnordered, StreamExt},
-    try_join,
 };
 use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use tokio::{self, task::JoinError, time::Duration};
@@ -20,7 +19,7 @@ use tracing::{debug, error, info, trace, warn, Instrument};
 use crate::{
     abort::{AbortSet, FutureExt as AbortFutureExt, MetricedFuturesQueue},
     accounts::Accounts,
-    monitors::{BlockMonitor, TxMonitor},
+    monitors::{BlockMonitor, BlockMonitorExt, TxMonitor},
     timed::TryFutureExt as TryTimedFutureExt,
     timeout::{TimeoutProvider, TimeoutProviderError},
 };
@@ -338,29 +337,11 @@ where
         let block_monitor = self.block_monitor.clone();
         let accounts = self.accounts.clone();
         async move {
-            try_join!(
-                block
-                    .transactions
-                    .iter()
-                    .rev()
-                    .filter_map({
-                        let mut seen = HashSet::new();
-                        move |tx| {
-                            if let Some(account) = accounts.get(&tx.from) {
-                                if seen.insert(account.address()) {
-                                    return Some(account.lock().map(move |mut a| a.tx_mined(&tx)));
-                                }
-                            }
-                            None
-                        }
-                    })
-                    .collect::<FuturesUnordered<_>>()
-                    .collect::<()>()
-                    .map(Ok),
-                block_monitor.process_block(&block)
-            )
+            (accounts.map_err(|_| unreachable!()), block_monitor)
+                .map(|_| ())
+                .process_block(&block)
+                .await
         }
-        .map_ok(|_| ())
         .in_current_span()
     }
 
