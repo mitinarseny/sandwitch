@@ -1,8 +1,8 @@
-use std::{convert::Infallible, marker::PhantomData};
+use std::marker::PhantomData;
 
 use ethers::{
     contract::EthCall,
-    types::{Transaction, H256},
+    types::{Block, Transaction, H256},
 };
 use futures::{
     future::{self, BoxFuture},
@@ -13,7 +13,7 @@ use futures::{
 #[cfg(feature = "pancake_swap")]
 pub mod pancake_swap;
 
-pub trait TxMonitor {
+pub(crate) trait TxMonitor {
     type Ok;
     type Error;
 
@@ -24,7 +24,7 @@ pub trait TxMonitor {
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>;
 }
 
-pub trait TxMonitorExt: TxMonitor {
+pub(crate) trait TxMonitorExt: TxMonitor {
     fn map<F, T>(self, f: F) -> Map<Self, F>
     where
         Self: Sized,
@@ -55,6 +55,80 @@ pub trait TxMonitorExt: TxMonitor {
 
 impl<M> TxMonitorExt for M where M: TxMonitor {}
 
+pub(crate) trait BlockMonitor {
+    type Ok;
+    type Error;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>;
+}
+
+pub(crate) trait BlockMonitorExt: BlockMonitor {
+    fn map<F, T>(self, f: F) -> Map<Self, F>
+    where
+        Self: Sized,
+        F: Fn(Self::Ok) -> T + Sync,
+    {
+        Map { inner: self, f }
+    }
+
+    fn map_err<F, E>(self, f: F) -> MapErr<Self, F>
+    where
+        Self: Sized,
+        F: Fn(Self::Error) -> E + Sync,
+    {
+        MapErr { inner: self, f }
+    }
+
+    fn err_into<E>(self) -> ErrInto<Self, E>
+    where
+        Self: Sized,
+        Self::Error: Into<E>,
+    {
+        ErrInto {
+            inner: self,
+            _into: PhantomData,
+        }
+    }
+}
+
+impl<M> BlockMonitorExt for M where M: BlockMonitor {}
+
+pub(crate) struct Noop<E: Send>(PhantomData<E>);
+
+impl<E: Send> Default for Noop<E> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<E: Send> TxMonitor for Noop<E> {
+    type Ok = ();
+    type Error = E;
+
+    fn process_tx<'a>(
+        &'a self,
+        _tx: &'a Transaction,
+        _block_hash: H256,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        future::ok(()).boxed()
+    }
+}
+
+impl<E: Send> BlockMonitor for Noop<E> {
+    type Ok = ();
+    type Error = E;
+
+    fn process_block<'a>(
+        &'a self,
+        _block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        future::ok(()).boxed()
+    }
+}
+
 impl<M: ?Sized> TxMonitor for Box<M>
 where
     M: TxMonitor,
@@ -68,6 +142,21 @@ where
         block_hash: H256,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
         (**self).process_tx(tx, block_hash)
+    }
+}
+
+impl<M: ?Sized> BlockMonitor for Box<M>
+where
+    M: BlockMonitor,
+{
+    type Ok = M::Ok;
+    type Error = M::Error;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        (**self).process_block(block)
     }
 }
 
@@ -92,6 +181,26 @@ where
     }
 }
 
+impl<M> BlockMonitor for [M]
+where
+    M: BlockMonitor,
+    M::Ok: Send,
+{
+    type Ok = Vec<M::Ok>;
+    type Error = M::Error;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        self.iter()
+            .map(|m| m.process_block(block))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .boxed()
+    }
+}
+
 impl<M> TxMonitor for Vec<M>
 where
     M: TxMonitor,
@@ -109,22 +218,23 @@ where
     }
 }
 
-pub(crate) struct Noop;
+impl<M> BlockMonitor for Vec<M>
+where
+    M: BlockMonitor,
+    M::Ok: Send,
+{
+    type Ok = Vec<M::Ok>;
+    type Error = M::Error;
 
-impl TxMonitor for Noop {
-    type Ok = ();
-    type Error = Infallible;
-
-    fn process_tx<'a>(
+    fn process_block<'a>(
         &'a self,
-        _tx: &'a Transaction,
-        _block_hash: H256,
+        block: &'a Block<Transaction>,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
-        future::ok(()).boxed()
+        (**self).process_block(block)
     }
 }
 
-pub trait FunctionCallMonitor<'a, C: EthCall + 'a> {
+pub(crate) trait FunctionCallMonitor<'a, C: EthCall + 'a> {
     type Ok;
     type Error;
 
@@ -170,6 +280,22 @@ where
     }
 }
 
+impl<M, F, T> BlockMonitor for Map<M, F>
+where
+    M: BlockMonitor,
+    F: Fn(M::Ok) -> T + Sync,
+{
+    type Ok = T;
+    type Error = M::Error;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        self.inner.process_block(block).map_ok(&self.f).boxed()
+    }
+}
+
 impl<'a, M, C, F, T> FunctionCallMonitor<'a, C> for Map<M, F>
 where
     C: EthCall + 'a,
@@ -192,7 +318,7 @@ where
     }
 }
 
-pub struct MapErr<M, F> {
+pub(crate) struct MapErr<M, F> {
     inner: M,
     f: F,
 }
@@ -214,6 +340,22 @@ where
             .process_tx(tx, block_hash)
             .map_err(&self.f)
             .boxed()
+    }
+}
+
+impl<M, F, E> BlockMonitor for MapErr<M, F>
+where
+    M: BlockMonitor,
+    F: Fn(M::Error) -> E + Sync,
+{
+    type Ok = M::Ok;
+    type Error = E;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        self.inner.process_block(block).map_err(&self.f).boxed()
     }
 }
 
@@ -239,7 +381,7 @@ where
     }
 }
 
-pub struct ErrInto<M, E> {
+pub(crate) struct ErrInto<M, E> {
     inner: M,
     _into: PhantomData<E>,
 }
@@ -260,6 +402,23 @@ where
         self.inner.process_tx(tx, block_hash).err_into().boxed()
     }
 }
+
+impl<M, E> BlockMonitor for ErrInto<M, E>
+where
+    M: BlockMonitor,
+    M::Error: Into<E>,
+{
+    type Ok = M::Ok;
+    type Error = E;
+
+    fn process_block<'a>(
+        &'a self,
+        block: &'a Block<Transaction>,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>> {
+        self.inner.process_block(block).err_into().boxed()
+    }
+}
+
 
 impl<'a, M, C, E> FunctionCallMonitor<'a, C> for ErrInto<M, E>
 where

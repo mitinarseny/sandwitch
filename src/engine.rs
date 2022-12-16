@@ -7,9 +7,10 @@ use ethers::{
     types::{Block, BlockNumber, Transaction, H256},
 };
 use futures::{
-    future::{self, try_join3, Aborted, Future, FutureExt, TryFuture, TryFutureExt},
+    future::{self, try_join3, Aborted, FutureExt, TryFuture, TryFutureExt},
     pin_mut, select_biased,
     stream::{FusedStream, FuturesOrdered, FuturesUnordered, StreamExt},
+    try_join,
 };
 use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use tokio::{self, task::JoinError, time::Duration};
@@ -19,40 +20,45 @@ use tracing::{debug, error, info, trace, warn, Instrument};
 use crate::{
     abort::{AbortSet, FutureExt as AbortFutureExt, MetricedFuturesQueue},
     accounts::Accounts,
-    monitors::TxMonitor,
-    timed::{FutureExt as TimedFutureExt, TryFutureExt as TryTimedFutureExt},
+    monitors::{BlockMonitor, TxMonitor},
+    timed::TryFutureExt as TryTimedFutureExt,
     timeout::{TimeoutProvider, TimeoutProviderError},
 };
 
-pub(crate) struct Engine<P, S, M>
+pub(crate) struct Engine<P, S, TM, BM>
 where
     P: PubsubClient + 'static,
     P::Error: Send + Sync + 'static,
     S: Signer,
-    M: TopTxMonitor,
+    TM: TopTxMonitor,
+    BM: TopBlockMonitor,
 {
     client: Arc<Provider<TimeoutProvider<P>>>,
     accounts: Arc<Accounts<TimeoutProvider<P>, S>>,
-    monitor: Arc<M>,
+    tx_monitor: Arc<TM>,
+    block_monitor: Arc<BM>,
     metrics: Arc<Metrics>,
 }
 
-impl<P, S, M> Engine<P, S, M>
+impl<P, S, TM, BM> Engine<P, S, TM, BM>
 where
     P: PubsubClient + 'static,
     P::Error: Send + Sync + 'static,
     S: Signer + 'static,
-    M: TopTxMonitor,
+    TM: TopTxMonitor,
+    BM: TopBlockMonitor,
 {
     pub(crate) fn new(
         client: impl Into<Arc<Provider<TimeoutProvider<P>>>>,
         accounts: impl Into<Arc<Accounts<TimeoutProvider<P>, S>>>,
-        monitor: impl Into<Arc<M>>,
+        tx_monitor: impl Into<Arc<TM>>,
+        block_monitor: impl Into<Arc<BM>>,
     ) -> Self {
         Self {
             client: client.into(),
             accounts: accounts.into(),
-            monitor: monitor.into(),
+            tx_monitor: tx_monitor.into(),
+            block_monitor: block_monitor.into(),
             metrics: Metrics::default().into(),
         }
     }
@@ -137,15 +143,15 @@ where
                     process_blocks.abort_all();
                 },
                 (r, block_hash) = process_blocks.select_next_some() => {
-                    let r: Result<(_, Duration), JoinError> = r;
-                    match r {
+                    let r: Result<anyhow::Result<(_, Duration)>, JoinError> = r;
+                    match r.map_err(Into::into).flatten() {
                         Ok((_, elapsed)) => {
                             trace!(?block_hash, ?elapsed, "block proceesed");
                             self.metrics.block_processed(elapsed);
                         },
                         Err(err) => {
                             error!(?block_hash, "block processing failed: {err:#}");
-                            fatal_err(anyhow::Error::from(err).context(format!(
+                            fatal_err(err.context(format!(
                                 "block processing failed for: {block_hash:?}")));
                         },
                     }
@@ -159,7 +165,7 @@ where
                         },
                         Err(err) => {
                             error!(?tx_hash, "transaction processing failed: {err:#}");
-                            fatal_err(anyhow::Error::from(err).context(format!(
+                            fatal_err(err.context(format!(
                                 "transaction processing failed for: {tx_hash:?}")));
                         },
                     }
@@ -198,7 +204,7 @@ where
                                     self.metrics.tx_missed();
                                 };
                             }
-                            h.spawn(self.process_block(block).timed());
+                            h.spawn(self.process_block(block).into_future().try_timed());
                         },
                         Err(err) => {
                             error!(?block_hash, "failed to resolve block: {err:#}");
@@ -325,25 +331,37 @@ where
             block_number = block.number.unwrap().as_u64(),
         ),
     )]
-    fn process_block(&self, block: Block<Transaction>) -> impl Future<Output = ()> {
-        block
-            .transactions
-            .into_iter()
-            .rev()
-            .filter_map({
-                let mut seen = HashSet::new();
-                move |tx| {
-                    if let Some(account) = self.accounts.get(&tx.from) {
-                        if seen.insert(account.address()) {
-                            return Some(account.lock().map(move |mut a| a.tx_mined(&tx)));
+    fn process_block(
+        &self,
+        block: Block<Transaction>,
+    ) -> impl TryFuture<Ok = BM::Ok, Error = BM::Error> {
+        let block_monitor = self.block_monitor.clone();
+        let accounts = self.accounts.clone();
+        async move {
+            try_join!(
+                block
+                    .transactions
+                    .iter()
+                    .rev()
+                    .filter_map({
+                        let mut seen = HashSet::new();
+                        move |tx| {
+                            if let Some(account) = accounts.get(&tx.from) {
+                                if seen.insert(account.address()) {
+                                    return Some(account.lock().map(move |mut a| a.tx_mined(&tx)));
+                                }
+                            }
+                            None
                         }
-                    }
-                    None
-                }
-            })
-            .collect::<FuturesUnordered<_>>()
-            .collect::<()>()
-            .in_current_span()
+                    })
+                    .collect::<FuturesUnordered<_>>()
+                    .collect::<()>()
+                    .map(Ok),
+                block_monitor.process_block(&block)
+            )
+        }
+        .map_ok(|_| ())
+        .in_current_span()
     }
 
     #[tracing::instrument(skip_all, fields(?tx.hash, ?block_hash))]
@@ -351,9 +369,9 @@ where
         &self,
         tx: Transaction,
         block_hash: H256,
-    ) -> impl TryFuture<Ok = M::Ok, Error = M::Error> {
-        let monitor = self.monitor.clone();
-        async move { monitor.process_tx(&tx, block_hash).await }
+    ) -> impl TryFuture<Ok = TM::Ok, Error = TM::Error> {
+        let tx_monitor = self.tx_monitor.clone();
+        async move { tx_monitor.process_tx(&tx, block_hash).await }.in_current_span()
     }
 }
 
@@ -364,6 +382,16 @@ pub(crate) trait TopTxMonitor:
 
 impl<M> TopTxMonitor for M where M: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
 {}
+
+pub(crate) trait TopBlockMonitor:
+    BlockMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
+{
+}
+
+impl<M> TopBlockMonitor for M where
+    M: BlockMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
+{
+}
 
 struct Metrics {
     seen_txs: Counter,

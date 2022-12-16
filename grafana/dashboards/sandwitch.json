@@ -174,7 +174,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sandwitch_txs_in_block_count",
+          "expr": "sandwitch_txs_in_block_count{instance=\"${instance}\"}",
           "instant": true,
           "legendFormat": "__auto",
           "range": false,
@@ -242,7 +242,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sandwitch_process_tx_duration_count",
+          "expr": "sandwitch_process_tx_duration_count{instance=\"${instance}\"}",
           "instant": true,
           "legendFormat": "__auto",
           "range": false,
@@ -379,6 +379,18 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
+          "expr": "rate(sandwitch_txs_in_block_sum{instance=\"${instance}\"}[$__rate_interval])",
+          "hide": false,
+          "legendFormat": "Mined",
+          "range": true,
+          "refId": "mined"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
           "exemplar": false,
           "expr": "rate(sandwitch_seen_txs{instance=\"${instance}\"}[$__rate_interval])",
           "instant": false,
@@ -459,14 +471,14 @@
           },
           "editorMode": "code",
           "expr": "rate(sandwitch_pancake_swap_to_router{instance=\"${instance}\"}[$__rate_interval])",
-          "hide": false,
+          "hide": true,
           "interval": "",
           "legendFormat": "PancakeSwap Router",
           "range": true,
           "refId": "PancakeSwap Router"
         }
       ],
-      "title": "Pending Transactions",
+      "title": "Transactions",
       "transformations": [],
       "transparent": true,
       "type": "timeseries"
@@ -611,7 +623,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(sandwitch_block_gas_used_sum[$__range]) / rate(sandwitch_block_gas_limit_sum[$__range])",
+          "expr": "rate(sandwitch_block_gas_used_sum{instance=\"${instance}\"}[$__range]) / rate(sandwitch_block_gas_limit_sum{instance=\"${instance}\"}[$__range])",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -676,7 +688,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(sandwitch_txs_in_block_sum[$__range]) / rate(sandwitch_txs_in_block_count[$__range])",
+          "expr": "rate(sandwitch_txs_in_block_sum{instance=\"${instance}\"}[$__range]) / rate(sandwitch_txs_in_block_count{instance=\"${instance}\"}[$__range])",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -821,7 +833,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(sandwitch_tx_gas_price_sum[$__range]) / rate(sandwitch_tx_gas_price_count[$__range]) / 10^9",
+          "expr": "rate(sandwitch_tx_gas_price_sum{instance=\"${instance}\"}[$__range]) / rate(sandwitch_tx_gas_price_count{instance=\"${instance}\"}[$__range]) / 10^9",
           "legendFormat": "Avg",
           "range": true,
           "refId": "A"
@@ -1591,7 +1603,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               }
             ]
           }

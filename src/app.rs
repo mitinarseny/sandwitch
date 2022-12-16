@@ -5,6 +5,7 @@ use ethers::{
     providers::{Middleware, Provider, PubsubClient, Ws},
     signers::{Signer, Wallet},
 };
+use futures::try_join;
 #[allow(unused_imports)]
 use futures::{
     future::{self, FutureExt, LocalBoxFuture, TryFutureExt},
@@ -20,8 +21,8 @@ use url::Url;
 
 use crate::{
     accounts::Accounts,
-    engine::{Engine, TopTxMonitor},
-    monitors::{Noop, TxMonitorExt},
+    engine::{Engine, TopBlockMonitor, TopTxMonitor},
+    monitors::{BlockMonitorExt, Noop, TxMonitorExt},
     timeout::TimeoutProvider,
 };
 
@@ -53,7 +54,7 @@ where
     P::Error: Send + Sync + 'static,
     S: Signer,
 {
-    engine: Engine<P, S, Box<dyn TopTxMonitor>>,
+    engine: Engine<P, S, Box<dyn TopTxMonitor>, Box<dyn TopBlockMonitor>>,
 }
 
 impl App<Ws, Wallet<SigningKey>> {
@@ -87,10 +88,11 @@ impl App<Ws, Wallet<SigningKey>> {
         let accounts = Arc::new(Accounts::from_signers(keys, client.clone()).await?);
         info!(count = accounts.len(), "accounts initialized");
 
-        let monitor = App::make_monitor(client.clone(), accounts.clone(), config.monitors).await?;
+        let (tx_monitor, block_monitor) =
+            App::make_monitor(client.clone(), accounts.clone(), config.monitors).await?;
 
         Ok(Self {
-            engine: Engine::new(client, accounts, monitor),
+            engine: Engine::new(client, accounts, tx_monitor, block_monitor),
         })
     }
 
@@ -119,20 +121,32 @@ where
         client: impl Into<Arc<Provider<P>>>,
         accounts: impl Into<Arc<Accounts<P, S>>>,
         config: MonitorsConfig,
-    ) -> anyhow::Result<Box<dyn TopTxMonitor>> {
-        let mut monitors = Self::make_monitors(client, accounts, config).await?;
+    ) -> anyhow::Result<(Box<dyn TopTxMonitor>, Box<dyn TopBlockMonitor>)> {
+        let (mut tx_monitors, mut block_monitors) =
+            Self::make_monitors(client, accounts, config).await?;
 
-        Ok(if monitors.is_empty() {
+        if tx_monitors.is_empty() && block_monitors.is_empty() {
             warn!("all monitors are disabled, starting in watch mode...");
-            Box::new(Noop.map_err(|_| unreachable!()))
         } else {
-            info!(count = monitors.len(), "monitors initialized");
-            if monitors.len() == 1 {
-                monitors.remove(0)
-            } else {
-                Box::new(monitors.map(|_| ()))
-            }
-        })
+            info!(
+                tx_monitors = tx_monitors.len(),
+                block_monitors = block_monitors.len(),
+                "monitors initialized"
+            );
+        }
+
+        Ok((
+            match tx_monitors.len() {
+                0 => Box::new(Noop::default()),
+                1 => tx_monitors.remove(0),
+                _ => Box::new(tx_monitors.map(|_| ())),
+            },
+            match block_monitors.len() {
+                0 => Box::new(Noop::default()),
+                1 => block_monitors.remove(0),
+                _ => Box::new(block_monitors.map(|_| ())),
+            },
+        ))
     }
 
     #[allow(unused_variables)]
@@ -140,19 +154,22 @@ where
         client: impl Into<Arc<Provider<P>>>,
         accounts: impl Into<Arc<Accounts<P, S>>>,
         config: MonitorsConfig,
-    ) -> anyhow::Result<Vec<Box<dyn TopTxMonitor>>> {
+    ) -> anyhow::Result<(Vec<Box<dyn TopTxMonitor>>, Vec<Box<dyn TopBlockMonitor>>)> {
         let client = client.into();
-        let futs = FuturesUnordered::<LocalBoxFuture<Result<Box<dyn TopTxMonitor>, _>>>::new();
+        let tx_monitors =
+            FuturesUnordered::<LocalBoxFuture<Result<Box<dyn TopTxMonitor>, _>>>::new();
+        let block_monitors =
+            FuturesUnordered::<LocalBoxFuture<Result<Box<dyn TopBlockMonitor>, _>>>::new();
 
         #[cfg(feature = "pancake_swap")]
         if let Some(cfg) = config.pancake_swap {
-            futs.push(
+            tx_monitors.push(
                 PancakeSwap::from_config(client.clone(), accounts, cfg)
                     .map_ok(|m| Box::new(m) as Box<dyn TopTxMonitor>)
                     .boxed_local(),
             );
         }
 
-        futs.try_collect().await
+        try_join!(tx_monitors.try_collect(), block_monitors.try_collect())
     }
 }
