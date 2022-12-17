@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use ethers::{
-    abi::AbiEncode,
     providers::{JsonRpcClient, Provider},
     signers::Signer,
     types::{Address, Transaction, H256},
@@ -14,7 +13,7 @@ use tracing::{info, warn};
 use crate::{
     accounts::Accounts,
     cached::Cached,
-    contracts::pancake_router_v2::SwapExactETHForTokensCall,
+    contracts::i_pancake_router_02::SwapExactETHForTokensCall,
     monitors::{FunctionCallMonitor, TxMonitor},
 };
 
@@ -80,7 +79,7 @@ where
                 to_router: {
                     let c = register_counter!(
                         "sandwitch_pancake_swap_to_router",
-                        "address" => router.address().encode_hex(),
+                        "address" => format!("{:#x}", router.address()),
                     );
                     describe_counter!(
                         "sandwitch_pancake_swap_to_router",

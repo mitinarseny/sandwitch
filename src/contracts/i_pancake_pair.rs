@@ -1,6 +1,6 @@
-pub use pancake_pair::*;
+pub use i_pancake_pair::*;
 #[allow(clippy::too_many_arguments, non_camel_case_types)]
-pub mod pancake_pair {
+pub mod i_pancake_pair {
     #![allow(clippy::enum_variant_names)]
     #![allow(dead_code)]
     #![allow(clippy::type_complexity)]
@@ -14,34 +14,34 @@ pub mod pancake_pair {
         types::*,
     };
     use ethers::providers::Middleware;
-    #[doc = "PancakePair was auto-generated with ethers-rs Abigen. More information at: https://github.com/gakonst/ethers-rs"]
+    #[doc = "IPancakePair was auto-generated with ethers-rs Abigen. More information at: https://github.com/gakonst/ethers-rs"]
     use std::sync::Arc;
-    # [rustfmt :: skip] const __ABI : & str = "[{\"inputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"Approval\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount0\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount1\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"Burn\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount0\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount1\",\"type\":\"uint256\"}],\"name\":\"Mint\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount0In\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount1In\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount0Out\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount1Out\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"Swap\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint112\",\"name\":\"reserve0\",\"type\":\"uint112\"},{\"indexed\":false,\"internalType\":\"uint112\",\"name\":\"reserve1\",\"type\":\"uint112\"}],\"name\":\"Sync\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"Transfer\",\"type\":\"event\"},{\"constant\":true,\"inputs\":[],\"name\":\"DOMAIN_SEPARATOR\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"MINIMUM_LIQUIDITY\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"PERMIT_TYPEHASH\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"allowance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"approve\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"balanceOf\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"burn\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amount0\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amount1\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"decimals\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"factory\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"getReserves\",\"outputs\":[{\"internalType\":\"uint112\",\"name\":\"_reserve0\",\"type\":\"uint112\"},{\"internalType\":\"uint112\",\"name\":\"_reserve1\",\"type\":\"uint112\"},{\"internalType\":\"uint32\",\"name\":\"_blockTimestampLast\",\"type\":\"uint32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"_token0\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"_token1\",\"type\":\"address\"}],\"name\":\"initialize\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"kLast\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"mint\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"name\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"nonces\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"uint8\",\"name\":\"v\",\"type\":\"uint8\"},{\"internalType\":\"bytes32\",\"name\":\"r\",\"type\":\"bytes32\"},{\"internalType\":\"bytes32\",\"name\":\"s\",\"type\":\"bytes32\"}],\"name\":\"permit\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"price0CumulativeLast\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"price1CumulativeLast\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"skim\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount0Out\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amount1Out\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"bytes\",\"name\":\"data\",\"type\":\"bytes\"}],\"name\":\"swap\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"symbol\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[],\"name\":\"sync\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"token0\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"token1\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"totalSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"transfer\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"transferFrom\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]\n" ;
+    # [rustfmt :: skip] const __ABI : & str = "[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\",\"components\":[],\"indexed\":true},{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\",\"components\":[],\"indexed\":true},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\",\"components\":[],\"indexed\":false}],\"type\":\"event\",\"name\":\"Approval\",\"outputs\":[],\"anonymous\":false},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\",\"components\":[],\"indexed\":true},{\"internalType\":\"uint256\",\"name\":\"amount0\",\"type\":\"uint256\",\"components\":[],\"indexed\":false},{\"internalType\":\"uint256\",\"name\":\"amount1\",\"type\":\"uint256\",\"components\":[],\"indexed\":false},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[],\"indexed\":true}],\"type\":\"event\",\"name\":\"Burn\",\"outputs\":[],\"anonymous\":false},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\",\"components\":[],\"indexed\":true},{\"internalType\":\"uint256\",\"name\":\"amount0\",\"type\":\"uint256\",\"components\":[],\"indexed\":false},{\"internalType\":\"uint256\",\"name\":\"amount1\",\"type\":\"uint256\",\"components\":[],\"indexed\":false}],\"type\":\"event\",\"name\":\"Mint\",\"outputs\":[],\"anonymous\":false},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\",\"components\":[],\"indexed\":true},{\"internalType\":\"uint256\",\"name\":\"amount0In\",\"type\":\"uint256\",\"components\":[],\"indexed\":false},{\"internalType\":\"uint256\",\"name\":\"amount1In\",\"type\":\"uint256\",\"components\":[],\"indexed\":false},{\"internalType\":\"uint256\",\"name\":\"amount0Out\",\"type\":\"uint256\",\"components\":[],\"indexed\":false},{\"internalType\":\"uint256\",\"name\":\"amount1Out\",\"type\":\"uint256\",\"components\":[],\"indexed\":false},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[],\"indexed\":true}],\"type\":\"event\",\"name\":\"Swap\",\"outputs\":[],\"anonymous\":false},{\"inputs\":[{\"internalType\":\"uint112\",\"name\":\"reserve0\",\"type\":\"uint112\",\"components\":[],\"indexed\":false},{\"internalType\":\"uint112\",\"name\":\"reserve1\",\"type\":\"uint112\",\"components\":[],\"indexed\":false}],\"type\":\"event\",\"name\":\"Sync\",\"outputs\":[],\"anonymous\":false},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\",\"components\":[],\"indexed\":true},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[],\"indexed\":true},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\",\"components\":[],\"indexed\":false}],\"type\":\"event\",\"name\":\"Transfer\",\"outputs\":[],\"anonymous\":false},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"DOMAIN_SEPARATOR\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"MINIMUM_LIQUIDITY\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"PERMIT_TYPEHASH\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\",\"components\":[]}],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"allowance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"approve\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\",\"components\":[]}],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"balanceOf\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"burn\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amount0\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amount1\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"decimals\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"factory\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"getReserves\",\"outputs\":[{\"internalType\":\"uint112\",\"name\":\"reserve0\",\"type\":\"uint112\",\"components\":[]},{\"internalType\":\"uint112\",\"name\":\"reserve1\",\"type\":\"uint112\",\"components\":[]},{\"internalType\":\"uint32\",\"name\":\"blockTimestampLast\",\"type\":\"uint32\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"initialize\",\"outputs\":[]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"kLast\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"mint\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"name\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\",\"components\":[]}],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"nonces\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint8\",\"name\":\"v\",\"type\":\"uint8\",\"components\":[]},{\"internalType\":\"bytes32\",\"name\":\"r\",\"type\":\"bytes32\",\"components\":[]},{\"internalType\":\"bytes32\",\"name\":\"s\",\"type\":\"bytes32\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"permit\",\"outputs\":[]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"price0CumulativeLast\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"price1CumulativeLast\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"skim\",\"outputs\":[]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount0Out\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amount1Out\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"bytes\",\"name\":\"data\",\"type\":\"bytes\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"swap\",\"outputs\":[]},{\"inputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"symbol\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"sync\",\"outputs\":[]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"token0\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"token1\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"totalSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"transfer\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"transferFrom\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\",\"components\":[]}]}]" ;
     #[doc = r" The parsed JSON-ABI of the contract."]
-    pub static PANCAKEPAIR_ABI: ethers::contract::Lazy<ethers::core::abi::Abi> =
+    pub static IPANCAKEPAIR_ABI: ethers::contract::Lazy<ethers::core::abi::Abi> =
         ethers::contract::Lazy::new(|| {
             ethers::core::utils::__serde_json::from_str(__ABI).expect("invalid abi")
         });
-    pub struct PancakePair<M>(ethers::contract::Contract<M>);
-    impl<M> Clone for PancakePair<M> {
+    pub struct IPancakePair<M>(ethers::contract::Contract<M>);
+    impl<M> Clone for IPancakePair<M> {
         fn clone(&self) -> Self {
-            PancakePair(self.0.clone())
+            IPancakePair(self.0.clone())
         }
     }
-    impl<M> std::ops::Deref for PancakePair<M> {
+    impl<M> std::ops::Deref for IPancakePair<M> {
         type Target = ethers::contract::Contract<M>;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
-    impl<M> std::fmt::Debug for PancakePair<M> {
+    impl<M> std::fmt::Debug for IPancakePair<M> {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.debug_tuple(stringify!(PancakePair))
+            f.debug_tuple(stringify!(IPancakePair))
                 .field(&self.address())
                 .finish()
         }
     }
-    impl<M: ethers::providers::Middleware> PancakePair<M> {
+    impl<M: ethers::providers::Middleware> IPancakePair<M> {
         #[doc = r" Creates a new contract instance with the specified `ethers`"]
         #[doc = r" client at the given `Address`. The contract derefs to a `ethers::Contract`"]
         #[doc = r" object"]
@@ -49,7 +49,7 @@ pub mod pancake_pair {
             address: T,
             client: ::std::sync::Arc<M>,
         ) -> Self {
-            ethers::contract::Contract::new(address.into(), PANCAKEPAIR_ABI.clone(), client).into()
+            ethers::contract::Contract::new(address.into(), IPANCAKEPAIR_ABI.clone(), client).into()
         }
         #[doc = "Calls the contract's `DOMAIN_SEPARATOR` (0x3644e515) function"]
         pub fn domain_separator(&self) -> ethers::contract::builders::ContractCall<M, [u8; 32]> {
@@ -74,11 +74,11 @@ pub mod pancake_pair {
         #[doc = "Calls the contract's `allowance` (0xdd62ed3e) function"]
         pub fn allowance(
             &self,
-            p0: ethers::core::types::Address,
-            p1: ethers::core::types::Address,
+            owner: ethers::core::types::Address,
+            spender: ethers::core::types::Address,
         ) -> ethers::contract::builders::ContractCall<M, ethers::core::types::U256> {
             self.0
-                .method_hash([221, 98, 237, 62], (p0, p1))
+                .method_hash([221, 98, 237, 62], (owner, spender))
                 .expect("method not found (this should never happen)")
         }
         #[doc = "Calls the contract's `approve` (0x095ea7b3) function"]
@@ -94,10 +94,10 @@ pub mod pancake_pair {
         #[doc = "Calls the contract's `balanceOf` (0x70a08231) function"]
         pub fn balance_of(
             &self,
-            p0: ethers::core::types::Address,
+            owner: ethers::core::types::Address,
         ) -> ethers::contract::builders::ContractCall<M, ethers::core::types::U256> {
             self.0
-                .method_hash([112, 160, 130, 49], p0)
+                .method_hash([112, 160, 130, 49], owner)
                 .expect("method not found (this should never happen)")
         }
         #[doc = "Calls the contract's `burn` (0x89afcb44) function"]
@@ -137,11 +137,11 @@ pub mod pancake_pair {
         #[doc = "Calls the contract's `initialize` (0x485cc955) function"]
         pub fn initialize(
             &self,
-            token_0: ethers::core::types::Address,
-            token_1: ethers::core::types::Address,
+            p0: ethers::core::types::Address,
+            p1: ethers::core::types::Address,
         ) -> ethers::contract::builders::ContractCall<M, ()> {
             self.0
-                .method_hash([72, 92, 201, 85], (token_0, token_1))
+                .method_hash([72, 92, 201, 85], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
         #[doc = "Calls the contract's `kLast` (0x7464fc3d) function"]
@@ -170,10 +170,10 @@ pub mod pancake_pair {
         #[doc = "Calls the contract's `nonces` (0x7ecebe00) function"]
         pub fn nonces(
             &self,
-            p0: ethers::core::types::Address,
+            owner: ethers::core::types::Address,
         ) -> ethers::contract::builders::ContractCall<M, ethers::core::types::U256> {
             self.0
-                .method_hash([126, 206, 190, 0], p0)
+                .method_hash([126, 206, 190, 0], owner)
                 .expect("method not found (this should never happen)")
         }
         #[doc = "Calls the contract's `permit` (0xd505accf) function"]
@@ -313,11 +313,11 @@ pub mod pancake_pair {
             self.0.event()
         }
         #[doc = r" Returns an [`Event`](#ethers_contract::builders::Event) builder for all events of this contract"]
-        pub fn events(&self) -> ethers::contract::builders::Event<M, PancakePairEvents> {
+        pub fn events(&self) -> ethers::contract::builders::Event<M, IPancakePairEvents> {
             self.0.event_with_filter(Default::default())
         }
     }
-    impl<M: ethers::providers::Middleware> From<ethers::contract::Contract<M>> for PancakePair<M> {
+    impl<M: ethers::providers::Middleware> From<ethers::contract::Contract<M>> for IPancakePair<M> {
         fn from(contract: ethers::contract::Contract<M>) -> Self {
             Self(contract)
         }
@@ -428,7 +428,7 @@ pub mod pancake_pair {
         pub value: ethers::core::types::U256,
     }
     #[derive(Debug, Clone, PartialEq, Eq, ethers :: contract :: EthAbiType)]
-    pub enum PancakePairEvents {
+    pub enum IPancakePairEvents {
         ApprovalFilter(ApprovalFilter),
         BurnFilter(BurnFilter),
         MintFilter(MintFilter),
@@ -436,7 +436,7 @@ pub mod pancake_pair {
         SyncFilter(SyncFilter),
         TransferFilter(TransferFilter),
     }
-    impl ethers::contract::EthLogDecode for PancakePairEvents {
+    impl ethers::contract::EthLogDecode for IPancakePairEvents {
         fn decode_log(
             log: &ethers::core::abi::RawLog,
         ) -> ::std::result::Result<Self, ethers::core::abi::Error>
@@ -444,35 +444,35 @@ pub mod pancake_pair {
             Self: Sized,
         {
             if let Ok(decoded) = ApprovalFilter::decode_log(log) {
-                return Ok(PancakePairEvents::ApprovalFilter(decoded));
+                return Ok(IPancakePairEvents::ApprovalFilter(decoded));
             }
             if let Ok(decoded) = BurnFilter::decode_log(log) {
-                return Ok(PancakePairEvents::BurnFilter(decoded));
+                return Ok(IPancakePairEvents::BurnFilter(decoded));
             }
             if let Ok(decoded) = MintFilter::decode_log(log) {
-                return Ok(PancakePairEvents::MintFilter(decoded));
+                return Ok(IPancakePairEvents::MintFilter(decoded));
             }
             if let Ok(decoded) = SwapFilter::decode_log(log) {
-                return Ok(PancakePairEvents::SwapFilter(decoded));
+                return Ok(IPancakePairEvents::SwapFilter(decoded));
             }
             if let Ok(decoded) = SyncFilter::decode_log(log) {
-                return Ok(PancakePairEvents::SyncFilter(decoded));
+                return Ok(IPancakePairEvents::SyncFilter(decoded));
             }
             if let Ok(decoded) = TransferFilter::decode_log(log) {
-                return Ok(PancakePairEvents::TransferFilter(decoded));
+                return Ok(IPancakePairEvents::TransferFilter(decoded));
             }
             Err(ethers::core::abi::Error::InvalidData)
         }
     }
-    impl ::std::fmt::Display for PancakePairEvents {
+    impl ::std::fmt::Display for IPancakePairEvents {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match self {
-                PancakePairEvents::ApprovalFilter(element) => element.fmt(f),
-                PancakePairEvents::BurnFilter(element) => element.fmt(f),
-                PancakePairEvents::MintFilter(element) => element.fmt(f),
-                PancakePairEvents::SwapFilter(element) => element.fmt(f),
-                PancakePairEvents::SyncFilter(element) => element.fmt(f),
-                PancakePairEvents::TransferFilter(element) => element.fmt(f),
+                IPancakePairEvents::ApprovalFilter(element) => element.fmt(f),
+                IPancakePairEvents::BurnFilter(element) => element.fmt(f),
+                IPancakePairEvents::MintFilter(element) => element.fmt(f),
+                IPancakePairEvents::SwapFilter(element) => element.fmt(f),
+                IPancakePairEvents::SyncFilter(element) => element.fmt(f),
+                IPancakePairEvents::TransferFilter(element) => element.fmt(f),
             }
         }
     }
@@ -523,10 +523,10 @@ pub mod pancake_pair {
         Default,
     )]
     #[ethcall(name = "allowance", abi = "allowance(address,address)")]
-    pub struct AllowanceCall(
-        pub ethers::core::types::Address,
-        pub ethers::core::types::Address,
-    );
+    pub struct AllowanceCall {
+        pub owner: ethers::core::types::Address,
+        pub spender: ethers::core::types::Address,
+    }
     #[doc = "Container type for all input parameters for the `approve` function with signature `approve(address,uint256)` and selector `[9, 94, 167, 179]`"]
     #[derive(
         Clone,
@@ -553,7 +553,9 @@ pub mod pancake_pair {
         Default,
     )]
     #[ethcall(name = "balanceOf", abi = "balanceOf(address)")]
-    pub struct BalanceOfCall(pub ethers::core::types::Address);
+    pub struct BalanceOfCall {
+        pub owner: ethers::core::types::Address,
+    }
     #[doc = "Container type for all input parameters for the `burn` function with signature `burn(address)` and selector `[137, 175, 203, 68]`"]
     #[derive(
         Clone,
@@ -615,10 +617,10 @@ pub mod pancake_pair {
         Default,
     )]
     #[ethcall(name = "initialize", abi = "initialize(address,address)")]
-    pub struct InitializeCall {
-        pub token_0: ethers::core::types::Address,
-        pub token_1: ethers::core::types::Address,
-    }
+    pub struct InitializeCall(
+        pub ethers::core::types::Address,
+        pub ethers::core::types::Address,
+    );
     #[doc = "Container type for all input parameters for the `kLast` function with signature `kLast()` and selector `[116, 100, 252, 61]`"]
     #[derive(
         Clone,
@@ -668,7 +670,9 @@ pub mod pancake_pair {
         Default,
     )]
     #[ethcall(name = "nonces", abi = "nonces(address)")]
-    pub struct NoncesCall(pub ethers::core::types::Address);
+    pub struct NoncesCall {
+        pub owner: ethers::core::types::Address,
+    }
     #[doc = "Container type for all input parameters for the `permit` function with signature `permit(address,address,uint256,uint256,uint8,bytes32,bytes32)` and selector `[213, 5, 172, 207]`"]
     #[derive(
         Clone,
@@ -839,7 +843,7 @@ pub mod pancake_pair {
         pub value: ethers::core::types::U256,
     }
     #[derive(Debug, Clone, PartialEq, Eq, ethers :: contract :: EthAbiType)]
-    pub enum PancakePairCalls {
+    pub enum IPancakePairCalls {
         DomainSeparator(DomainSeparatorCall),
         MinimumLiquidity(MinimumLiquidityCall),
         PermitTypehash(PermitTypehashCall),
@@ -868,329 +872,329 @@ pub mod pancake_pair {
         Transfer(TransferCall),
         TransferFrom(TransferFromCall),
     }
-    impl ethers::core::abi::AbiDecode for PancakePairCalls {
+    impl ethers::core::abi::AbiDecode for IPancakePairCalls {
         fn decode(
             data: impl AsRef<[u8]>,
         ) -> ::std::result::Result<Self, ethers::core::abi::AbiError> {
             if let Ok(decoded) =
                 <DomainSeparatorCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::DomainSeparator(decoded));
+                return Ok(IPancakePairCalls::DomainSeparator(decoded));
             }
             if let Ok(decoded) =
                 <MinimumLiquidityCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::MinimumLiquidity(decoded));
+                return Ok(IPancakePairCalls::MinimumLiquidity(decoded));
             }
             if let Ok(decoded) =
                 <PermitTypehashCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::PermitTypehash(decoded));
+                return Ok(IPancakePairCalls::PermitTypehash(decoded));
             }
             if let Ok(decoded) =
                 <AllowanceCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Allowance(decoded));
+                return Ok(IPancakePairCalls::Allowance(decoded));
             }
             if let Ok(decoded) =
                 <ApproveCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Approve(decoded));
+                return Ok(IPancakePairCalls::Approve(decoded));
             }
             if let Ok(decoded) =
                 <BalanceOfCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::BalanceOf(decoded));
+                return Ok(IPancakePairCalls::BalanceOf(decoded));
             }
             if let Ok(decoded) = <BurnCall as ethers::core::abi::AbiDecode>::decode(data.as_ref()) {
-                return Ok(PancakePairCalls::Burn(decoded));
+                return Ok(IPancakePairCalls::Burn(decoded));
             }
             if let Ok(decoded) =
                 <DecimalsCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Decimals(decoded));
+                return Ok(IPancakePairCalls::Decimals(decoded));
             }
             if let Ok(decoded) =
                 <FactoryCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Factory(decoded));
+                return Ok(IPancakePairCalls::Factory(decoded));
             }
             if let Ok(decoded) =
                 <GetReservesCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::GetReserves(decoded));
+                return Ok(IPancakePairCalls::GetReserves(decoded));
             }
             if let Ok(decoded) =
                 <InitializeCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Initialize(decoded));
+                return Ok(IPancakePairCalls::Initialize(decoded));
             }
             if let Ok(decoded) = <KlastCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Klast(decoded));
+                return Ok(IPancakePairCalls::Klast(decoded));
             }
             if let Ok(decoded) = <MintCall as ethers::core::abi::AbiDecode>::decode(data.as_ref()) {
-                return Ok(PancakePairCalls::Mint(decoded));
+                return Ok(IPancakePairCalls::Mint(decoded));
             }
             if let Ok(decoded) = <NameCall as ethers::core::abi::AbiDecode>::decode(data.as_ref()) {
-                return Ok(PancakePairCalls::Name(decoded));
+                return Ok(IPancakePairCalls::Name(decoded));
             }
             if let Ok(decoded) = <NoncesCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Nonces(decoded));
+                return Ok(IPancakePairCalls::Nonces(decoded));
             }
             if let Ok(decoded) = <PermitCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Permit(decoded));
+                return Ok(IPancakePairCalls::Permit(decoded));
             }
             if let Ok(decoded) =
                 <Price0CumulativeLastCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Price0CumulativeLast(decoded));
+                return Ok(IPancakePairCalls::Price0CumulativeLast(decoded));
             }
             if let Ok(decoded) =
                 <Price1CumulativeLastCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Price1CumulativeLast(decoded));
+                return Ok(IPancakePairCalls::Price1CumulativeLast(decoded));
             }
             if let Ok(decoded) = <SkimCall as ethers::core::abi::AbiDecode>::decode(data.as_ref()) {
-                return Ok(PancakePairCalls::Skim(decoded));
+                return Ok(IPancakePairCalls::Skim(decoded));
             }
             if let Ok(decoded) = <SwapCall as ethers::core::abi::AbiDecode>::decode(data.as_ref()) {
-                return Ok(PancakePairCalls::Swap(decoded));
+                return Ok(IPancakePairCalls::Swap(decoded));
             }
             if let Ok(decoded) = <SymbolCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Symbol(decoded));
+                return Ok(IPancakePairCalls::Symbol(decoded));
             }
             if let Ok(decoded) = <SyncCall as ethers::core::abi::AbiDecode>::decode(data.as_ref()) {
-                return Ok(PancakePairCalls::Sync(decoded));
+                return Ok(IPancakePairCalls::Sync(decoded));
             }
             if let Ok(decoded) = <Token0Call as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Token0(decoded));
+                return Ok(IPancakePairCalls::Token0(decoded));
             }
             if let Ok(decoded) = <Token1Call as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Token1(decoded));
+                return Ok(IPancakePairCalls::Token1(decoded));
             }
             if let Ok(decoded) =
                 <TotalSupplyCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::TotalSupply(decoded));
+                return Ok(IPancakePairCalls::TotalSupply(decoded));
             }
             if let Ok(decoded) =
                 <TransferCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::Transfer(decoded));
+                return Ok(IPancakePairCalls::Transfer(decoded));
             }
             if let Ok(decoded) =
                 <TransferFromCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakePairCalls::TransferFrom(decoded));
+                return Ok(IPancakePairCalls::TransferFrom(decoded));
             }
             Err(ethers::core::abi::Error::InvalidData.into())
         }
     }
-    impl ethers::core::abi::AbiEncode for PancakePairCalls {
+    impl ethers::core::abi::AbiEncode for IPancakePairCalls {
         fn encode(self) -> Vec<u8> {
             match self {
-                PancakePairCalls::DomainSeparator(element) => element.encode(),
-                PancakePairCalls::MinimumLiquidity(element) => element.encode(),
-                PancakePairCalls::PermitTypehash(element) => element.encode(),
-                PancakePairCalls::Allowance(element) => element.encode(),
-                PancakePairCalls::Approve(element) => element.encode(),
-                PancakePairCalls::BalanceOf(element) => element.encode(),
-                PancakePairCalls::Burn(element) => element.encode(),
-                PancakePairCalls::Decimals(element) => element.encode(),
-                PancakePairCalls::Factory(element) => element.encode(),
-                PancakePairCalls::GetReserves(element) => element.encode(),
-                PancakePairCalls::Initialize(element) => element.encode(),
-                PancakePairCalls::Klast(element) => element.encode(),
-                PancakePairCalls::Mint(element) => element.encode(),
-                PancakePairCalls::Name(element) => element.encode(),
-                PancakePairCalls::Nonces(element) => element.encode(),
-                PancakePairCalls::Permit(element) => element.encode(),
-                PancakePairCalls::Price0CumulativeLast(element) => element.encode(),
-                PancakePairCalls::Price1CumulativeLast(element) => element.encode(),
-                PancakePairCalls::Skim(element) => element.encode(),
-                PancakePairCalls::Swap(element) => element.encode(),
-                PancakePairCalls::Symbol(element) => element.encode(),
-                PancakePairCalls::Sync(element) => element.encode(),
-                PancakePairCalls::Token0(element) => element.encode(),
-                PancakePairCalls::Token1(element) => element.encode(),
-                PancakePairCalls::TotalSupply(element) => element.encode(),
-                PancakePairCalls::Transfer(element) => element.encode(),
-                PancakePairCalls::TransferFrom(element) => element.encode(),
+                IPancakePairCalls::DomainSeparator(element) => element.encode(),
+                IPancakePairCalls::MinimumLiquidity(element) => element.encode(),
+                IPancakePairCalls::PermitTypehash(element) => element.encode(),
+                IPancakePairCalls::Allowance(element) => element.encode(),
+                IPancakePairCalls::Approve(element) => element.encode(),
+                IPancakePairCalls::BalanceOf(element) => element.encode(),
+                IPancakePairCalls::Burn(element) => element.encode(),
+                IPancakePairCalls::Decimals(element) => element.encode(),
+                IPancakePairCalls::Factory(element) => element.encode(),
+                IPancakePairCalls::GetReserves(element) => element.encode(),
+                IPancakePairCalls::Initialize(element) => element.encode(),
+                IPancakePairCalls::Klast(element) => element.encode(),
+                IPancakePairCalls::Mint(element) => element.encode(),
+                IPancakePairCalls::Name(element) => element.encode(),
+                IPancakePairCalls::Nonces(element) => element.encode(),
+                IPancakePairCalls::Permit(element) => element.encode(),
+                IPancakePairCalls::Price0CumulativeLast(element) => element.encode(),
+                IPancakePairCalls::Price1CumulativeLast(element) => element.encode(),
+                IPancakePairCalls::Skim(element) => element.encode(),
+                IPancakePairCalls::Swap(element) => element.encode(),
+                IPancakePairCalls::Symbol(element) => element.encode(),
+                IPancakePairCalls::Sync(element) => element.encode(),
+                IPancakePairCalls::Token0(element) => element.encode(),
+                IPancakePairCalls::Token1(element) => element.encode(),
+                IPancakePairCalls::TotalSupply(element) => element.encode(),
+                IPancakePairCalls::Transfer(element) => element.encode(),
+                IPancakePairCalls::TransferFrom(element) => element.encode(),
             }
         }
     }
-    impl ::std::fmt::Display for PancakePairCalls {
+    impl ::std::fmt::Display for IPancakePairCalls {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match self {
-                PancakePairCalls::DomainSeparator(element) => element.fmt(f),
-                PancakePairCalls::MinimumLiquidity(element) => element.fmt(f),
-                PancakePairCalls::PermitTypehash(element) => element.fmt(f),
-                PancakePairCalls::Allowance(element) => element.fmt(f),
-                PancakePairCalls::Approve(element) => element.fmt(f),
-                PancakePairCalls::BalanceOf(element) => element.fmt(f),
-                PancakePairCalls::Burn(element) => element.fmt(f),
-                PancakePairCalls::Decimals(element) => element.fmt(f),
-                PancakePairCalls::Factory(element) => element.fmt(f),
-                PancakePairCalls::GetReserves(element) => element.fmt(f),
-                PancakePairCalls::Initialize(element) => element.fmt(f),
-                PancakePairCalls::Klast(element) => element.fmt(f),
-                PancakePairCalls::Mint(element) => element.fmt(f),
-                PancakePairCalls::Name(element) => element.fmt(f),
-                PancakePairCalls::Nonces(element) => element.fmt(f),
-                PancakePairCalls::Permit(element) => element.fmt(f),
-                PancakePairCalls::Price0CumulativeLast(element) => element.fmt(f),
-                PancakePairCalls::Price1CumulativeLast(element) => element.fmt(f),
-                PancakePairCalls::Skim(element) => element.fmt(f),
-                PancakePairCalls::Swap(element) => element.fmt(f),
-                PancakePairCalls::Symbol(element) => element.fmt(f),
-                PancakePairCalls::Sync(element) => element.fmt(f),
-                PancakePairCalls::Token0(element) => element.fmt(f),
-                PancakePairCalls::Token1(element) => element.fmt(f),
-                PancakePairCalls::TotalSupply(element) => element.fmt(f),
-                PancakePairCalls::Transfer(element) => element.fmt(f),
-                PancakePairCalls::TransferFrom(element) => element.fmt(f),
+                IPancakePairCalls::DomainSeparator(element) => element.fmt(f),
+                IPancakePairCalls::MinimumLiquidity(element) => element.fmt(f),
+                IPancakePairCalls::PermitTypehash(element) => element.fmt(f),
+                IPancakePairCalls::Allowance(element) => element.fmt(f),
+                IPancakePairCalls::Approve(element) => element.fmt(f),
+                IPancakePairCalls::BalanceOf(element) => element.fmt(f),
+                IPancakePairCalls::Burn(element) => element.fmt(f),
+                IPancakePairCalls::Decimals(element) => element.fmt(f),
+                IPancakePairCalls::Factory(element) => element.fmt(f),
+                IPancakePairCalls::GetReserves(element) => element.fmt(f),
+                IPancakePairCalls::Initialize(element) => element.fmt(f),
+                IPancakePairCalls::Klast(element) => element.fmt(f),
+                IPancakePairCalls::Mint(element) => element.fmt(f),
+                IPancakePairCalls::Name(element) => element.fmt(f),
+                IPancakePairCalls::Nonces(element) => element.fmt(f),
+                IPancakePairCalls::Permit(element) => element.fmt(f),
+                IPancakePairCalls::Price0CumulativeLast(element) => element.fmt(f),
+                IPancakePairCalls::Price1CumulativeLast(element) => element.fmt(f),
+                IPancakePairCalls::Skim(element) => element.fmt(f),
+                IPancakePairCalls::Swap(element) => element.fmt(f),
+                IPancakePairCalls::Symbol(element) => element.fmt(f),
+                IPancakePairCalls::Sync(element) => element.fmt(f),
+                IPancakePairCalls::Token0(element) => element.fmt(f),
+                IPancakePairCalls::Token1(element) => element.fmt(f),
+                IPancakePairCalls::TotalSupply(element) => element.fmt(f),
+                IPancakePairCalls::Transfer(element) => element.fmt(f),
+                IPancakePairCalls::TransferFrom(element) => element.fmt(f),
             }
         }
     }
-    impl ::std::convert::From<DomainSeparatorCall> for PancakePairCalls {
+    impl ::std::convert::From<DomainSeparatorCall> for IPancakePairCalls {
         fn from(var: DomainSeparatorCall) -> Self {
-            PancakePairCalls::DomainSeparator(var)
+            IPancakePairCalls::DomainSeparator(var)
         }
     }
-    impl ::std::convert::From<MinimumLiquidityCall> for PancakePairCalls {
+    impl ::std::convert::From<MinimumLiquidityCall> for IPancakePairCalls {
         fn from(var: MinimumLiquidityCall) -> Self {
-            PancakePairCalls::MinimumLiquidity(var)
+            IPancakePairCalls::MinimumLiquidity(var)
         }
     }
-    impl ::std::convert::From<PermitTypehashCall> for PancakePairCalls {
+    impl ::std::convert::From<PermitTypehashCall> for IPancakePairCalls {
         fn from(var: PermitTypehashCall) -> Self {
-            PancakePairCalls::PermitTypehash(var)
+            IPancakePairCalls::PermitTypehash(var)
         }
     }
-    impl ::std::convert::From<AllowanceCall> for PancakePairCalls {
+    impl ::std::convert::From<AllowanceCall> for IPancakePairCalls {
         fn from(var: AllowanceCall) -> Self {
-            PancakePairCalls::Allowance(var)
+            IPancakePairCalls::Allowance(var)
         }
     }
-    impl ::std::convert::From<ApproveCall> for PancakePairCalls {
+    impl ::std::convert::From<ApproveCall> for IPancakePairCalls {
         fn from(var: ApproveCall) -> Self {
-            PancakePairCalls::Approve(var)
+            IPancakePairCalls::Approve(var)
         }
     }
-    impl ::std::convert::From<BalanceOfCall> for PancakePairCalls {
+    impl ::std::convert::From<BalanceOfCall> for IPancakePairCalls {
         fn from(var: BalanceOfCall) -> Self {
-            PancakePairCalls::BalanceOf(var)
+            IPancakePairCalls::BalanceOf(var)
         }
     }
-    impl ::std::convert::From<BurnCall> for PancakePairCalls {
+    impl ::std::convert::From<BurnCall> for IPancakePairCalls {
         fn from(var: BurnCall) -> Self {
-            PancakePairCalls::Burn(var)
+            IPancakePairCalls::Burn(var)
         }
     }
-    impl ::std::convert::From<DecimalsCall> for PancakePairCalls {
+    impl ::std::convert::From<DecimalsCall> for IPancakePairCalls {
         fn from(var: DecimalsCall) -> Self {
-            PancakePairCalls::Decimals(var)
+            IPancakePairCalls::Decimals(var)
         }
     }
-    impl ::std::convert::From<FactoryCall> for PancakePairCalls {
+    impl ::std::convert::From<FactoryCall> for IPancakePairCalls {
         fn from(var: FactoryCall) -> Self {
-            PancakePairCalls::Factory(var)
+            IPancakePairCalls::Factory(var)
         }
     }
-    impl ::std::convert::From<GetReservesCall> for PancakePairCalls {
+    impl ::std::convert::From<GetReservesCall> for IPancakePairCalls {
         fn from(var: GetReservesCall) -> Self {
-            PancakePairCalls::GetReserves(var)
+            IPancakePairCalls::GetReserves(var)
         }
     }
-    impl ::std::convert::From<InitializeCall> for PancakePairCalls {
+    impl ::std::convert::From<InitializeCall> for IPancakePairCalls {
         fn from(var: InitializeCall) -> Self {
-            PancakePairCalls::Initialize(var)
+            IPancakePairCalls::Initialize(var)
         }
     }
-    impl ::std::convert::From<KlastCall> for PancakePairCalls {
+    impl ::std::convert::From<KlastCall> for IPancakePairCalls {
         fn from(var: KlastCall) -> Self {
-            PancakePairCalls::Klast(var)
+            IPancakePairCalls::Klast(var)
         }
     }
-    impl ::std::convert::From<MintCall> for PancakePairCalls {
+    impl ::std::convert::From<MintCall> for IPancakePairCalls {
         fn from(var: MintCall) -> Self {
-            PancakePairCalls::Mint(var)
+            IPancakePairCalls::Mint(var)
         }
     }
-    impl ::std::convert::From<NameCall> for PancakePairCalls {
+    impl ::std::convert::From<NameCall> for IPancakePairCalls {
         fn from(var: NameCall) -> Self {
-            PancakePairCalls::Name(var)
+            IPancakePairCalls::Name(var)
         }
     }
-    impl ::std::convert::From<NoncesCall> for PancakePairCalls {
+    impl ::std::convert::From<NoncesCall> for IPancakePairCalls {
         fn from(var: NoncesCall) -> Self {
-            PancakePairCalls::Nonces(var)
+            IPancakePairCalls::Nonces(var)
         }
     }
-    impl ::std::convert::From<PermitCall> for PancakePairCalls {
+    impl ::std::convert::From<PermitCall> for IPancakePairCalls {
         fn from(var: PermitCall) -> Self {
-            PancakePairCalls::Permit(var)
+            IPancakePairCalls::Permit(var)
         }
     }
-    impl ::std::convert::From<Price0CumulativeLastCall> for PancakePairCalls {
+    impl ::std::convert::From<Price0CumulativeLastCall> for IPancakePairCalls {
         fn from(var: Price0CumulativeLastCall) -> Self {
-            PancakePairCalls::Price0CumulativeLast(var)
+            IPancakePairCalls::Price0CumulativeLast(var)
         }
     }
-    impl ::std::convert::From<Price1CumulativeLastCall> for PancakePairCalls {
+    impl ::std::convert::From<Price1CumulativeLastCall> for IPancakePairCalls {
         fn from(var: Price1CumulativeLastCall) -> Self {
-            PancakePairCalls::Price1CumulativeLast(var)
+            IPancakePairCalls::Price1CumulativeLast(var)
         }
     }
-    impl ::std::convert::From<SkimCall> for PancakePairCalls {
+    impl ::std::convert::From<SkimCall> for IPancakePairCalls {
         fn from(var: SkimCall) -> Self {
-            PancakePairCalls::Skim(var)
+            IPancakePairCalls::Skim(var)
         }
     }
-    impl ::std::convert::From<SwapCall> for PancakePairCalls {
+    impl ::std::convert::From<SwapCall> for IPancakePairCalls {
         fn from(var: SwapCall) -> Self {
-            PancakePairCalls::Swap(var)
+            IPancakePairCalls::Swap(var)
         }
     }
-    impl ::std::convert::From<SymbolCall> for PancakePairCalls {
+    impl ::std::convert::From<SymbolCall> for IPancakePairCalls {
         fn from(var: SymbolCall) -> Self {
-            PancakePairCalls::Symbol(var)
+            IPancakePairCalls::Symbol(var)
         }
     }
-    impl ::std::convert::From<SyncCall> for PancakePairCalls {
+    impl ::std::convert::From<SyncCall> for IPancakePairCalls {
         fn from(var: SyncCall) -> Self {
-            PancakePairCalls::Sync(var)
+            IPancakePairCalls::Sync(var)
         }
     }
-    impl ::std::convert::From<Token0Call> for PancakePairCalls {
+    impl ::std::convert::From<Token0Call> for IPancakePairCalls {
         fn from(var: Token0Call) -> Self {
-            PancakePairCalls::Token0(var)
+            IPancakePairCalls::Token0(var)
         }
     }
-    impl ::std::convert::From<Token1Call> for PancakePairCalls {
+    impl ::std::convert::From<Token1Call> for IPancakePairCalls {
         fn from(var: Token1Call) -> Self {
-            PancakePairCalls::Token1(var)
+            IPancakePairCalls::Token1(var)
         }
     }
-    impl ::std::convert::From<TotalSupplyCall> for PancakePairCalls {
+    impl ::std::convert::From<TotalSupplyCall> for IPancakePairCalls {
         fn from(var: TotalSupplyCall) -> Self {
-            PancakePairCalls::TotalSupply(var)
+            IPancakePairCalls::TotalSupply(var)
         }
     }
-    impl ::std::convert::From<TransferCall> for PancakePairCalls {
+    impl ::std::convert::From<TransferCall> for IPancakePairCalls {
         fn from(var: TransferCall) -> Self {
-            PancakePairCalls::Transfer(var)
+            IPancakePairCalls::Transfer(var)
         }
     }
-    impl ::std::convert::From<TransferFromCall> for PancakePairCalls {
+    impl ::std::convert::From<TransferFromCall> for IPancakePairCalls {
         fn from(var: TransferFromCall) -> Self {
-            PancakePairCalls::TransferFrom(var)
+            IPancakePairCalls::TransferFrom(var)
         }
     }
     #[doc = "Container type for all return fields from the `DOMAIN_SEPARATOR` function with signature `DOMAIN_SEPARATOR()` and selector `[54, 68, 229, 21]`"]

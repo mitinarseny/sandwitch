@@ -12,11 +12,11 @@ use metrics::{register_counter, Counter};
 use super::token::Token;
 use crate::{
     cached::CachedAtBlock,
-    contracts::{pancake_factory_v2::PancakeFactoryV2, pancake_pair::PancakePair},
+    contracts::{i_pancake_factory::IPancakeFactory, i_pancake_pair::IPancakePair},
 };
 
 pub struct Pair<P: JsonRpcClient> {
-    inner: PancakePair<Provider<P>>,
+    inner: IPancakePair<Provider<P>>,
     tokens: (Token<P>, Token<P>),
     inverse_order: bool,
     reserves: CachedAtBlock<(f64, f64, u32)>,
@@ -24,7 +24,7 @@ pub struct Pair<P: JsonRpcClient> {
 }
 
 impl<P: JsonRpcClient> Deref for Pair<P> {
-    type Target = PancakePair<Provider<P>>;
+    type Target = IPancakePair<Provider<P>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -34,7 +34,7 @@ impl<P: JsonRpcClient> Deref for Pair<P> {
 impl<P: JsonRpcClient> Pair<P> {
     pub async fn new(
         client: impl Into<Arc<Provider<P>>>,
-        factory: &PancakeFactoryV2<Provider<P>>,
+        factory: &IPancakeFactory<Provider<P>>,
         (t0, t1): (Address, Address),
     ) -> Result<Self, ContractError<Provider<P>>> {
         let client: Arc<_> = client.into();
@@ -57,7 +57,7 @@ impl<P: JsonRpcClient> Pair<P> {
                 ]
             ),
             tokens: (t0, t1),
-            inner: PancakePair::new(pair, client),
+            inner: IPancakePair::new(pair, client),
             reserves: CachedAtBlock::default(),
         })
     }

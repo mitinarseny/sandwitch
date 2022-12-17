@@ -4,17 +4,17 @@ use std::sync::Arc;
 use ethers::prelude::{Address, ContractError};
 use ethers::providers::{JsonRpcClient, Provider};
 
-use crate::contracts::pancake_factory_v2::PancakeFactoryV2;
-use crate::contracts::pancake_router_v2::PancakeRouterV2;
+use crate::contracts::i_pancake_factory::IPancakeFactory;
+use crate::contracts::i_pancake_router_02::IPancakeRouter02;
 
 #[derive(Clone)]
 pub struct Router<P: JsonRpcClient> {
-    contract: PancakeRouterV2<Provider<P>>,
-    factory: PancakeFactoryV2<Provider<P>>,
+    contract: IPancakeRouter02<Provider<P>>,
+    factory: IPancakeFactory<Provider<P>>,
 }
 
 impl<P: JsonRpcClient> Deref for Router<P> {
-    type Target = PancakeRouterV2<Provider<P>>;
+    type Target = IPancakeRouter02<Provider<P>>;
 
     fn deref(&self) -> &Self::Target {
         &self.contract
@@ -27,12 +27,12 @@ impl<P: JsonRpcClient> Router<P> {
         address: Address,
     ) -> Result<Self, ContractError<Provider<P>>> {
         let client = client.into();
-        let contract = PancakeRouterV2::new(address, client.clone());
-        let factory = PancakeFactoryV2::new(contract.factory().call().await?, client);
+        let contract = IPancakeRouter02::new(address, client.clone());
+        let factory = IPancakeFactory::new(contract.factory().call().await?, client);
         Ok(Self { contract, factory })
     }
 
-    pub fn factory(&self) -> &PancakeFactoryV2<Provider<P>> {
+    pub fn factory(&self) -> &IPancakeFactory<Provider<P>> {
         &self.factory
     }
 }

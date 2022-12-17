@@ -4,16 +4,16 @@ use ethers::providers::{JsonRpcClient, Provider};
 use ethers::{contract::ContractError, types::Address};
 use futures::future::try_join;
 
-use crate::contracts::pancake_token::PancakeToken;
+use crate::contracts::i_pancake_erc20::IPancakeERC20;
 
 pub struct Token<P: JsonRpcClient> {
-    contract: PancakeToken<Provider<P>>,
+    contract: IPancakeERC20<Provider<P>>,
     name: String,
     decimals: u8,
 }
 
 impl<P: JsonRpcClient> Deref for Token<P> {
-    type Target = PancakeToken<Provider<P>>;
+    type Target = IPancakeERC20<Provider<P>>;
 
     fn deref(&self) -> &Self::Target {
         &self.contract
@@ -25,7 +25,7 @@ impl<P: JsonRpcClient> Token<P> {
         client: impl Into<Arc<Provider<P>>>,
         address: Address,
     ) -> Result<Self, ContractError<Provider<P>>> {
-        let contract = PancakeToken::new(address, client.into());
+        let contract = IPancakeERC20::new(address, client.into());
         let (name, decimals) = try_join(contract.name().call(), contract.decimals().call()).await?;
         Ok(Self {
             contract,

@@ -1,6 +1,6 @@
-pub use pancake_router_v2::*;
+pub use i_pancake_router_01::*;
 #[allow(clippy::too_many_arguments, non_camel_case_types)]
-pub mod pancake_router_v2 {
+pub mod i_pancake_router_01 {
     #![allow(clippy::enum_variant_names)]
     #![allow(dead_code)]
     #![allow(clippy::type_complexity)]
@@ -14,34 +14,34 @@ pub mod pancake_router_v2 {
         types::*,
     };
     use ethers::providers::Middleware;
-    #[doc = "PancakeRouterV2 was auto-generated with ethers-rs Abigen. More information at: https://github.com/gakonst/ethers-rs"]
+    #[doc = "IPancakeRouter01 was auto-generated with ethers-rs Abigen. More information at: https://github.com/gakonst/ethers-rs"]
     use std::sync::Arc;
-    # [rustfmt :: skip] const __ABI : & str = "[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_factory\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"_WETH\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[],\"name\":\"WETH\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"tokenA\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"tokenB\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amountADesired\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountBDesired\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountAMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountBMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"addLiquidity\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amountTokenDesired\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"addLiquidityETH\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountToken\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"}],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"factory\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"reserveIn\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"reserveOut\",\"type\":\"uint256\"}],\"name\":\"getAmountIn\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"reserveIn\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"reserveOut\",\"type\":\"uint256\"}],\"name\":\"getAmountOut\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"}],\"name\":\"getAmountsIn\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"}],\"name\":\"getAmountsOut\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"reserveA\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"reserveB\",\"type\":\"uint256\"}],\"name\":\"quote\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"tokenA\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"tokenB\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountAMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountBMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"removeLiquidity\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"removeLiquidityETH\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountToken\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"removeLiquidityETHSupportingFeeOnTransferTokens\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"approveMax\",\"type\":\"bool\"},{\"internalType\":\"uint8\",\"name\":\"v\",\"type\":\"uint8\"},{\"internalType\":\"bytes32\",\"name\":\"r\",\"type\":\"bytes32\"},{\"internalType\":\"bytes32\",\"name\":\"s\",\"type\":\"bytes32\"}],\"name\":\"removeLiquidityETHWithPermit\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountToken\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"approveMax\",\"type\":\"bool\"},{\"internalType\":\"uint8\",\"name\":\"v\",\"type\":\"uint8\"},{\"internalType\":\"bytes32\",\"name\":\"r\",\"type\":\"bytes32\"},{\"internalType\":\"bytes32\",\"name\":\"s\",\"type\":\"bytes32\"}],\"name\":\"removeLiquidityETHWithPermitSupportingFeeOnTransferTokens\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"tokenA\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"tokenB\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountAMin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountBMin\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"approveMax\",\"type\":\"bool\"},{\"internalType\":\"uint8\",\"name\":\"v\",\"type\":\"uint8\"},{\"internalType\":\"bytes32\",\"name\":\"r\",\"type\":\"bytes32\"},{\"internalType\":\"bytes32\",\"name\":\"s\",\"type\":\"bytes32\"}],\"name\":\"removeLiquidityWithPermit\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapETHForExactTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapExactETHForTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapExactETHForTokensSupportingFeeOnTransferTokens\",\"outputs\":[],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapExactTokensForETH\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapExactTokensForETHSupportingFeeOnTransferTokens\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapExactTokensForTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapExactTokensForTokensSupportingFeeOnTransferTokens\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountInMax\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapTokensForExactETH\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"amountInMax\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"}],\"name\":\"swapTokensForExactTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"stateMutability\":\"payable\",\"type\":\"receive\"}]\n" ;
+    # [rustfmt :: skip] const __ABI : & str = "[{\"inputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"WETH\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"tokenA\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"tokenB\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountADesired\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountBDesired\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountAMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountBMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"addLiquidity\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountTokenDesired\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"payable\",\"type\":\"function\",\"name\":\"addLiquidityETH\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountToken\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"factory\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"reserveIn\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"reserveOut\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"getAmountIn\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"reserveIn\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"reserveOut\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"getAmountOut\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]}],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"getAmountsIn\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]}],\"stateMutability\":\"view\",\"type\":\"function\",\"name\":\"getAmountsOut\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"reserveA\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"reserveB\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"pure\",\"type\":\"function\",\"name\":\"quote\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"tokenA\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"tokenB\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountAMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountBMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"removeLiquidity\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"removeLiquidityETH\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountToken\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountTokenMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountETHMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"bool\",\"name\":\"approveMax\",\"type\":\"bool\",\"components\":[]},{\"internalType\":\"uint8\",\"name\":\"v\",\"type\":\"uint8\",\"components\":[]},{\"internalType\":\"bytes32\",\"name\":\"r\",\"type\":\"bytes32\",\"components\":[]},{\"internalType\":\"bytes32\",\"name\":\"s\",\"type\":\"bytes32\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"removeLiquidityETHWithPermit\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountToken\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountETH\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"tokenA\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"tokenB\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"liquidity\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountAMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountBMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"bool\",\"name\":\"approveMax\",\"type\":\"bool\",\"components\":[]},{\"internalType\":\"uint8\",\"name\":\"v\",\"type\":\"uint8\",\"components\":[]},{\"internalType\":\"bytes32\",\"name\":\"r\",\"type\":\"bytes32\",\"components\":[]},{\"internalType\":\"bytes32\",\"name\":\"s\",\"type\":\"bytes32\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"removeLiquidityWithPermit\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"amountA\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountB\",\"type\":\"uint256\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"payable\",\"type\":\"function\",\"name\":\"swapETHForExactTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"payable\",\"type\":\"function\",\"name\":\"swapExactETHForTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"swapExactTokensForETH\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountIn\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountOutMin\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"swapExactTokensForTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountInMax\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"swapTokensForExactETH\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amountOut\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"amountInMax\",\"type\":\"uint256\",\"components\":[]},{\"internalType\":\"address[]\",\"name\":\"path\",\"type\":\"address[]\",\"components\":[]},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\",\"components\":[]},{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\",\"components\":[]}],\"stateMutability\":\"nonpayable\",\"type\":\"function\",\"name\":\"swapTokensForExactTokens\",\"outputs\":[{\"internalType\":\"uint256[]\",\"name\":\"amounts\",\"type\":\"uint256[]\",\"components\":[]}]}]" ;
     #[doc = r" The parsed JSON-ABI of the contract."]
-    pub static PANCAKEROUTERV2_ABI: ethers::contract::Lazy<ethers::core::abi::Abi> =
+    pub static IPANCAKEROUTER01_ABI: ethers::contract::Lazy<ethers::core::abi::Abi> =
         ethers::contract::Lazy::new(|| {
             ethers::core::utils::__serde_json::from_str(__ABI).expect("invalid abi")
         });
-    pub struct PancakeRouterV2<M>(ethers::contract::Contract<M>);
-    impl<M> Clone for PancakeRouterV2<M> {
+    pub struct IPancakeRouter01<M>(ethers::contract::Contract<M>);
+    impl<M> Clone for IPancakeRouter01<M> {
         fn clone(&self) -> Self {
-            PancakeRouterV2(self.0.clone())
+            IPancakeRouter01(self.0.clone())
         }
     }
-    impl<M> std::ops::Deref for PancakeRouterV2<M> {
+    impl<M> std::ops::Deref for IPancakeRouter01<M> {
         type Target = ethers::contract::Contract<M>;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
-    impl<M> std::fmt::Debug for PancakeRouterV2<M> {
+    impl<M> std::fmt::Debug for IPancakeRouter01<M> {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.debug_tuple(stringify!(PancakeRouterV2))
+            f.debug_tuple(stringify!(IPancakeRouter01))
                 .field(&self.address())
                 .finish()
         }
     }
-    impl<M: ethers::providers::Middleware> PancakeRouterV2<M> {
+    impl<M: ethers::providers::Middleware> IPancakeRouter01<M> {
         #[doc = r" Creates a new contract instance with the specified `ethers`"]
         #[doc = r" client at the given `Address`. The contract derefs to a `ethers::Contract`"]
         #[doc = r" object"]
@@ -49,7 +49,7 @@ pub mod pancake_router_v2 {
             address: T,
             client: ::std::sync::Arc<M>,
         ) -> Self {
-            ethers::contract::Contract::new(address.into(), PANCAKEROUTERV2_ABI.clone(), client)
+            ethers::contract::Contract::new(address.into(), IPANCAKEROUTER01_ABI.clone(), client)
                 .into()
         }
         #[doc = "Calls the contract's `WETH` (0xad5c4648) function"]
@@ -245,30 +245,6 @@ pub mod pancake_router_v2 {
                 )
                 .expect("method not found (this should never happen)")
         }
-        #[doc = "Calls the contract's `removeLiquidityETHSupportingFeeOnTransferTokens` (0xaf2979eb) function"]
-        pub fn remove_liquidity_eth_supporting_fee_on_transfer_tokens(
-            &self,
-            token: ethers::core::types::Address,
-            liquidity: ethers::core::types::U256,
-            amount_token_min: ethers::core::types::U256,
-            amount_eth_min: ethers::core::types::U256,
-            to: ethers::core::types::Address,
-            deadline: ethers::core::types::U256,
-        ) -> ethers::contract::builders::ContractCall<M, ethers::core::types::U256> {
-            self.0
-                .method_hash(
-                    [175, 41, 121, 235],
-                    (
-                        token,
-                        liquidity,
-                        amount_token_min,
-                        amount_eth_min,
-                        to,
-                        deadline,
-                    ),
-                )
-                .expect("method not found (this should never happen)")
-        }
         #[doc = "Calls the contract's `removeLiquidityETHWithPermit` (0xded9382a) function"]
         pub fn remove_liquidity_eth_with_permit(
             &self,
@@ -289,38 +265,6 @@ pub mod pancake_router_v2 {
             self.0
                 .method_hash(
                     [222, 217, 56, 42],
-                    (
-                        token,
-                        liquidity,
-                        amount_token_min,
-                        amount_eth_min,
-                        to,
-                        deadline,
-                        approve_max,
-                        v,
-                        r,
-                        s,
-                    ),
-                )
-                .expect("method not found (this should never happen)")
-        }
-        #[doc = "Calls the contract's `removeLiquidityETHWithPermitSupportingFeeOnTransferTokens` (0x5b0d5984) function"]
-        pub fn remove_liquidity_eth_with_permit_supporting_fee_on_transfer_tokens(
-            &self,
-            token: ethers::core::types::Address,
-            liquidity: ethers::core::types::U256,
-            amount_token_min: ethers::core::types::U256,
-            amount_eth_min: ethers::core::types::U256,
-            to: ethers::core::types::Address,
-            deadline: ethers::core::types::U256,
-            approve_max: bool,
-            v: u8,
-            r: [u8; 32],
-            s: [u8; 32],
-        ) -> ethers::contract::builders::ContractCall<M, ethers::core::types::U256> {
-            self.0
-                .method_hash(
-                    [91, 13, 89, 132],
                     (
                         token,
                         liquidity,
@@ -399,18 +343,6 @@ pub mod pancake_router_v2 {
                 .method_hash([127, 243, 106, 181], (amount_out_min, path, to, deadline))
                 .expect("method not found (this should never happen)")
         }
-        #[doc = "Calls the contract's `swapExactETHForTokensSupportingFeeOnTransferTokens` (0xb6f9de95) function"]
-        pub fn swap_exact_eth_for_tokens_supporting_fee_on_transfer_tokens(
-            &self,
-            amount_out_min: ethers::core::types::U256,
-            path: ::std::vec::Vec<ethers::core::types::Address>,
-            to: ethers::core::types::Address,
-            deadline: ethers::core::types::U256,
-        ) -> ethers::contract::builders::ContractCall<M, ()> {
-            self.0
-                .method_hash([182, 249, 222, 149], (amount_out_min, path, to, deadline))
-                .expect("method not found (this should never happen)")
-        }
         #[doc = "Calls the contract's `swapExactTokensForETH` (0x18cbafe5) function"]
         pub fn swap_exact_tokens_for_eth(
             &self,
@@ -428,22 +360,6 @@ pub mod pancake_router_v2 {
                 )
                 .expect("method not found (this should never happen)")
         }
-        #[doc = "Calls the contract's `swapExactTokensForETHSupportingFeeOnTransferTokens` (0x791ac947) function"]
-        pub fn swap_exact_tokens_for_eth_supporting_fee_on_transfer_tokens(
-            &self,
-            amount_in: ethers::core::types::U256,
-            amount_out_min: ethers::core::types::U256,
-            path: ::std::vec::Vec<ethers::core::types::Address>,
-            to: ethers::core::types::Address,
-            deadline: ethers::core::types::U256,
-        ) -> ethers::contract::builders::ContractCall<M, ()> {
-            self.0
-                .method_hash(
-                    [121, 26, 201, 71],
-                    (amount_in, amount_out_min, path, to, deadline),
-                )
-                .expect("method not found (this should never happen)")
-        }
         #[doc = "Calls the contract's `swapExactTokensForTokens` (0x38ed1739) function"]
         pub fn swap_exact_tokens_for_tokens(
             &self,
@@ -457,22 +373,6 @@ pub mod pancake_router_v2 {
             self.0
                 .method_hash(
                     [56, 237, 23, 57],
-                    (amount_in, amount_out_min, path, to, deadline),
-                )
-                .expect("method not found (this should never happen)")
-        }
-        #[doc = "Calls the contract's `swapExactTokensForTokensSupportingFeeOnTransferTokens` (0x5c11d795) function"]
-        pub fn swap_exact_tokens_for_tokens_supporting_fee_on_transfer_tokens(
-            &self,
-            amount_in: ethers::core::types::U256,
-            amount_out_min: ethers::core::types::U256,
-            path: ::std::vec::Vec<ethers::core::types::Address>,
-            to: ethers::core::types::Address,
-            deadline: ethers::core::types::U256,
-        ) -> ethers::contract::builders::ContractCall<M, ()> {
-            self.0
-                .method_hash(
-                    [92, 17, 215, 149],
                     (amount_in, amount_out_min, path, to, deadline),
                 )
                 .expect("method not found (this should never happen)")
@@ -512,7 +412,7 @@ pub mod pancake_router_v2 {
                 .expect("method not found (this should never happen)")
         }
     }
-    impl<M: ethers::providers::Middleware> From<ethers::contract::Contract<M>> for PancakeRouterV2<M> {
+    impl<M: ethers::providers::Middleware> From<ethers::contract::Contract<M>> for IPancakeRouter01<M> {
         fn from(contract: ethers::contract::Contract<M>) -> Self {
             Self(contract)
         }
@@ -710,28 +610,6 @@ pub mod pancake_router_v2 {
         pub to: ethers::core::types::Address,
         pub deadline: ethers::core::types::U256,
     }
-    #[doc = "Container type for all input parameters for the `removeLiquidityETHSupportingFeeOnTransferTokens` function with signature `removeLiquidityETHSupportingFeeOnTransferTokens(address,uint256,uint256,uint256,address,uint256)` and selector `[175, 41, 121, 235]`"]
-    #[derive(
-        Clone,
-        Debug,
-        Eq,
-        PartialEq,
-        ethers :: contract :: EthCall,
-        ethers :: contract :: EthDisplay,
-        Default,
-    )]
-    #[ethcall(
-        name = "removeLiquidityETHSupportingFeeOnTransferTokens",
-        abi = "removeLiquidityETHSupportingFeeOnTransferTokens(address,uint256,uint256,uint256,address,uint256)"
-    )]
-    pub struct RemoveLiquidityETHSupportingFeeOnTransferTokensCall {
-        pub token: ethers::core::types::Address,
-        pub liquidity: ethers::core::types::U256,
-        pub amount_token_min: ethers::core::types::U256,
-        pub amount_eth_min: ethers::core::types::U256,
-        pub to: ethers::core::types::Address,
-        pub deadline: ethers::core::types::U256,
-    }
     #[doc = "Container type for all input parameters for the `removeLiquidityETHWithPermit` function with signature `removeLiquidityETHWithPermit(address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)` and selector `[222, 217, 56, 42]`"]
     #[derive(
         Clone,
@@ -747,32 +625,6 @@ pub mod pancake_router_v2 {
         abi = "removeLiquidityETHWithPermit(address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)"
     )]
     pub struct RemoveLiquidityETHWithPermitCall {
-        pub token: ethers::core::types::Address,
-        pub liquidity: ethers::core::types::U256,
-        pub amount_token_min: ethers::core::types::U256,
-        pub amount_eth_min: ethers::core::types::U256,
-        pub to: ethers::core::types::Address,
-        pub deadline: ethers::core::types::U256,
-        pub approve_max: bool,
-        pub v: u8,
-        pub r: [u8; 32],
-        pub s: [u8; 32],
-    }
-    #[doc = "Container type for all input parameters for the `removeLiquidityETHWithPermitSupportingFeeOnTransferTokens` function with signature `removeLiquidityETHWithPermitSupportingFeeOnTransferTokens(address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)` and selector `[91, 13, 89, 132]`"]
-    #[derive(
-        Clone,
-        Debug,
-        Eq,
-        PartialEq,
-        ethers :: contract :: EthCall,
-        ethers :: contract :: EthDisplay,
-        Default,
-    )]
-    #[ethcall(
-        name = "removeLiquidityETHWithPermitSupportingFeeOnTransferTokens",
-        abi = "removeLiquidityETHWithPermitSupportingFeeOnTransferTokens(address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)"
-    )]
-    pub struct RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokensCall {
         pub token: ethers::core::types::Address,
         pub liquidity: ethers::core::types::U256,
         pub amount_token_min: ethers::core::types::U256,
@@ -851,26 +703,6 @@ pub mod pancake_router_v2 {
         pub to: ethers::core::types::Address,
         pub deadline: ethers::core::types::U256,
     }
-    #[doc = "Container type for all input parameters for the `swapExactETHForTokensSupportingFeeOnTransferTokens` function with signature `swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256)` and selector `[182, 249, 222, 149]`"]
-    #[derive(
-        Clone,
-        Debug,
-        Eq,
-        PartialEq,
-        ethers :: contract :: EthCall,
-        ethers :: contract :: EthDisplay,
-        Default,
-    )]
-    #[ethcall(
-        name = "swapExactETHForTokensSupportingFeeOnTransferTokens",
-        abi = "swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256)"
-    )]
-    pub struct SwapExactETHForTokensSupportingFeeOnTransferTokensCall {
-        pub amount_out_min: ethers::core::types::U256,
-        pub path: ::std::vec::Vec<ethers::core::types::Address>,
-        pub to: ethers::core::types::Address,
-        pub deadline: ethers::core::types::U256,
-    }
     #[doc = "Container type for all input parameters for the `swapExactTokensForETH` function with signature `swapExactTokensForETH(uint256,uint256,address[],address,uint256)` and selector `[24, 203, 175, 229]`"]
     #[derive(
         Clone,
@@ -892,27 +724,6 @@ pub mod pancake_router_v2 {
         pub to: ethers::core::types::Address,
         pub deadline: ethers::core::types::U256,
     }
-    #[doc = "Container type for all input parameters for the `swapExactTokensForETHSupportingFeeOnTransferTokens` function with signature `swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)` and selector `[121, 26, 201, 71]`"]
-    #[derive(
-        Clone,
-        Debug,
-        Eq,
-        PartialEq,
-        ethers :: contract :: EthCall,
-        ethers :: contract :: EthDisplay,
-        Default,
-    )]
-    #[ethcall(
-        name = "swapExactTokensForETHSupportingFeeOnTransferTokens",
-        abi = "swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)"
-    )]
-    pub struct SwapExactTokensForETHSupportingFeeOnTransferTokensCall {
-        pub amount_in: ethers::core::types::U256,
-        pub amount_out_min: ethers::core::types::U256,
-        pub path: ::std::vec::Vec<ethers::core::types::Address>,
-        pub to: ethers::core::types::Address,
-        pub deadline: ethers::core::types::U256,
-    }
     #[doc = "Container type for all input parameters for the `swapExactTokensForTokens` function with signature `swapExactTokensForTokens(uint256,uint256,address[],address,uint256)` and selector `[56, 237, 23, 57]`"]
     #[derive(
         Clone,
@@ -928,27 +739,6 @@ pub mod pancake_router_v2 {
         abi = "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"
     )]
     pub struct SwapExactTokensForTokensCall {
-        pub amount_in: ethers::core::types::U256,
-        pub amount_out_min: ethers::core::types::U256,
-        pub path: ::std::vec::Vec<ethers::core::types::Address>,
-        pub to: ethers::core::types::Address,
-        pub deadline: ethers::core::types::U256,
-    }
-    #[doc = "Container type for all input parameters for the `swapExactTokensForTokensSupportingFeeOnTransferTokens` function with signature `swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)` and selector `[92, 17, 215, 149]`"]
-    #[derive(
-        Clone,
-        Debug,
-        Eq,
-        PartialEq,
-        ethers :: contract :: EthCall,
-        ethers :: contract :: EthDisplay,
-        Default,
-    )]
-    #[ethcall(
-        name = "swapExactTokensForTokensSupportingFeeOnTransferTokens",
-        abi = "swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)"
-    )]
-    pub struct SwapExactTokensForTokensSupportingFeeOnTransferTokensCall {
         pub amount_in: ethers::core::types::U256,
         pub amount_out_min: ethers::core::types::U256,
         pub path: ::std::vec::Vec<ethers::core::types::Address>,
@@ -998,7 +788,7 @@ pub mod pancake_router_v2 {
         pub deadline: ethers::core::types::U256,
     }
     #[derive(Debug, Clone, PartialEq, Eq, ethers :: contract :: EthAbiType)]
-    pub enum PancakeRouterV2Calls {
+    pub enum IPancakeRouter01Calls {
         Weth(WethCall),
         AddLiquidity(AddLiquidityCall),
         AddLiquidityETH(AddLiquidityETHCall),
@@ -1010,350 +800,265 @@ pub mod pancake_router_v2 {
         Quote(QuoteCall),
         RemoveLiquidity(RemoveLiquidityCall),
         RemoveLiquidityETH(RemoveLiquidityETHCall),
-        RemoveLiquidityETHSupportingFeeOnTransferTokens(
-            RemoveLiquidityETHSupportingFeeOnTransferTokensCall,
-        ),
         RemoveLiquidityETHWithPermit(RemoveLiquidityETHWithPermitCall),
-        RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokens(
-            RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokensCall,
-        ),
         RemoveLiquidityWithPermit(RemoveLiquidityWithPermitCall),
         SwapETHForExactTokens(SwapETHForExactTokensCall),
         SwapExactETHForTokens(SwapExactETHForTokensCall),
-        SwapExactETHForTokensSupportingFeeOnTransferTokens(
-            SwapExactETHForTokensSupportingFeeOnTransferTokensCall,
-        ),
         SwapExactTokensForETH(SwapExactTokensForETHCall),
-        SwapExactTokensForETHSupportingFeeOnTransferTokens(
-            SwapExactTokensForETHSupportingFeeOnTransferTokensCall,
-        ),
         SwapExactTokensForTokens(SwapExactTokensForTokensCall),
-        SwapExactTokensForTokensSupportingFeeOnTransferTokens(
-            SwapExactTokensForTokensSupportingFeeOnTransferTokensCall,
-        ),
         SwapTokensForExactETH(SwapTokensForExactETHCall),
         SwapTokensForExactTokens(SwapTokensForExactTokensCall),
     }
-    impl ethers::core::abi::AbiDecode for PancakeRouterV2Calls {
+    impl ethers::core::abi::AbiDecode for IPancakeRouter01Calls {
         fn decode(
             data: impl AsRef<[u8]>,
         ) -> ::std::result::Result<Self, ethers::core::abi::AbiError> {
             if let Ok(decoded) = <WethCall as ethers::core::abi::AbiDecode>::decode(data.as_ref()) {
-                return Ok(PancakeRouterV2Calls::Weth(decoded));
+                return Ok(IPancakeRouter01Calls::Weth(decoded));
             }
             if let Ok(decoded) =
                 <AddLiquidityCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::AddLiquidity(decoded));
+                return Ok(IPancakeRouter01Calls::AddLiquidity(decoded));
             }
             if let Ok(decoded) =
                 <AddLiquidityETHCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::AddLiquidityETH(decoded));
+                return Ok(IPancakeRouter01Calls::AddLiquidityETH(decoded));
             }
             if let Ok(decoded) =
                 <FactoryCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::Factory(decoded));
+                return Ok(IPancakeRouter01Calls::Factory(decoded));
             }
             if let Ok(decoded) =
                 <GetAmountInCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::GetAmountIn(decoded));
+                return Ok(IPancakeRouter01Calls::GetAmountIn(decoded));
             }
             if let Ok(decoded) =
                 <GetAmountOutCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::GetAmountOut(decoded));
+                return Ok(IPancakeRouter01Calls::GetAmountOut(decoded));
             }
             if let Ok(decoded) =
                 <GetAmountsInCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::GetAmountsIn(decoded));
+                return Ok(IPancakeRouter01Calls::GetAmountsIn(decoded));
             }
             if let Ok(decoded) =
                 <GetAmountsOutCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::GetAmountsOut(decoded));
+                return Ok(IPancakeRouter01Calls::GetAmountsOut(decoded));
             }
             if let Ok(decoded) = <QuoteCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::Quote(decoded));
+                return Ok(IPancakeRouter01Calls::Quote(decoded));
             }
             if let Ok(decoded) =
                 <RemoveLiquidityCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::RemoveLiquidity(decoded));
+                return Ok(IPancakeRouter01Calls::RemoveLiquidity(decoded));
             }
             if let Ok(decoded) =
                 <RemoveLiquidityETHCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::RemoveLiquidityETH(decoded));
+                return Ok(IPancakeRouter01Calls::RemoveLiquidityETH(decoded));
             }
-            if let Ok (decoded) = < RemoveLiquidityETHSupportingFeeOnTransferTokensCall as ethers :: core :: abi :: AbiDecode > :: decode (data . as_ref ()) { return Ok (PancakeRouterV2Calls :: RemoveLiquidityETHSupportingFeeOnTransferTokens (decoded)) }
             if let Ok(decoded) =
                 <RemoveLiquidityETHWithPermitCall as ethers::core::abi::AbiDecode>::decode(
                     data.as_ref(),
                 )
             {
-                return Ok(PancakeRouterV2Calls::RemoveLiquidityETHWithPermit(decoded));
+                return Ok(IPancakeRouter01Calls::RemoveLiquidityETHWithPermit(decoded));
             }
-            if let Ok (decoded) = < RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokensCall as ethers :: core :: abi :: AbiDecode > :: decode (data . as_ref ()) { return Ok (PancakeRouterV2Calls :: RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokens (decoded)) }
             if let Ok(decoded) =
                 <RemoveLiquidityWithPermitCall as ethers::core::abi::AbiDecode>::decode(
                     data.as_ref(),
                 )
             {
-                return Ok(PancakeRouterV2Calls::RemoveLiquidityWithPermit(decoded));
+                return Ok(IPancakeRouter01Calls::RemoveLiquidityWithPermit(decoded));
             }
             if let Ok(decoded) =
                 <SwapETHForExactTokensCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::SwapETHForExactTokens(decoded));
+                return Ok(IPancakeRouter01Calls::SwapETHForExactTokens(decoded));
             }
             if let Ok(decoded) =
                 <SwapExactETHForTokensCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::SwapExactETHForTokens(decoded));
+                return Ok(IPancakeRouter01Calls::SwapExactETHForTokens(decoded));
             }
-            if let Ok (decoded) = < SwapExactETHForTokensSupportingFeeOnTransferTokensCall as ethers :: core :: abi :: AbiDecode > :: decode (data . as_ref ()) { return Ok (PancakeRouterV2Calls :: SwapExactETHForTokensSupportingFeeOnTransferTokens (decoded)) }
             if let Ok(decoded) =
                 <SwapExactTokensForETHCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::SwapExactTokensForETH(decoded));
+                return Ok(IPancakeRouter01Calls::SwapExactTokensForETH(decoded));
             }
-            if let Ok (decoded) = < SwapExactTokensForETHSupportingFeeOnTransferTokensCall as ethers :: core :: abi :: AbiDecode > :: decode (data . as_ref ()) { return Ok (PancakeRouterV2Calls :: SwapExactTokensForETHSupportingFeeOnTransferTokens (decoded)) }
             if let Ok(decoded) =
                 <SwapExactTokensForTokensCall as ethers::core::abi::AbiDecode>::decode(
                     data.as_ref(),
                 )
             {
-                return Ok(PancakeRouterV2Calls::SwapExactTokensForTokens(decoded));
+                return Ok(IPancakeRouter01Calls::SwapExactTokensForTokens(decoded));
             }
-            if let Ok (decoded) = < SwapExactTokensForTokensSupportingFeeOnTransferTokensCall as ethers :: core :: abi :: AbiDecode > :: decode (data . as_ref ()) { return Ok (PancakeRouterV2Calls :: SwapExactTokensForTokensSupportingFeeOnTransferTokens (decoded)) }
             if let Ok(decoded) =
                 <SwapTokensForExactETHCall as ethers::core::abi::AbiDecode>::decode(data.as_ref())
             {
-                return Ok(PancakeRouterV2Calls::SwapTokensForExactETH(decoded));
+                return Ok(IPancakeRouter01Calls::SwapTokensForExactETH(decoded));
             }
             if let Ok(decoded) =
                 <SwapTokensForExactTokensCall as ethers::core::abi::AbiDecode>::decode(
                     data.as_ref(),
                 )
             {
-                return Ok(PancakeRouterV2Calls::SwapTokensForExactTokens(decoded));
+                return Ok(IPancakeRouter01Calls::SwapTokensForExactTokens(decoded));
             }
             Err(ethers::core::abi::Error::InvalidData.into())
         }
     }
-    impl ethers::core::abi::AbiEncode for PancakeRouterV2Calls {
+    impl ethers::core::abi::AbiEncode for IPancakeRouter01Calls {
         fn encode(self) -> Vec<u8> {
             match self {
-                PancakeRouterV2Calls::Weth(element) => element.encode(),
-                PancakeRouterV2Calls::AddLiquidity(element) => element.encode(),
-                PancakeRouterV2Calls::AddLiquidityETH(element) => element.encode(),
-                PancakeRouterV2Calls::Factory(element) => element.encode(),
-                PancakeRouterV2Calls::GetAmountIn(element) => element.encode(),
-                PancakeRouterV2Calls::GetAmountOut(element) => element.encode(),
-                PancakeRouterV2Calls::GetAmountsIn(element) => element.encode(),
-                PancakeRouterV2Calls::GetAmountsOut(element) => element.encode(),
-                PancakeRouterV2Calls::Quote(element) => element.encode(),
-                PancakeRouterV2Calls::RemoveLiquidity(element) => element.encode(),
-                PancakeRouterV2Calls::RemoveLiquidityETH(element) => element.encode(),
-                PancakeRouterV2Calls::RemoveLiquidityETHSupportingFeeOnTransferTokens(element) => {
-                    element.encode()
-                }
-                PancakeRouterV2Calls::RemoveLiquidityETHWithPermit(element) => element.encode(),
-                PancakeRouterV2Calls::RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.encode(),
-                PancakeRouterV2Calls::RemoveLiquidityWithPermit(element) => element.encode(),
-                PancakeRouterV2Calls::SwapETHForExactTokens(element) => element.encode(),
-                PancakeRouterV2Calls::SwapExactETHForTokens(element) => element.encode(),
-                PancakeRouterV2Calls::SwapExactETHForTokensSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.encode(),
-                PancakeRouterV2Calls::SwapExactTokensForETH(element) => element.encode(),
-                PancakeRouterV2Calls::SwapExactTokensForETHSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.encode(),
-                PancakeRouterV2Calls::SwapExactTokensForTokens(element) => element.encode(),
-                PancakeRouterV2Calls::SwapExactTokensForTokensSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.encode(),
-                PancakeRouterV2Calls::SwapTokensForExactETH(element) => element.encode(),
-                PancakeRouterV2Calls::SwapTokensForExactTokens(element) => element.encode(),
+                IPancakeRouter01Calls::Weth(element) => element.encode(),
+                IPancakeRouter01Calls::AddLiquidity(element) => element.encode(),
+                IPancakeRouter01Calls::AddLiquidityETH(element) => element.encode(),
+                IPancakeRouter01Calls::Factory(element) => element.encode(),
+                IPancakeRouter01Calls::GetAmountIn(element) => element.encode(),
+                IPancakeRouter01Calls::GetAmountOut(element) => element.encode(),
+                IPancakeRouter01Calls::GetAmountsIn(element) => element.encode(),
+                IPancakeRouter01Calls::GetAmountsOut(element) => element.encode(),
+                IPancakeRouter01Calls::Quote(element) => element.encode(),
+                IPancakeRouter01Calls::RemoveLiquidity(element) => element.encode(),
+                IPancakeRouter01Calls::RemoveLiquidityETH(element) => element.encode(),
+                IPancakeRouter01Calls::RemoveLiquidityETHWithPermit(element) => element.encode(),
+                IPancakeRouter01Calls::RemoveLiquidityWithPermit(element) => element.encode(),
+                IPancakeRouter01Calls::SwapETHForExactTokens(element) => element.encode(),
+                IPancakeRouter01Calls::SwapExactETHForTokens(element) => element.encode(),
+                IPancakeRouter01Calls::SwapExactTokensForETH(element) => element.encode(),
+                IPancakeRouter01Calls::SwapExactTokensForTokens(element) => element.encode(),
+                IPancakeRouter01Calls::SwapTokensForExactETH(element) => element.encode(),
+                IPancakeRouter01Calls::SwapTokensForExactTokens(element) => element.encode(),
             }
         }
     }
-    impl ::std::fmt::Display for PancakeRouterV2Calls {
+    impl ::std::fmt::Display for IPancakeRouter01Calls {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match self {
-                PancakeRouterV2Calls::Weth(element) => element.fmt(f),
-                PancakeRouterV2Calls::AddLiquidity(element) => element.fmt(f),
-                PancakeRouterV2Calls::AddLiquidityETH(element) => element.fmt(f),
-                PancakeRouterV2Calls::Factory(element) => element.fmt(f),
-                PancakeRouterV2Calls::GetAmountIn(element) => element.fmt(f),
-                PancakeRouterV2Calls::GetAmountOut(element) => element.fmt(f),
-                PancakeRouterV2Calls::GetAmountsIn(element) => element.fmt(f),
-                PancakeRouterV2Calls::GetAmountsOut(element) => element.fmt(f),
-                PancakeRouterV2Calls::Quote(element) => element.fmt(f),
-                PancakeRouterV2Calls::RemoveLiquidity(element) => element.fmt(f),
-                PancakeRouterV2Calls::RemoveLiquidityETH(element) => element.fmt(f),
-                PancakeRouterV2Calls::RemoveLiquidityETHSupportingFeeOnTransferTokens(element) => {
-                    element.fmt(f)
-                }
-                PancakeRouterV2Calls::RemoveLiquidityETHWithPermit(element) => element.fmt(f),
-                PancakeRouterV2Calls::RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.fmt(f),
-                PancakeRouterV2Calls::RemoveLiquidityWithPermit(element) => element.fmt(f),
-                PancakeRouterV2Calls::SwapETHForExactTokens(element) => element.fmt(f),
-                PancakeRouterV2Calls::SwapExactETHForTokens(element) => element.fmt(f),
-                PancakeRouterV2Calls::SwapExactETHForTokensSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.fmt(f),
-                PancakeRouterV2Calls::SwapExactTokensForETH(element) => element.fmt(f),
-                PancakeRouterV2Calls::SwapExactTokensForETHSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.fmt(f),
-                PancakeRouterV2Calls::SwapExactTokensForTokens(element) => element.fmt(f),
-                PancakeRouterV2Calls::SwapExactTokensForTokensSupportingFeeOnTransferTokens(
-                    element,
-                ) => element.fmt(f),
-                PancakeRouterV2Calls::SwapTokensForExactETH(element) => element.fmt(f),
-                PancakeRouterV2Calls::SwapTokensForExactTokens(element) => element.fmt(f),
+                IPancakeRouter01Calls::Weth(element) => element.fmt(f),
+                IPancakeRouter01Calls::AddLiquidity(element) => element.fmt(f),
+                IPancakeRouter01Calls::AddLiquidityETH(element) => element.fmt(f),
+                IPancakeRouter01Calls::Factory(element) => element.fmt(f),
+                IPancakeRouter01Calls::GetAmountIn(element) => element.fmt(f),
+                IPancakeRouter01Calls::GetAmountOut(element) => element.fmt(f),
+                IPancakeRouter01Calls::GetAmountsIn(element) => element.fmt(f),
+                IPancakeRouter01Calls::GetAmountsOut(element) => element.fmt(f),
+                IPancakeRouter01Calls::Quote(element) => element.fmt(f),
+                IPancakeRouter01Calls::RemoveLiquidity(element) => element.fmt(f),
+                IPancakeRouter01Calls::RemoveLiquidityETH(element) => element.fmt(f),
+                IPancakeRouter01Calls::RemoveLiquidityETHWithPermit(element) => element.fmt(f),
+                IPancakeRouter01Calls::RemoveLiquidityWithPermit(element) => element.fmt(f),
+                IPancakeRouter01Calls::SwapETHForExactTokens(element) => element.fmt(f),
+                IPancakeRouter01Calls::SwapExactETHForTokens(element) => element.fmt(f),
+                IPancakeRouter01Calls::SwapExactTokensForETH(element) => element.fmt(f),
+                IPancakeRouter01Calls::SwapExactTokensForTokens(element) => element.fmt(f),
+                IPancakeRouter01Calls::SwapTokensForExactETH(element) => element.fmt(f),
+                IPancakeRouter01Calls::SwapTokensForExactTokens(element) => element.fmt(f),
             }
         }
     }
-    impl ::std::convert::From<WethCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<WethCall> for IPancakeRouter01Calls {
         fn from(var: WethCall) -> Self {
-            PancakeRouterV2Calls::Weth(var)
+            IPancakeRouter01Calls::Weth(var)
         }
     }
-    impl ::std::convert::From<AddLiquidityCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<AddLiquidityCall> for IPancakeRouter01Calls {
         fn from(var: AddLiquidityCall) -> Self {
-            PancakeRouterV2Calls::AddLiquidity(var)
+            IPancakeRouter01Calls::AddLiquidity(var)
         }
     }
-    impl ::std::convert::From<AddLiquidityETHCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<AddLiquidityETHCall> for IPancakeRouter01Calls {
         fn from(var: AddLiquidityETHCall) -> Self {
-            PancakeRouterV2Calls::AddLiquidityETH(var)
+            IPancakeRouter01Calls::AddLiquidityETH(var)
         }
     }
-    impl ::std::convert::From<FactoryCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<FactoryCall> for IPancakeRouter01Calls {
         fn from(var: FactoryCall) -> Self {
-            PancakeRouterV2Calls::Factory(var)
+            IPancakeRouter01Calls::Factory(var)
         }
     }
-    impl ::std::convert::From<GetAmountInCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<GetAmountInCall> for IPancakeRouter01Calls {
         fn from(var: GetAmountInCall) -> Self {
-            PancakeRouterV2Calls::GetAmountIn(var)
+            IPancakeRouter01Calls::GetAmountIn(var)
         }
     }
-    impl ::std::convert::From<GetAmountOutCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<GetAmountOutCall> for IPancakeRouter01Calls {
         fn from(var: GetAmountOutCall) -> Self {
-            PancakeRouterV2Calls::GetAmountOut(var)
+            IPancakeRouter01Calls::GetAmountOut(var)
         }
     }
-    impl ::std::convert::From<GetAmountsInCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<GetAmountsInCall> for IPancakeRouter01Calls {
         fn from(var: GetAmountsInCall) -> Self {
-            PancakeRouterV2Calls::GetAmountsIn(var)
+            IPancakeRouter01Calls::GetAmountsIn(var)
         }
     }
-    impl ::std::convert::From<GetAmountsOutCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<GetAmountsOutCall> for IPancakeRouter01Calls {
         fn from(var: GetAmountsOutCall) -> Self {
-            PancakeRouterV2Calls::GetAmountsOut(var)
+            IPancakeRouter01Calls::GetAmountsOut(var)
         }
     }
-    impl ::std::convert::From<QuoteCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<QuoteCall> for IPancakeRouter01Calls {
         fn from(var: QuoteCall) -> Self {
-            PancakeRouterV2Calls::Quote(var)
+            IPancakeRouter01Calls::Quote(var)
         }
     }
-    impl ::std::convert::From<RemoveLiquidityCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<RemoveLiquidityCall> for IPancakeRouter01Calls {
         fn from(var: RemoveLiquidityCall) -> Self {
-            PancakeRouterV2Calls::RemoveLiquidity(var)
+            IPancakeRouter01Calls::RemoveLiquidity(var)
         }
     }
-    impl ::std::convert::From<RemoveLiquidityETHCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<RemoveLiquidityETHCall> for IPancakeRouter01Calls {
         fn from(var: RemoveLiquidityETHCall) -> Self {
-            PancakeRouterV2Calls::RemoveLiquidityETH(var)
+            IPancakeRouter01Calls::RemoveLiquidityETH(var)
         }
     }
-    impl ::std::convert::From<RemoveLiquidityETHSupportingFeeOnTransferTokensCall>
-        for PancakeRouterV2Calls
-    {
-        fn from(var: RemoveLiquidityETHSupportingFeeOnTransferTokensCall) -> Self {
-            PancakeRouterV2Calls::RemoveLiquidityETHSupportingFeeOnTransferTokens(var)
-        }
-    }
-    impl ::std::convert::From<RemoveLiquidityETHWithPermitCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<RemoveLiquidityETHWithPermitCall> for IPancakeRouter01Calls {
         fn from(var: RemoveLiquidityETHWithPermitCall) -> Self {
-            PancakeRouterV2Calls::RemoveLiquidityETHWithPermit(var)
+            IPancakeRouter01Calls::RemoveLiquidityETHWithPermit(var)
         }
     }
-    impl ::std::convert::From<RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokensCall>
-        for PancakeRouterV2Calls
-    {
-        fn from(var: RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokensCall) -> Self {
-            PancakeRouterV2Calls::RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokens(var)
-        }
-    }
-    impl ::std::convert::From<RemoveLiquidityWithPermitCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<RemoveLiquidityWithPermitCall> for IPancakeRouter01Calls {
         fn from(var: RemoveLiquidityWithPermitCall) -> Self {
-            PancakeRouterV2Calls::RemoveLiquidityWithPermit(var)
+            IPancakeRouter01Calls::RemoveLiquidityWithPermit(var)
         }
     }
-    impl ::std::convert::From<SwapETHForExactTokensCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<SwapETHForExactTokensCall> for IPancakeRouter01Calls {
         fn from(var: SwapETHForExactTokensCall) -> Self {
-            PancakeRouterV2Calls::SwapETHForExactTokens(var)
+            IPancakeRouter01Calls::SwapETHForExactTokens(var)
         }
     }
-    impl ::std::convert::From<SwapExactETHForTokensCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<SwapExactETHForTokensCall> for IPancakeRouter01Calls {
         fn from(var: SwapExactETHForTokensCall) -> Self {
-            PancakeRouterV2Calls::SwapExactETHForTokens(var)
+            IPancakeRouter01Calls::SwapExactETHForTokens(var)
         }
     }
-    impl ::std::convert::From<SwapExactETHForTokensSupportingFeeOnTransferTokensCall>
-        for PancakeRouterV2Calls
-    {
-        fn from(var: SwapExactETHForTokensSupportingFeeOnTransferTokensCall) -> Self {
-            PancakeRouterV2Calls::SwapExactETHForTokensSupportingFeeOnTransferTokens(var)
-        }
-    }
-    impl ::std::convert::From<SwapExactTokensForETHCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<SwapExactTokensForETHCall> for IPancakeRouter01Calls {
         fn from(var: SwapExactTokensForETHCall) -> Self {
-            PancakeRouterV2Calls::SwapExactTokensForETH(var)
+            IPancakeRouter01Calls::SwapExactTokensForETH(var)
         }
     }
-    impl ::std::convert::From<SwapExactTokensForETHSupportingFeeOnTransferTokensCall>
-        for PancakeRouterV2Calls
-    {
-        fn from(var: SwapExactTokensForETHSupportingFeeOnTransferTokensCall) -> Self {
-            PancakeRouterV2Calls::SwapExactTokensForETHSupportingFeeOnTransferTokens(var)
-        }
-    }
-    impl ::std::convert::From<SwapExactTokensForTokensCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<SwapExactTokensForTokensCall> for IPancakeRouter01Calls {
         fn from(var: SwapExactTokensForTokensCall) -> Self {
-            PancakeRouterV2Calls::SwapExactTokensForTokens(var)
+            IPancakeRouter01Calls::SwapExactTokensForTokens(var)
         }
     }
-    impl ::std::convert::From<SwapExactTokensForTokensSupportingFeeOnTransferTokensCall>
-        for PancakeRouterV2Calls
-    {
-        fn from(var: SwapExactTokensForTokensSupportingFeeOnTransferTokensCall) -> Self {
-            PancakeRouterV2Calls::SwapExactTokensForTokensSupportingFeeOnTransferTokens(var)
-        }
-    }
-    impl ::std::convert::From<SwapTokensForExactETHCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<SwapTokensForExactETHCall> for IPancakeRouter01Calls {
         fn from(var: SwapTokensForExactETHCall) -> Self {
-            PancakeRouterV2Calls::SwapTokensForExactETH(var)
+            IPancakeRouter01Calls::SwapTokensForExactETH(var)
         }
     }
-    impl ::std::convert::From<SwapTokensForExactTokensCall> for PancakeRouterV2Calls {
+    impl ::std::convert::From<SwapTokensForExactTokensCall> for IPancakeRouter01Calls {
         fn from(var: SwapTokensForExactTokensCall) -> Self {
-            PancakeRouterV2Calls::SwapTokensForExactTokens(var)
+            IPancakeRouter01Calls::SwapTokensForExactTokens(var)
         }
     }
     #[doc = "Container type for all return fields from the `WETH` function with signature `WETH()` and selector `[173, 92, 70, 72]`"]
@@ -1501,19 +1206,6 @@ pub mod pancake_router_v2 {
         pub amount_token: ethers::core::types::U256,
         pub amount_eth: ethers::core::types::U256,
     }
-    #[doc = "Container type for all return fields from the `removeLiquidityETHSupportingFeeOnTransferTokens` function with signature `removeLiquidityETHSupportingFeeOnTransferTokens(address,uint256,uint256,uint256,address,uint256)` and selector `[175, 41, 121, 235]`"]
-    #[derive(
-        Clone,
-        Debug,
-        Eq,
-        PartialEq,
-        ethers :: contract :: EthAbiType,
-        ethers :: contract :: EthAbiCodec,
-        Default,
-    )]
-    pub struct RemoveLiquidityETHSupportingFeeOnTransferTokensReturn {
-        pub amount_eth: ethers::core::types::U256,
-    }
     #[doc = "Container type for all return fields from the `removeLiquidityETHWithPermit` function with signature `removeLiquidityETHWithPermit(address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)` and selector `[222, 217, 56, 42]`"]
     #[derive(
         Clone,
@@ -1526,19 +1218,6 @@ pub mod pancake_router_v2 {
     )]
     pub struct RemoveLiquidityETHWithPermitReturn {
         pub amount_token: ethers::core::types::U256,
-        pub amount_eth: ethers::core::types::U256,
-    }
-    #[doc = "Container type for all return fields from the `removeLiquidityETHWithPermitSupportingFeeOnTransferTokens` function with signature `removeLiquidityETHWithPermitSupportingFeeOnTransferTokens(address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)` and selector `[91, 13, 89, 132]`"]
-    #[derive(
-        Clone,
-        Debug,
-        Eq,
-        PartialEq,
-        ethers :: contract :: EthAbiType,
-        ethers :: contract :: EthAbiCodec,
-        Default,
-    )]
-    pub struct RemoveLiquidityETHWithPermitSupportingFeeOnTransferTokensReturn {
         pub amount_eth: ethers::core::types::U256,
     }
     #[doc = "Container type for all return fields from the `removeLiquidityWithPermit` function with signature `removeLiquidityWithPermit(address,address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)` and selector `[33, 149, 153, 92]`"]
