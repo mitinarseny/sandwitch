@@ -207,13 +207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bindgen"
-version = "0.1.0"
-dependencies = [
- "ethers",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -611,6 +604,13 @@ name = "constant_time_eq"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
+
+[[package]]
+name = "contracts"
+version = "0.1.0"
+dependencies = [
+ "ethers",
+]
 
 [[package]]
 name = "convert_case"
@@ -2125,22 +2125,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
-name = "pancake_swap_contracts"
-version = "0.1.0"
-dependencies = [
- "bindgen",
- "ethers",
-]
-
-[[package]]
-name = "pancake_toaster_contracts"
-version = "0.1.0"
-dependencies = [
- "bindgen",
- "ethers",
-]
-
-[[package]]
 name = "parity-scale-codec"
 version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2782,14 +2766,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap 4.1.4",
+ "contracts",
  "ethers",
  "futures",
  "itertools",
  "lazy_static",
  "metrics",
  "metrics-exporter-prometheus",
- "pancake_swap_contracts",
- "pancake_toaster_contracts",
  "pin-project",
  "serde",
  "thiserror",

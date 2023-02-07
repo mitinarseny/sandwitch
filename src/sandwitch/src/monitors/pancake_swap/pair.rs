@@ -1,5 +1,6 @@
 use std::{fmt::Display, ops::Deref, sync::Arc};
 
+use contracts::pancake_swap::{i_pancake_factory::IPancakeFactory, i_pancake_pair::IPancakePair};
 use ethers::{
     abi::AbiEncode,
     prelude::{Address, ContractError},
@@ -8,7 +9,6 @@ use ethers::{
 };
 use futures::future::try_join3;
 use metrics::{register_counter, Counter};
-use pancake_swap_contracts::{i_pancake_factory::IPancakeFactory, i_pancake_pair::IPancakePair};
 
 use super::token::Token;
 use crate::cached::CachedAtBlock;

@@ -4,8 +4,9 @@ use std::sync::Arc;
 use ethers::prelude::{Address, ContractError};
 use ethers::providers::{JsonRpcClient, Provider};
 
-use pancake_swap_contracts::i_pancake_factory::IPancakeFactory;
-use pancake_swap_contracts::i_pancake_router_02::IPancakeRouter02;
+use contracts::pancake_swap::{
+    i_pancake_factory::IPancakeFactory, i_pancake_router_02::IPancakeRouter02,
+};
 
 #[derive(Clone)]
 pub struct Router<P: JsonRpcClient> {

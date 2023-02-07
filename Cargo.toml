@@ -1,43 +1,7 @@
 [workspace]
-members = ["./bindings/*"]
+members = ["./src/*"]
 
 [workspace.dependencies]
-bindgen = { path = "./bindings/bindgen" }
+contracts = { path = "./src/contracts" }
 ethers = { version = "1", default-features = false, features = ["rustls"] }
 
-[package]
-name = "sandwitch"
-version = "0.1.0"
-edition = "2021"
-
-[features]
-default = [
-  "bsc",
-]
-bsc = [
-  "pancake_swap",
-]
-pancake_swap = ["pancake_swap_contracts", "pancake_toaster_contracts"]
-
-[dependencies]
-anyhow = "1"
-clap = { version = "4.0", features = ["derive"] }
-ethers = { workspace = true, features = ["abigen", "rustls", "ws"] }
-futures = "0.3"
-itertools = "0.10"
-lazy_static = "1.4"
-metrics = "0.20"
-metrics-exporter-prometheus = { version = "0.11", default-features = false, features = ["http-listener"] }
-pin-project = "1"
-serde = { version = "1", features = ["derive"] }
-thiserror = "1"
-tokio = { version = "1", default-features = false, features = ["fs", "time", "rt-multi-thread"] }
-tokio-stream = { version = "0.1", features = ["fs", "sync"] }
-tokio-util = "0.7"
-toml = "0.5"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url = { version = "2.2", features = ["serde"] }
-
-pancake_swap_contracts = { path = "./bindings/pancake_swap", optional = true }
-pancake_toaster_contracts = { path = "./bindings/pancake_toaster", optional = true }
