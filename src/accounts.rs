@@ -606,12 +606,11 @@ impl<P: JsonRpcClient, S: Signer> BlockMonitor for Accounts<P, S> {
             .filter_map({
                 let mut seen = HashSet::new();
                 move |tx| {
-                    if let Some(account) = self.get(&tx.from) {
-                        if seen.insert(account.address()) {
-                            return Some(account.lock().map(move |mut a| a.tx_mined(&tx)));
-                        }
+                    let account = self.get(&tx.from)?;
+                    if !seen.insert(account.address()) {
+                        return None;
                     }
-                    None
+                    Some(account.lock().map(move |mut a| a.tx_mined(&tx)))
                 }
             })
             .collect::<FuturesUnordered<_>>()

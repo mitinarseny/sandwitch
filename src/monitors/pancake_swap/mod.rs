@@ -10,10 +10,11 @@ use metrics::{describe_counter, register_counter, Counter, Unit};
 use serde::Deserialize;
 use tracing::{info, warn};
 
+use pancake_swap_contracts::i_pancake_router_02::SwapExactETHForTokensCall;
+
 use crate::{
     accounts::Accounts,
     cached::Cached,
-    contracts::i_pancake_router_02::SwapExactETHForTokensCall,
     monitors::{FunctionCallMonitor, TxMonitor},
 };
 

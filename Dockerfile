@@ -14,15 +14,13 @@ WORKDIR /app
 RUN cargo init --quiet
 # build dependencies
 COPY ./Cargo.toml ./Cargo.lock ./rust-toolchain.toml ./
+COPY ./bindings/ ./bindings/
 RUN cargo build --release
 # build contract bindings
-RUN mkdir contracts
-COPY ./build.rs ./
-COPY ./contracts/src/ ./contracts/src/
-COPY ./contracts/lib/ ./contracts/lib/
+COPY ./contracts/ ./contracts/
 RUN cargo build --release
 # build binaries
-COPY ./src ./src
+COPY ./src/ ./src/
 RUN cargo build --release --bin sandwitch
 
 FROM gcr.io/distroless/cc
@@ -35,5 +33,6 @@ ENTRYPOINT [\
   "--accounts-dir", "/etc/sandwitch/accounts"\
 ]
 EXPOSE 9000/tcp
+VOLUME ["/etc/sandwitch/accounts"]
 HEALTHCHECK --interval=15s --timeout=5s \
   CMD curl -sf http://127.0.0.1:9000/metrics || exit 1

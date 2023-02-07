@@ -8,12 +8,10 @@ use ethers::{
 };
 use futures::future::try_join3;
 use metrics::{register_counter, Counter};
+use pancake_swap_contracts::{i_pancake_factory::IPancakeFactory, i_pancake_pair::IPancakePair};
 
 use super::token::Token;
-use crate::{
-    cached::CachedAtBlock,
-    contracts::{i_pancake_factory::IPancakeFactory, i_pancake_pair::IPancakePair},
-};
+use crate::cached::CachedAtBlock;
 
 pub struct Pair<P: JsonRpcClient> {
     inner: IPancakePair<Provider<P>>,

@@ -1,3 +1,10 @@
+[workspace]
+members = ["./bindings/*"]
+
+[workspace.dependencies]
+bindgen = { path = "./bindings/bindgen" }
+ethers = { version = "1", default-features = false, features = ["rustls"] }
+
 [package]
 name = "sandwitch"
 version = "0.1.0"
@@ -7,16 +14,15 @@ edition = "2021"
 default = [
   "bsc",
 ]
-
 bsc = [
   "pancake_swap",
 ]
-pancake_swap = []
+pancake_swap = ["pancake_swap_contracts", "pancake_toaster_contracts"]
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4.0", features = ["derive"] }
-ethers = { version = "1", default-features = false, features = ["abigen", "rustls", "ws"] }
+ethers = { workspace = true, features = ["abigen", "rustls", "ws"] }
 futures = "0.3"
 itertools = "0.10"
 lazy_static = "1.4"
@@ -33,6 +39,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.2", features = ["serde"] }
 
-[build-dependencies]
-ethers-contract = { version = "1", default-features = false, features = ["abigen"] }
-ethers-solc = { version = "1", default-features = false, features = ["async", "rustls"] }
+pancake_swap_contracts = { path = "./bindings/pancake_swap", optional = true }
+pancake_toaster_contracts = { path = "./bindings/pancake_toaster", optional = true }

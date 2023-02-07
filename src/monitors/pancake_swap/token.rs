@@ -4,7 +4,7 @@ use ethers::providers::{JsonRpcClient, Provider};
 use ethers::{contract::ContractError, types::Address};
 use futures::future::try_join;
 
-use crate::contracts::i_pancake_erc20::IPancakeERC20;
+use pancake_swap_contracts::i_pancake_erc20::IPancakeERC20;
 
 pub struct Token<P: JsonRpcClient> {
     contract: IPancakeERC20<Provider<P>>,

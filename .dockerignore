@@ -6,7 +6,6 @@ README.md
 sandwitch.toml
 target/
 contracts/cache
-contracts/out
 prometheus.yml
 grafana.ini
 grafana/
