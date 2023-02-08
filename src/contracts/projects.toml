@@ -1,0 +1,14 @@
+[pancake_swap]
+root = "pancake-smart-contracts/projects/exchange-protocol"
+sources = "contracts/interfaces"
+libriries = ["contracts/libraries"]
+artifacts = "artifacts"
+cache = "cache"
+tests = "test"
+
+[pancake_toaster]
+root = "pancake_toaster"
+sources = "src"
+libraries = ["lib"]
+artifacts = "out"
+cache = "cache"

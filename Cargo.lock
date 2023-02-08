@@ -610,6 +610,9 @@ name = "contracts"
 version = "0.1.0"
 dependencies = [
  "ethers",
+ "lazy_static",
+ "serde",
+ "toml",
 ]
 
 [[package]]

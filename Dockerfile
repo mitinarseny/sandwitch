@@ -1,26 +1,27 @@
 FROM ethereum/solc:stable AS solc
 
-FROM rust:1.65 AS env
-ARG RUST_TOOLCHAIN=nightly-2022-11-08
-RUN rustup toolchain install \
-  --allow-downgrade \
-  --no-self-update \
-  --profile minimal \
-  ${RUST_TOOLCHAIN}
+FROM rust:latest AS env
+WORKDIR /app
+COPY ./rust-toolchain.toml ./
+RUN rustup set profile minimal \
+  && rustup show active-toolchain
 COPY --from=solc /usr/bin/solc /usr/bin/
 
 FROM env AS builder
-WORKDIR /app
-RUN cargo init --quiet
 # build dependencies
-COPY ./Cargo.toml ./Cargo.lock ./rust-toolchain.toml ./
-COPY ./bindings/ ./bindings/
+COPY ./Cargo.toml ./Cargo.lock ./
+RUN cargo new --quiet ./src/sandwitch \
+  && cargo new --quiet --lib ./src/contracts \
+  && echo 'fn main() {}' > ./src/contracts/build.rs
+COPY ./src/sandwitch/Cargo.toml ./src/sandwitch/
+COPY ./src/contracts/Cargo.toml ./src/contracts/
 RUN cargo build --release
 # build contract bindings
 COPY ./contracts/ ./contracts/
+COPY ./src/contracts/ ./src/contracts/
 RUN cargo build --release
 # build binaries
-COPY ./src/ ./src/
+COPY ./src/sandwitch/ ./src/sandwitch/
 RUN cargo build --release --bin sandwitch
 
 FROM gcr.io/distroless/cc
