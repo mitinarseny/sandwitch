@@ -1,6 +1,15 @@
-#[cfg(feature = "pancake_swap")]
-pub mod pancake_swap;
+macro_rules! check_mod {
+    ($feature:literal => $module:ident) => {
+        #[cfg(feature = $feature)]
+        pub mod $module;
+    };
+    ($feature:literal => $module:ident, $($features:literal => $modules:ident),+) => {
+        check_mod!($feature => $module);
+        check_mod!($($features => $modules),+);
+    };
+}
 
-#[cfg(feature = "pancake_toaster")]
-pub mod pancake_toaster;
-
+check_mod! {
+    "pancake_swap" => pancake_swap,
+    "pancake_toaster" => pancake_toaster
+}
