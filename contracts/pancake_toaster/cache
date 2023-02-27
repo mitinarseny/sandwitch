@@ -11,10 +11,10 @@
     ]
   },
   "files": {
-    "src/Greeter.sol": {
-      "lastModificationDate": 1675712909073,
-      "contentHash": "a5cb54a1b2330d0af7f3797dca216ea5",
-      "sourceName": "src/Greeter.sol",
+    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeERC20.sol": {
+      "lastModificationDate": 1675954983686,
+      "contentHash": "0f55e7b7b06218826e54d4fb6ef77c7d",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeERC20.sol",
       "solcConfig": {
         "settings": {
           "optimizer": {
@@ -39,10 +39,346 @@
         }
       },
       "imports": [],
-      "versionRequirement": "^0.8.17",
+      "versionRequirement": ">=0.5.0",
       "artifacts": {
-        "HelloWorld": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "Greeter.sol/HelloWorld.json"
+        "IPancakeERC20": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeERC20.sol/IPancakeERC20.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol": {
+      "lastModificationDate": 1675954983686,
+      "contentHash": "b4369da3b48e6ee7315c0f81a7c88aee",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": ">=0.5.0",
+      "artifacts": {
+        "IPancakeFactory": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeFactory.sol/IPancakeFactory.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol": {
+      "lastModificationDate": 1675954983686,
+      "contentHash": "3b4c47291bf633131ae2cb49c325ba19",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": ">=0.5.0",
+      "artifacts": {
+        "IPancakePair": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakePair.sol/IPancakePair.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol": {
+      "lastModificationDate": 1675954983686,
+      "contentHash": "330ac318062ec2886d51cd341e559add",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": ">=0.6.2",
+      "artifacts": {
+        "IPancakeRouter01": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeRouter01.sol/IPancakeRouter01.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter02.sol": {
+      "lastModificationDate": 1675954983686,
+      "contentHash": "643aedf0e1831e586f967ca3b018f065",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter02.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol"
+      ],
+      "versionRequirement": ">=0.6.2",
+      "artifacts": {
+        "IPancakeRouter02": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeRouter02.sol/IPancakeRouter02.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/solmate/src/auth/Owned.sol": {
+      "lastModificationDate": 1671235000654,
+      "contentHash": "11fec455b72d2743b77d783d6017e1e9",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/solmate/src/auth/Owned.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "Owned": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "Owned.sol/Owned.json"
+        }
+      }
+    },
+    "lib/BakerLibrary.sol": {
+      "lastModificationDate": 1676067580278,
+      "contentHash": "ff437ecd86ef4119d79a81aa5c1d22dd",
+      "sourceName": "lib/BakerLibrary.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
+        "lib/PancakeLibrary.sol",
+        "lib/SafeMath.sol"
+      ],
+      "versionRequirement": null,
+      "artifacts": {
+        "PancakeBakerLibrary": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "BakerLibrary.sol/PancakeBakerLibrary.json"
+        }
+      }
+    },
+    "lib/PancakeLibrary.sol": {
+      "lastModificationDate": 1676054681275,
+      "contentHash": "077f38eea5d3ba7ea26c220e58d98aec",
+      "sourceName": "lib/PancakeLibrary.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
+        "lib/SafeMath.sol"
+      ],
+      "versionRequirement": null,
+      "artifacts": {
+        "PancakeLibrary": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "PancakeLibrary.sol/PancakeLibrary.json"
+        }
+      }
+    },
+    "lib/SafeMath.sol": {
+      "lastModificationDate": 1676029295614,
+      "contentHash": "67d6a470da328241493030e14af350a5",
+      "sourceName": "lib/SafeMath.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": null,
+      "artifacts": {
+        "SafeMath": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "SafeMath.sol/SafeMath.json"
+        }
+      }
+    },
+    "src/PancakeToaster.sol": {
+      "lastModificationDate": 1676067580277,
+      "contentHash": "0e4c5d857d9f81a0475667de9d539a17",
+      "sourceName": "src/PancakeToaster.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeERC20.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter02.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/solmate/src/auth/Owned.sol",
+        "lib/BakerLibrary.sol",
+        "lib/PancakeLibrary.sol",
+        "lib/SafeMath.sol"
+      ],
+      "versionRequirement": null,
+      "artifacts": {
+        "PancakeToaster": {
+          "0.8.17+commit.8df45f5f.Linux.gcc": "PancakeToaster.sol/PancakeToaster.json"
         }
       }
     }

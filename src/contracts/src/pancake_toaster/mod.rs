@@ -4,3 +4,13 @@
 //! Do not manually edit these files.
 //! These files may be overwritten by the codegen system at any time.
 pub mod hello_world;
+pub mod i_pancake_erc20;
+pub mod i_pancake_factory;
+pub mod i_pancake_pair;
+pub mod i_pancake_router_01;
+pub mod i_pancake_router_02;
+pub mod owned;
+pub mod pancake_baker_library;
+pub mod pancake_library;
+pub mod pancake_toaster;
+pub mod safe_math;

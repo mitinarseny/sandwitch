@@ -1,6 +1,15 @@
-[submodule "contracts/lib/solmate"]
+[submodule "contracts/solmate"]
 	path = contracts/solmate
 	url = https://github.com/transmissions11/solmate
-[submodule "contracts/lib/pancake-smart-contracts"]
-	path = contracts/pancake-smart-contracts
+[submodule "contracts/pancake_swap"]
+	path = contracts/pancake_swap
 	url = https://github.com/pancakeswap/pancake-smart-contracts
+[submodule "contracts/uniswap_core_v2"]
+	path = contracts/uniswap_v2_core
+	url = https://github.com/Uniswap/v2-core
+[submodule "contracts/openzeppelin"]
+	path = contracts/openzeppelin
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "contracts/uniswap_core_v3"]
+	path = contracts/uniswap_v3_core
+	url = https://github.com/Uniswap/v3-core

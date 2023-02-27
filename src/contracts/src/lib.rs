@@ -11,5 +11,6 @@ macro_rules! check_mod {
 
 check_mod! {
     "pancake_swap" => pancake_swap,
+    "uniswap_core_v2" => uniswap_core_v2,
     "pancake_toaster" => pancake_toaster
 }

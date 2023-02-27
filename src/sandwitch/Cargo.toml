@@ -10,7 +10,11 @@ default = [
 bsc = [
   "pancake_swap",
 ]
-pancake_swap = ["contracts/pancake_swap", "contracts/pancake_toaster"]
+pancake_swap = ["contracts/pancake_swap"]
+ethereum = [
+  "uniswap_v2"
+]
+uniswap_v2 = ["contracts/uniswap_v2_core"]
 
 [dependencies]
 anyhow = "1"

@@ -1,13 +1,17 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use ethers::{
+    abi::AbiDecode,
     contract::EthCall,
-    types::{Block, Transaction, H256},
+    types::{Address, Block, Transaction, H256},
 };
 use futures::{
     future::{self, try_join, try_join_all, BoxFuture},
     FutureExt, TryFutureExt,
 };
+
+pub mod inputs;
+pub mod erc20_utils;
 
 #[cfg(feature = "pancake_swap")]
 pub mod pancake_swap;
@@ -260,6 +264,68 @@ where
     }
 }
 
+pub(crate) trait FilterTxMonitor {
+    type Ok;
+    type Error;
+
+    fn filter(&self, tx: &Transaction) -> bool {
+        true
+    }
+
+    fn process_filtered_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>;
+}
+
+pub(crate) trait FilterTxMonitorExt: FilterTxMonitor {
+    fn maybe_process_tx<'a>(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+    ) -> Option<BoxFuture<'a, Result<Self::Ok, Self::Error>>> {
+        if !self.filter(tx) {
+            return None;
+        }
+        Some(self.process_filtered_tx(tx, block_hash))
+    }
+}
+
+impl<M> FilterTxMonitorExt for M where M: FilterTxMonitor {}
+
+pub(crate) trait ContractCallMonitor<'a, C: 'a> {
+    type Ok;
+    type Error;
+
+    fn filter(&self, tx_to: Address) -> bool {
+        true
+    }
+
+    fn process_call(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+        inputs: C,
+    ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>;
+}
+
+pub(crate) trait ContractCallMonitorExt<'a, C: AbiDecode + 'a>: ContractCallMonitor<'a, C> {
+    fn maybe_process_call(
+        &'a self,
+        tx: &'a Transaction,
+        block_hash: H256,
+    ) -> Option<BoxFuture<'a, Result<Self::Ok, Self::Error>>>
+    {
+        if !self.filter(tx.to?) {
+            return None;
+        }
+        Some(self.process_call(tx, block_hash, C::decode(&tx.input).ok()?))
+    }
+}
+
+impl<'a, C: AbiDecode + 'a, M: ContractCallMonitor<'a, C>> ContractCallMonitorExt<'a, C> for M {}
+
 pub(crate) trait FunctionCallMonitor<'a, C: EthCall + 'a> {
     type Ok;
     type Error;
@@ -270,15 +336,6 @@ pub(crate) trait FunctionCallMonitor<'a, C: EthCall + 'a> {
         block_hash: H256,
         inputs: C,
     ) -> BoxFuture<'a, Result<Self::Ok, Self::Error>>;
-
-    fn maybe_process_func_raw(
-        &'a self,
-        tx: &'a Transaction,
-        block_hash: H256,
-    ) -> Option<BoxFuture<'a, Result<Self::Ok, Self::Error>>> {
-        let inputs = C::decode(&tx.input).ok()?;
-        Some(self.process_func(tx, block_hash, inputs))
-    }
 }
 
 pub struct Map<M, F> {
