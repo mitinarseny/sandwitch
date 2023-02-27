@@ -43,7 +43,7 @@ library PancakeLibrary {
     IPancakeFactory factory,
     IERC20 tokenA,
     IERC20 tokenB
-  ) internal pure returns (IPancakePair pair, bool invert) {
+  ) internal pure returns (IPancakePair pair, bool inverted) {
     (address token0, address token1) = sortTokens(tokenA, tokenB);
     return (pairForSorted(factory, token0, token1), tokenA != token0);
   }
@@ -56,12 +56,12 @@ library PancakeLibrary {
     uint256 reserveA,
     uint256 reserveB,
     IPancakePair pair,
-    bool invert
+    bool inverted
   ) {
-    (pair, invert) = pairFor(factory, tokenA, tokenB);
+    (pair, inverted) = pairFor(factory, tokenA, tokenB);
     (reserveA, reserveB) = pair.getReserves();
-    if (invert) (reserveA, reserveB) = (reserveB, reserveA);
-    return (reserveA, reserveB, pair, invert);
+    if (inverted) (reserveA, reserveB) = (reserveB, reserveA);
+    return (reserveA, reserveB, pair, inverted);
   }
 
   function getAmountOut(

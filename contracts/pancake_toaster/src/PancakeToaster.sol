@@ -11,8 +11,10 @@ import {IPancakePair} from "@pancake_swap/interfaces/IPancakePair.sol";
 import {Toaster} from "@toaster/lib/Toaster.sol";
 
 contract PancakeToaster is Ownable, Toaster {
-  using SafeERC20 for IERC20;
   using SignedMath for uint256;
+  using SafeERC20 for IERC20;
+  using PancakeLibrary for IPancakeFactory;
+  using PancakeBakerLibrary for IPancakeFactory;
 
   IPancakeFactory public immutable factory;
 
@@ -22,226 +24,135 @@ contract PancakeToaster is Ownable, Toaster {
     factory = _factory;
   }
 
-  function frontRunSwapExactETHForTokens(
+  // for calculating profit off-chain
+  function frontRunSwapExt(
     address from,
     uint256 amountIn,
-    uint256 amountOutMin,
-    IERC20[] calldata path,
-    uint256 indexIn,
-    uint blockNumber
-  )
-    external
-    ensureBlock(blockNumber)
-    ensureBalance(from, amountIn)
-    returns (
-      uint256 ourAmountIn,
-      uint256 ourAmountOut,
-      uint256 newReserveIn,
-      uint256 newReserveOut
-  ) {
-    return frontRunSwapExactIn(amountIn, amountOutMin, path, indexIn);
-  }
-
-  function frontRunSwapExactTokensForTokens(
-    address from,
-    uint256 amountIn,
-    uint256 amountOutMin,
-    IERC20[] calldata path,
-    uint256 indexIn,
-    uint blockNumber
-  )
-    external
-    ensureBlock(blockNumber)
-    ensureTokenBalance(path[0], from, amountIn)
-    returns (
-      uint256 ourAmountIn,
-      uint256 ourAmountOut,
-      uint256 newReserveIn,
-      uint256 newReserveOut
-  ) {
-    return frontRunSwapExactIn(amountIn, amountOutMin, path, indexIn);
-  }
-
-  function frontRunSwapExactTokensForETH(
-    address from,
-    uint256 amountIn,
-    uint256 amountOutMin,
-    IERC20[] calldata path,
-    uint256 indexIn,
-    uint blockNumber
-  )
-    external
-    ensureBlock(blockNumber)
-    ensureTokenBalance(path[0], from, amountIn)
-    returns (
-      uint256 ourAmountIn,
-      uint256 ourAmountOut,
-      uint256 newReserveIn,
-      uint256 newReserveOut
-  ) {
-    return frontRunSwapExactIn(amountIn, amountOutMin, path, indexIn);
-  }
-
-  function frontRunSwapETHForExactTokens(
-    address from,
     uint256 amountOut,
-    uint256 amountInMax,
+    bool exactIn,
+    bool ETHIn,
     IERC20[] calldata path,
     uint256 indexIn,
-    uint blockNumber
-  )
-    external
-    ensureBlock(blockNumber)
-    ensureBalance(from, amountInMax)
-    returns (
-      uint256 ourAmountIn,
-      uint256 ourAmountOut,
-      uint256 newReserveIn,
-      uint256 newReserveOut
-  ) {
-    return frontRunSwapExactOut(amountOut, amountInMax, path, indexIn);
-  }
-
-  function frontRunSwapTokensForExactTokens(
-    address from,
-    uint256 amountOut,
-    uint256 amountInMax,
-    IERC20[] calldata path,
-    uint256 indexIn,
-    uint blockNumber
-  )
-    external
-    ensureBlock(blockNumber)
-    ensureTokenBalance(path[0], from, amountInMax)
-    returns (
-      uint256 ourAmountIn,
-      uint256 ourAmountOut,
-      uint256 newReserveIn,
-      uint256 newReserveOut
-  ) {
-    return frontRunSwapExactOut(amountOut, amountInMax, path, indexIn);
-  }
-
-  function frontRunSwapTokensForExactETH(
-    address from,
-    uint256 amountOut,
-    uint256 amountInMax,
-    IERC20[] calldata path,
-    uint256 indexIn,
-    uint blockNumber
-  ) external
-    ensureBlock(blockNumber)
-    ensureTokenBalance(path[0], from, amountInMax)
-    returns (
-      uint256 ourAmountIn,
-      uint256 ourAmountOut,
-      uint256 newReserveIn,
-      uint256 newReserveOut
-  ) {
-    return frontRunSwapExactOut(amountOut, amountInMax, path, indexIn);
-  }
-
-  function frontRunSwapExactIn(
-    uint256 amountIn,
-    uint256 amountOutMin,
-    IERC20[] memory path,
-    uint256 indexIn,
-  ) internal returns (
+    uint256 parentBlockHash
+  ) external returns (
     uint256 ourAmountIn,
     uint256 ourAmountOut,
     uint256 newReserveIn,
     uint256 newReserveOut
   ) {
-    (uint256 amountIn, uint256 amountOutMin) = PancakeBakerLibrary.reduceSwapExactIn(
-      factory,
+    (ourAmountIn, ourAmountOut) = frontRunSwap(
+      from,
       amountIn,
-      amountOutMin,
+      amountOut,
+      exactIn,
+      ETHIn,
       path,
-      indexIn
+      indexIn,
+      parentBlockHash
     );
 
-    return frontRunSingleSwapExactIn(
-      amountIn,
-      amountOutMin,
-      path[indexIn],
-      path[indexIn + 1]
-    );
+    (newReserveIn, newReserveOut, ) = factory.getPairReserves(path[indexIn], path[indexIn + 1]);
+    return (ourAmountIn, ourAmountOut, newReserveIn, newReserveOut);
   }
 
-  function frontRunSingleSwapExactIn(
+  function frontRunSwap(
+    address from,
     uint256 amountIn,
-    uint256 amountOutMin,
+    uint256 amountOut,
+    bool exactIn,
+    bool ETHIn,
+    IERC20[] calldata path,
+    uint256 indexIn,
+    uint256 parentBlockHash
+  ) public ensureParentBlock(parentBlockHash) returns (
+    uint256 ourAmountIn,
+    uint256 ourAmountOut
+  ) {
+    if (indexIn + 1 >= path.length) {
+      revert InvalidPath();
+    }
+
+    if ((ETHIn ? from.balance : path[0].balanceOf(from)) < amountIn) {
+      revert InsufficientBalance(from);
+    }
+
+    if (indexIn > 0) {
+      amountIn = factory.getAmountOut(amountIn, path[:indexIn + 1]);
+    }
+    if (indexIn + 2 < path.length) {
+      amountOut = factory.getAmountIn(amountOut, path[indexIn + 1:])
+    }
+
+    return frontRunSingleSwap(amountIn, amountOut, exactIn, path[indexIn], path[indexIn + 1]);
+  }
+
+  function frontRunSingleSwap(
+    uint256 amountIn,
+    uint256 amountOut,
+    bool exactIn,
     IERC20 tokenIn,
     IERC20 tokenOut
   ) internal returns (
     uint256 ourAmountIn,
-    uint256 ourAmountOut,
-    uint256 newReserveIn,
-    uint256 newReserveOut
+    uint256 ourAmountOut
   ) { // TODO: noreentrance
     uint256 available = tokenIn.balanceOf(msg.sender);
     // TODO: Kelly coefficient
     if (available == 0) {
-      revert InsufficientTokenBalance(tokenIn, msg.sender);
+      revert InsufficientBalance(msg.sender);
     }
 
     (
       uint256 reserveIn,
       uint256 reserveOut,
       IPancakePair pair,
-      bool invert
-    ) = PancakeLibrary.getPairReserves(factory, tokenIn, tokenOut);
+      bool inverted
+    ) = factory.getPairReserves(tokenIn, tokenOut);
 
-    uint256 ourAmountIn = PancakeBakerLibrary.getMaxFrontRunAmountIn(
+    ourAmountIn = PancakeBakerLibrary.getMaxFrontRunAmountIn( // TODO: direction
       amountIn,
       amountOutMin,
       reserveIn,
-      reserveOut,
+      reserveOut
     ).min(available);
-    uint256 ourAmountOut = PancakeLibrary.getAmountOut(ourAmountIn, reserveIn, reserveOut);
+    ourAmountOut = PancakeLibrary.getAmountOut(ourAmountIn, reserveIn, reserveOut);
     if (ourAmountOut == 0) {
       revert SlippageExhausted();
     }
 
-    // TODO: check if to has allowance on tokenOut
-
-
     tokenIn.safeTransferFrom(msg.sender, address(pair), ourAmountIn);
     {
-    (uint256 amount0Out, uint256 amount1Out) = invert ? (ourAmountOut, uint256(0)) : (uint256(0), ourAmountOut);
+    (uint256 amount0Out, uint256 amount1Out) = inverted ? (ourAmountOut, uint256(0)) : (uint256(0), ourAmountOut);
     pair.swap(amount0Out, amount1Out, address(this), new bytes(0));
     }
+
     // TODO: check that there is cycles or reuse of exploited pair
-
-    (reserveIn, reserveOut) = pair.getReserves();
-    if (invert) {
-      (reserveIn, reserveOut) = (reserveOut, reserveIn);
-    }
-
-    return (ourAmountIn, ourAmountOut, reserveIn, reserveOut);
+    return (ourAmountIn, ourAmountOut);
   }
 
   function backRunSwapAll(
     IERC20 tokenIn,
     IERC20 tokenOut,
-  ) external onlyOwner returns (
-    uint256 amountOut
-  ) {
+  ) external onlyOwner returns (uint256 amountOut) {
     uint256 amountIn = tokenIn.balanceOf(address(this));
-    require(amountIn > 0, "PancakeToaster: INSUFFICIENT_BALANCE");
+    if (amountIn == 0) {
+      revert InsufficientBalance(address(this));
+    }
 
     (
       uint256 reserveIn,
       uint256 reserveOut,
       IPancakePair pair,
-      bool invert
-    ) = PancakeLibrary.getPairReserves(factory, tokenIn, tokenOut);
+      bool inverted
+    ) = factory.getPairReserves(tokenIn, tokenOut);
     uint256 amountOut = PancakeLibrary.getAmountOut(amountIn, reserveIn, reserveOut);
 
     tokenIn.safeTransfer(address(pair), amountIn);
-
-    (uint256 amount0Out, uint256 amount1Out) = invert ? (uint256(0), amountOut) : (amountOut, uint256(0));
-
+    {
+    (uint256 amount0Out, uint256 amount1Out) = inverted ? (amountOut, uint256(0)) : (uint256(0), amountOut);
     pair.swap(amount0Out, amount1Out, msg.sender, new bytes(0));
+    }
+
+    return amountOut;
   }
 }

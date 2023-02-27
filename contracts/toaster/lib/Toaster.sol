@@ -3,14 +3,14 @@ pragma solidity ^0.8.18;
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 
 abstract contract Toaster {
-  error Expired(uint number);
+  error Uncled();
   error InsufficientBalance(address account);
   error InsufficientTokenBalance(IERC20 token, address account);
 
-  modifier ensureBlock(uint number) {
-    // TODO: https://docs.flashbots.net/flashbots-protect/rpc/uncle-bandits
-    if (block.number != number) {
-      revert Expired(number);
+  // Uncle bandits: https://docs.flashbots.net/flashbots-protect/rpc/uncle-bandits
+  modifier ensureParentBlock(uint256 parentHash) {
+    if (blockhash(block.number - 1) != parentHash) {
+      revert Uncled();
     }
 
     _;
