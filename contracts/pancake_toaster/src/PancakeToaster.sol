@@ -3,21 +3,22 @@ pragma solidity ^0.8.18;
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/access/Ownable.sol";
-import {SignedMath} from "@openzeppelin/utils/math/SignedMath.sol";
+import {Math} from "@openzeppelin/utils/math/Math.sol";
 
 import {IPancakeFactory} from "@pancake_swap/interfaces/IPancakeFactory.sol";
 import {IPancakePair} from "@pancake_swap/interfaces/IPancakePair.sol";
 
 import {Toaster} from "@toaster/lib/Toaster.sol";
+import {PancakeLibrary} from "../lib/PancakeLibrary.sol";
 
 contract PancakeToaster is Ownable, Toaster {
-  using SignedMath for uint256;
+  using Math for uint256;
   using SafeERC20 for IERC20;
   using PancakeLibrary for IPancakeFactory;
-  using PancakeBakerLibrary for IPancakeFactory;
 
   IPancakeFactory public immutable factory;
 
+  error InvalidPath();
   error SlippageExhausted();
 
   constructor(IPancakeFactory _factory) Ownable() {
@@ -29,11 +30,10 @@ contract PancakeToaster is Ownable, Toaster {
     address from,
     uint256 amountIn,
     uint256 amountOut,
-    bool exactIn,
     bool ETHIn,
     IERC20[] calldata path,
     uint256 indexIn,
-    uint256 parentBlockHash
+    bytes32 parentBlockHash
   ) external returns (
     uint256 ourAmountIn,
     uint256 ourAmountOut,
@@ -44,14 +44,14 @@ contract PancakeToaster is Ownable, Toaster {
       from,
       amountIn,
       amountOut,
-      exactIn,
       ETHIn,
       path,
       indexIn,
       parentBlockHash
     );
 
-    (newReserveIn, newReserveOut, ) = factory.getPairReserves(path[indexIn], path[indexIn + 1]);
+    (newReserveIn, newReserveOut, , ) = factory.getPairReserves(
+      path[indexIn], path[indexIn + 1]);
     return (ourAmountIn, ourAmountOut, newReserveIn, newReserveOut);
   }
 
@@ -59,11 +59,10 @@ contract PancakeToaster is Ownable, Toaster {
     address from,
     uint256 amountIn,
     uint256 amountOut,
-    bool exactIn,
     bool ETHIn,
     IERC20[] calldata path,
     uint256 indexIn,
-    uint256 parentBlockHash
+    bytes32 parentBlockHash
   ) public ensureParentBlock(parentBlockHash) returns (
     uint256 ourAmountIn,
     uint256 ourAmountOut
@@ -80,16 +79,15 @@ contract PancakeToaster is Ownable, Toaster {
       amountIn = factory.getAmountOut(amountIn, path[:indexIn + 1]);
     }
     if (indexIn + 2 < path.length) {
-      amountOut = factory.getAmountIn(amountOut, path[indexIn + 1:])
+      amountOut = factory.getAmountIn(amountOut, path[indexIn + 1:]);
     }
 
-    return frontRunSingleSwap(amountIn, amountOut, exactIn, path[indexIn], path[indexIn + 1]);
+    return frontRunSingleSwap(amountIn, amountOut, path[indexIn], path[indexIn + 1]);
   }
 
   function frontRunSingleSwap(
     uint256 amountIn,
     uint256 amountOut,
-    bool exactIn,
     IERC20 tokenIn,
     IERC20 tokenOut
   ) internal returns (
@@ -109,9 +107,9 @@ contract PancakeToaster is Ownable, Toaster {
       bool inverted
     ) = factory.getPairReserves(tokenIn, tokenOut);
 
-    ourAmountIn = PancakeBakerLibrary.getMaxFrontRunAmountIn( // TODO: direction
+    ourAmountIn = PancakeLibrary.getMaxFrontRunAmountIn(
       amountIn,
-      amountOutMin,
+      amountOut,
       reserveIn,
       reserveOut
     ).min(available);
@@ -132,7 +130,7 @@ contract PancakeToaster is Ownable, Toaster {
 
   function backRunSwapAll(
     IERC20 tokenIn,
-    IERC20 tokenOut,
+    IERC20 tokenOut
   ) external onlyOwner returns (uint256 amountOut) {
     uint256 amountIn = tokenIn.balanceOf(address(this));
     if (amountIn == 0) {
@@ -145,7 +143,7 @@ contract PancakeToaster is Ownable, Toaster {
       IPancakePair pair,
       bool inverted
     ) = factory.getPairReserves(tokenIn, tokenOut);
-    uint256 amountOut = PancakeLibrary.getAmountOut(amountIn, reserveIn, reserveOut);
+    amountOut = PancakeLibrary.getAmountOut(amountIn, reserveIn, reserveOut);
 
     tokenIn.safeTransfer(address(pair), amountIn);
     {

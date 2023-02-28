@@ -15,6 +15,7 @@ RUN cargo new --quiet ./src/sandwitch \
   && echo 'fn main() {}' > ./src/contracts/build.rs
 COPY ./src/sandwitch/Cargo.toml ./src/sandwitch/
 COPY ./src/contracts/Cargo.toml ./src/contracts/
+RUN cargo check --release
 RUN cargo build --release
 # build contract bindings
 COPY ./contracts/ ./contracts/

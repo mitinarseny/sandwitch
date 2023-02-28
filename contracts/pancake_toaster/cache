@@ -11,10 +11,47 @@
     ]
   },
   "files": {
-    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeERC20.sol": {
-      "lastModificationDate": 1675954983686,
-      "contentHash": "0f55e7b7b06218826e54d4fb6ef77c7d",
-      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeERC20.sol",
+    "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/access/Ownable.sol": {
+      "lastModificationDate": 1676243961509,
+      "contentHash": "e436cea06129be2c73cda4b1acc848b5",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/access/Ownable.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Context.sol"
+      ],
+      "versionRequirement": "^0.8.0",
+      "artifacts": {
+        "Ownable": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "Ownable.sol/Ownable.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol": {
+      "lastModificationDate": 1676243961532,
+      "contentHash": "d3f395dc838796643e7a71419900ab23",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
       "solcConfig": {
         "settings": {
           "optimizer": {
@@ -39,17 +76,196 @@
         }
       },
       "imports": [],
-      "versionRequirement": ">=0.5.0",
+      "versionRequirement": "^0.8.0",
       "artifacts": {
-        "IPancakeERC20": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeERC20.sol/IPancakeERC20.json"
+        "IERC20": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "IERC20.sol/IERC20.json"
         }
       }
     },
-    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol": {
+    "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol": {
+      "lastModificationDate": 1676243961535,
+      "contentHash": "e2c0f4f502e2fe75be0585737839ba9b",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": "^0.8.0",
+      "artifacts": {
+        "IERC20Permit": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "IERC20Permit.sol/IERC20Permit.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol": {
+      "lastModificationDate": 1676243961536,
+      "contentHash": "422a9e1d0d93c6912af596faeb973a61",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Address.sol"
+      ],
+      "versionRequirement": "^0.8.0",
+      "artifacts": {
+        "SafeERC20": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "SafeERC20.sol/SafeERC20.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Address.sol": {
+      "lastModificationDate": 1676243961540,
+      "contentHash": "2c6fe5d06414fe4187c8ede16c92b102",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Address.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": "^0.8.1",
+      "artifacts": {
+        "Address": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "Address.sol/Address.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Context.sol": {
+      "lastModificationDate": 1676243961541,
+      "contentHash": "5f2c5c4b6af2dd4551027144797bc8be",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Context.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": "^0.8.0",
+      "artifacts": {
+        "Context": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "Context.sol/Context.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/math/Math.sol": {
+      "lastModificationDate": 1676243961545,
+      "contentHash": "a3f54b5f791e71fcdde6fc1e8f562097",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/math/Math.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": "^0.8.0",
+      "artifacts": {
+        "Math": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "Math.sol/Math.json"
+        }
+      }
+    },
+    "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol": {
       "lastModificationDate": 1675954983686,
       "contentHash": "b4369da3b48e6ee7315c0f81a7c88aee",
-      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
       "solcConfig": {
         "settings": {
           "optimizer": {
@@ -77,14 +293,14 @@
       "versionRequirement": ">=0.5.0",
       "artifacts": {
         "IPancakeFactory": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeFactory.sol/IPancakeFactory.json"
+          "0.8.19+commit.7dd6d404.Linux.gcc": "IPancakeFactory.sol/IPancakeFactory.json"
         }
       }
     },
-    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol": {
+    "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol": {
       "lastModificationDate": 1675954983686,
       "contentHash": "3b4c47291bf633131ae2cb49c325ba19",
-      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
       "solcConfig": {
         "settings": {
           "optimizer": {
@@ -112,49 +328,14 @@
       "versionRequirement": ">=0.5.0",
       "artifacts": {
         "IPancakePair": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakePair.sol/IPancakePair.json"
+          "0.8.19+commit.7dd6d404.Linux.gcc": "IPancakePair.sol/IPancakePair.json"
         }
       }
     },
-    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol": {
-      "lastModificationDate": 1675954983686,
-      "contentHash": "330ac318062ec2886d51cd341e559add",
-      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol",
-      "solcConfig": {
-        "settings": {
-          "optimizer": {
-            "enabled": false,
-            "runs": 200
-          },
-          "outputSelection": {
-            "*": {
-              "": [
-                "ast"
-              ],
-              "*": [
-                "abi",
-                "evm.bytecode",
-                "evm.deployedBytecode",
-                "evm.methodIdentifiers"
-              ]
-            }
-          },
-          "evmVersion": "london",
-          "libraries": {}
-        }
-      },
-      "imports": [],
-      "versionRequirement": ">=0.6.2",
-      "artifacts": {
-        "IPancakeRouter01": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeRouter01.sol/IPancakeRouter01.json"
-        }
-      }
-    },
-    "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter02.sol": {
-      "lastModificationDate": 1675954983686,
-      "contentHash": "643aedf0e1831e586f967ca3b018f065",
-      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter02.sol",
+    "/home/mitinarseny/dev/sandwitch/contracts/toaster/lib/Toaster.sol": {
+      "lastModificationDate": 1677596064352,
+      "contentHash": "f33df8050a6535ffba16da69a4490734",
+      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/toaster/lib/Toaster.sol",
       "solcConfig": {
         "settings": {
           "optimizer": {
@@ -179,93 +360,18 @@
         }
       },
       "imports": [
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol"
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol"
       ],
-      "versionRequirement": ">=0.6.2",
+      "versionRequirement": "^0.8.18",
       "artifacts": {
-        "IPancakeRouter02": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "IPancakeRouter02.sol/IPancakeRouter02.json"
-        }
-      }
-    },
-    "/home/mitinarseny/dev/sandwitch/contracts/solmate/src/auth/Owned.sol": {
-      "lastModificationDate": 1671235000654,
-      "contentHash": "11fec455b72d2743b77d783d6017e1e9",
-      "sourceName": "/home/mitinarseny/dev/sandwitch/contracts/solmate/src/auth/Owned.sol",
-      "solcConfig": {
-        "settings": {
-          "optimizer": {
-            "enabled": false,
-            "runs": 200
-          },
-          "outputSelection": {
-            "*": {
-              "": [
-                "ast"
-              ],
-              "*": [
-                "abi",
-                "evm.bytecode",
-                "evm.deployedBytecode",
-                "evm.methodIdentifiers"
-              ]
-            }
-          },
-          "evmVersion": "london",
-          "libraries": {}
-        }
-      },
-      "imports": [],
-      "versionRequirement": ">=0.8.0",
-      "artifacts": {
-        "Owned": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "Owned.sol/Owned.json"
-        }
-      }
-    },
-    "lib/BakerLibrary.sol": {
-      "lastModificationDate": 1676067580278,
-      "contentHash": "ff437ecd86ef4119d79a81aa5c1d22dd",
-      "sourceName": "lib/BakerLibrary.sol",
-      "solcConfig": {
-        "settings": {
-          "optimizer": {
-            "enabled": false,
-            "runs": 200
-          },
-          "outputSelection": {
-            "*": {
-              "": [
-                "ast"
-              ],
-              "*": [
-                "abi",
-                "evm.bytecode",
-                "evm.deployedBytecode",
-                "evm.methodIdentifiers"
-              ]
-            }
-          },
-          "evmVersion": "london",
-          "libraries": {}
-        }
-      },
-      "imports": [
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
-        "lib/PancakeLibrary.sol",
-        "lib/SafeMath.sol"
-      ],
-      "versionRequirement": null,
-      "artifacts": {
-        "PancakeBakerLibrary": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "BakerLibrary.sol/PancakeBakerLibrary.json"
+        "Toaster": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "Toaster.sol/Toaster.json"
         }
       }
     },
     "lib/PancakeLibrary.sol": {
-      "lastModificationDate": 1676054681275,
-      "contentHash": "077f38eea5d3ba7ea26c220e58d98aec",
+      "lastModificationDate": 1677596229088,
+      "contentHash": "65f54b037853c0a10734f44f7a584397",
       "sourceName": "lib/PancakeLibrary.sol",
       "solcConfig": {
         "settings": {
@@ -291,55 +397,21 @@
         }
       },
       "imports": [
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
-        "lib/SafeMath.sol"
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/math/Math.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol"
       ],
-      "versionRequirement": null,
+      "versionRequirement": "^0.8.18",
       "artifacts": {
         "PancakeLibrary": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "PancakeLibrary.sol/PancakeLibrary.json"
-        }
-      }
-    },
-    "lib/SafeMath.sol": {
-      "lastModificationDate": 1676029295614,
-      "contentHash": "67d6a470da328241493030e14af350a5",
-      "sourceName": "lib/SafeMath.sol",
-      "solcConfig": {
-        "settings": {
-          "optimizer": {
-            "enabled": false,
-            "runs": 200
-          },
-          "outputSelection": {
-            "*": {
-              "": [
-                "ast"
-              ],
-              "*": [
-                "abi",
-                "evm.bytecode",
-                "evm.deployedBytecode",
-                "evm.methodIdentifiers"
-              ]
-            }
-          },
-          "evmVersion": "london",
-          "libraries": {}
-        }
-      },
-      "imports": [],
-      "versionRequirement": null,
-      "artifacts": {
-        "SafeMath": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "SafeMath.sol/SafeMath.json"
+          "0.8.19+commit.7dd6d404.Linux.gcc": "PancakeLibrary.sol/PancakeLibrary.json"
         }
       }
     },
     "src/PancakeToaster.sol": {
-      "lastModificationDate": 1676067580277,
-      "contentHash": "0e4c5d857d9f81a0475667de9d539a17",
+      "lastModificationDate": 1677596373485,
+      "contentHash": "d2e2a7ff7767a46ce2295a719c1db605",
       "sourceName": "src/PancakeToaster.sol",
       "solcConfig": {
         "settings": {
@@ -365,20 +437,22 @@
         }
       },
       "imports": [
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeERC20.sol",
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter01.sol",
-        "/home/mitinarseny/dev/sandwitch/contracts/pancake-smart-contracts/projects/exchange-protocol/contracts/interfaces/IPancakeRouter02.sol",
-        "/home/mitinarseny/dev/sandwitch/contracts/solmate/src/auth/Owned.sol",
-        "lib/BakerLibrary.sol",
-        "lib/PancakeLibrary.sol",
-        "lib/SafeMath.sol"
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/access/Ownable.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Address.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/Context.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/utils/math/Math.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakeFactory.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/pancake_swap/projects/exchange-protocol/contracts/interfaces/IPancakePair.sol",
+        "/home/mitinarseny/dev/sandwitch/contracts/toaster/lib/Toaster.sol",
+        "lib/PancakeLibrary.sol"
       ],
-      "versionRequirement": null,
+      "versionRequirement": "^0.8.18",
       "artifacts": {
         "PancakeToaster": {
-          "0.8.17+commit.8df45f5f.Linux.gcc": "PancakeToaster.sol/PancakeToaster.json"
+          "0.8.19+commit.7dd6d404.Linux.gcc": "PancakeToaster.sol/PancakeToaster.json"
         }
       }
     }

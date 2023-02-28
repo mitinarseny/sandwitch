@@ -1,27 +1,26 @@
-[pancake_swap]
-root = "pancake_swap/projects/exchange-protocol"
-sources = "contracts/interfaces"
-libriries = ["contracts/libraries"]
-artifacts = "artifacts"
-cache = "cache"
-tests = "test"
+# [pancake_swap]
+# root = "pancake_swap/projects/exchange-protocol"
+# sources = "contracts/interfaces"
+# libriries = ["contracts/libraries"]
+# artifacts = "artifacts"
+# cache = "cache"
+# tests = "test"
 
-[uniswap_core_v2]
-root = "uniswap_v2_core"
-sources = "contracts/interfaces"
-libriries = ["contracts/libriries"]
-artifacts = "build/artifacts"
-cache = "build/cache"
-tests = "test"
+# [uniswap_core_v2]
+# root = "uniswap_v2_core"
+# sources = "contracts/interfaces"
+# libriries = ["contracts/libriries"]
+# artifacts = "build/artifacts"
+# cache = "build/cache"
+# tests = "test"
 
 [pancake_toaster]
 root = "pancake_toaster"
 sources = "src"
 libraries = ["lib"]
 remappings."@pancake_swap" = "pancake_swap/projects/exchange-protocol/contracts"
-remappings."@uniswap_v2_core" = "uniswap_v2_core/contracts"
 remappings."@openzeppelin" = "openzeppelin/contracts"
-remappings."@solmate" = "solmate/src"
+remappings."@toaster" = "toaster"
 artifacts = "out"
 cache = "cache"
 

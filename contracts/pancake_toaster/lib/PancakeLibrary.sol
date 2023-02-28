@@ -1,14 +1,16 @@
 pragma solidity ^0.8.18;
 
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/utils/math/Math.sol";
 
 import {IPancakeFactory} from "@pancake_swap/interfaces/IPancakeFactory.sol";
 import {IPancakePair} from "@pancake_swap/interfaces/IPancakePair.sol";
-import {PancakePair} from "@pancake_swap/PancakePair.sol";
 
 library PancakeLibrary {
-  bytes32 internal constant PAIR_INIT_CODE_HASH = keccak256(abi.encodePacked(type(PancakePair).creationCode));
-  uint256 internal constant BIP = 1e6;
+  using Math for uint256;
+
+  bytes32 internal constant PAIR_INIT_CODE_HASH = hex"a5934690703a592a07e841ca29d5e5c79b5e22ed4749057bb216dc31100be1c0";
+  uint256 internal constant BIP = 1e4;
   uint256 internal constant FEE = 9975;
 
   error InsufficientInputAmount();
@@ -19,24 +21,24 @@ library PancakeLibrary {
   function sortTokens(
     IERC20 tokenA,
     IERC20 tokenB
-  ) internal pure returns (address token0, address token1) {
+  ) internal pure returns (IERC20 token0, IERC20 token1) {
     require(tokenA != tokenB);
     (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-    require(token0 != address(0));
+    require(address(token0) != address(0));
   }
 
   function pairForSorted(
     IPancakeFactory factory,
     IERC20 token0,
     IERC20 token1
-  ) internal pure returns (address) {
+  ) internal pure returns (IPancakePair) {
     require(token0 < token1);
-    address(uint160(uint256(keccak256(abi.encodePacked(
+    return IPancakePair(address(uint160(uint256(keccak256(abi.encodePacked(
       hex"ff",
       factory,
       keccak256(abi.encodePacked(token0, token1)),
-      PAIR_INIT_CODE_HASH,
-    )))))
+      PAIR_INIT_CODE_HASH
+    ))))));
   }
 
   function pairFor(
@@ -44,7 +46,7 @@ library PancakeLibrary {
     IERC20 tokenA,
     IERC20 tokenB
   ) internal pure returns (IPancakePair pair, bool inverted) {
-    (address token0, address token1) = sortTokens(tokenA, tokenB);
+    (IERC20 token0, IERC20 token1) = sortTokens(tokenA, tokenB);
     return (pairForSorted(factory, token0, token1), tokenA != token0);
   }
 
@@ -59,7 +61,7 @@ library PancakeLibrary {
     bool inverted
   ) {
     (pair, inverted) = pairFor(factory, tokenA, tokenB);
-    (reserveA, reserveB) = pair.getReserves();
+    (reserveA, reserveB, ) = pair.getReserves();
     if (inverted) (reserveA, reserveB) = (reserveB, reserveA);
     return (reserveA, reserveB, pair, inverted);
   }
@@ -68,7 +70,7 @@ library PancakeLibrary {
     uint256 amountIn,
     uint256 reserveIn,
     uint256 reserveOut
-  ) internal pure returns (uint256 amountOut) {
+  ) internal pure returns (uint256) {
     if (amountIn == 0) {
       revert InsufficientInputAmount();
     }
@@ -84,7 +86,7 @@ library PancakeLibrary {
     uint256 amountOut,
     uint256 reserveIn,
     uint256 reserveOut
-  ) internal pure returns (uint256 amountIn) {
+  ) internal pure returns (uint256) {
     if (amountOut == 0) {
       revert InsufficientOutputAmount();
     }
@@ -105,7 +107,7 @@ library PancakeLibrary {
     }
 
     for (uint256 i; i < path.length - 1; ++i) {
-      (uint256 reserveIn, uint256 reserveOut, ) = getPairReserves(factory, path[i], path[i + 1]);
+      (uint256 reserveIn, uint256 reserveOut, , ) = getPairReserves(factory, path[i], path[i + 1]);
       amountIn = getAmountOut(amountIn, reserveIn, reserveOut);
     }
 
@@ -122,10 +124,23 @@ library PancakeLibrary {
     }
 
     for (uint256 i = path.length - 1; i > 0; --i) {
-      (uint256 reserveIn, uint256 reserveOut, ) = getPairReserves(factory, path[i - 1], path[i]);
+      (uint256 reserveIn, uint256 reserveOut, , ) = getPairReserves(factory, path[i - 1], path[i]);
       amountOut = getAmountIn(amountOut, reserveIn, reserveOut);
     }
 
     return amountOut;
+  }
+
+  function getMaxFrontRunAmountIn(
+    uint256 amountIn,
+    uint256 amountOut,
+    uint256 reserveIn,
+    uint256 reserveOut
+  ) internal pure returns (uint256) {
+    return (
+      (
+        FEE * amountIn * (4 * BIP * reserveIn * reserveOut / amountOut + FEE * amountIn)
+      ).sqrt() - 2 * BIP * reserveIn - FEE * amountIn
+    ) / (2 * FEE);
   }
 }
