@@ -18,7 +18,6 @@ contract PancakeToaster is Ownable, Toaster {
 
   IPancakeFactory public immutable factory;
 
-  error InvalidPath();
   error SlippageExhausted();
 
   constructor(IPancakeFactory _factory) Ownable() {
@@ -68,7 +67,7 @@ contract PancakeToaster is Ownable, Toaster {
     uint256 ourAmountOut
   ) {
     if (indexIn + 1 >= path.length) {
-      revert InvalidPath();
+      revert PancakeLibrary.InvalidPath();
     }
 
     if ((ETHIn ? from.balance : path[0].balanceOf(from)) < amountIn) {

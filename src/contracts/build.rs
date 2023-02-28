@@ -1,10 +1,16 @@
+#![feature(iterator_try_collect)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use ethers::contract::MultiAbigen;
-use ethers::solc::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
-use ethers::solc::{self, artifacts::Severity, Project};
+use ethers::contract::{Abigen, MultiAbigen};
+use ethers::solc::{
+    self,
+    artifacts::Severity,
+    remappings::{RelativeRemapping, RelativeRemappingPathBuf},
+    Project,
+};
 use lazy_static::lazy_static;
 use serde::Deserialize;
 
@@ -40,44 +46,44 @@ fn main() {
         let project = Project::builder()
             .paths(cfg.into())
             .offline()
+            .set_compiler_severity_filter(Severity::Warning)
             .build()
             .unwrap();
-        let paths = Some(&project.paths.sources)
+        for p in Some(&project.paths.sources)
             .into_iter()
-            .chain(project.paths.libraries.iter());
-        // TODO: add other paths
-
-        for p in paths {
+            .chain(project.paths.libraries.iter())
+        {
             println!("cargo:rerun-if-changed={}", p.display());
         }
 
-        {
-            let out = project.compile().unwrap().output();
-            let diagnostics = out.diagnostics(&[], Severity::Info);
-            if diagnostics.has_error() {
-                panic!("{}", diagnostics);
-            }
-            if diagnostics.has_warning() {
-                println!("cargo:warning={}", diagnostics);
-            }
+        let compiled = project.compile().unwrap();
+        if compiled.has_compiler_errors() {
+            panic!("{}", compiled);
+        } else if compiled.has_compiler_warnings() {
+            println!("cargo:warning={}", compiled);
         }
-
-        MultiAbigen::from_json_files(project.artifacts_path())
-            .unwrap()
-            .build()
-            .unwrap()
-            .write_to_module(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("./src")
-                    .join(module_path),
-                false,
-            )
-            .unwrap();
 
         println!(
             "cargo:rerun-if-changed={}",
             project.artifacts_path().display()
         );
+
+        let module_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("./src")
+            .join(module_path);
+        if module_path.is_dir() {
+            fs::remove_dir_all(&module_path).unwrap();
+        }
+
+        compiled
+            .into_artifacts()
+            .map(|(a, _)| Abigen::from_file(a.path))
+            .try_collect::<MultiAbigen>()
+            .unwrap()
+            .build()
+            .unwrap()
+            .write_to_module(module_path, false)
+            .unwrap();
     }
 }
 
