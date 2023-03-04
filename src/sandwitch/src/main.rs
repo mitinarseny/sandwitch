@@ -15,7 +15,7 @@ use sandwitch::{App, Config};
 #[derive(Parser)]
 #[command(version)]
 struct Args {
-    #[clap(
+    #[arg(
         short, long,
         value_parser,
         value_hint = ValueHint::FilePath,

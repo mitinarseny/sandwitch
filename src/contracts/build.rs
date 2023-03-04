@@ -46,7 +46,7 @@ fn main() {
         let project = Project::builder()
             .paths(cfg.into())
             .offline()
-            .set_compiler_severity_filter(Severity::Warning)
+            .no_auto_detect()
             .build()
             .unwrap();
         for p in Some(&project.paths.sources)
@@ -57,10 +57,23 @@ fn main() {
         }
 
         let compiled = project.compile().unwrap();
-        if compiled.has_compiler_errors() {
-            panic!("{}", compiled);
-        } else if compiled.has_compiler_warnings() {
-            println!("cargo:warning={}", compiled);
+
+        let artifact_files: Vec<PathBuf> = compiled
+            .compiled_artifacts()
+            .artifact_files()
+            .chain(compiled.cached_artifacts().artifact_files())
+            .map(|a| &a.file)
+            .cloned()
+            .collect();
+
+        let output = compiled.output();
+        let diagnostics = output.diagnostics(&[], Severity::Error);
+        if diagnostics.has_error() {
+            panic!("{}", diagnostics);
+        }
+        let diagnostics = output.diagnostics(&[], Severity::Warning);
+        if diagnostics.has_warning() {
+            println!("cargo:warning={}", diagnostics);
         }
 
         println!(
@@ -75,9 +88,9 @@ fn main() {
             fs::remove_dir_all(&module_path).unwrap();
         }
 
-        compiled
-            .into_artifacts()
-            .map(|(a, _)| Abigen::from_file(a.path))
+        artifact_files
+            .iter()
+            .map(|a| Abigen::from_file(a).map(|a| a.rustfmt(true)))
             .try_collect::<MultiAbigen>()
             .unwrap()
             .build()

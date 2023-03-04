@@ -23,4 +23,3 @@ remappings."@openzeppelin" = "openzeppelin/contracts"
 remappings."@toaster" = "toaster"
 artifacts = "out"
 cache = "cache"
-

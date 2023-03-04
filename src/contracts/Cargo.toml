@@ -14,5 +14,5 @@ toml = "0.5"
 
 [features]
 pancake_swap = []
-uniswap_v2_core = []
 pancake_toaster = []
+uniswap_v2_core = []

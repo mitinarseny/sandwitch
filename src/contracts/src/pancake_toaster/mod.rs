@@ -8,6 +8,7 @@ pub mod context;
 pub mod i_pancake_factory;
 pub mod i_pancake_pair;
 pub mod ierc20;
+pub mod ierc20_metadata;
 pub mod ierc20_permit;
 pub mod math;
 pub mod ownable;

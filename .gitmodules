@@ -1,6 +1,3 @@
-[submodule "contracts/solmate"]
-	path = contracts/solmate
-	url = https://github.com/transmissions11/solmate
 [submodule "contracts/pancake_swap"]
 	path = contracts/pancake_swap
 	url = https://github.com/pancakeswap/pancake-smart-contracts
