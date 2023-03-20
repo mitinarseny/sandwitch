@@ -7,6 +7,10 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+bitmaps = "3.2"
+bytes = { version = "1.4", features = ["serde"] }
 contracts = { path = "./src/contracts" }
 ethers = { version = "=1.0.2", default-features = false, features = ["rustls"] }
+impl-tools = "0.8.0"
+itertools = "0.10"
 

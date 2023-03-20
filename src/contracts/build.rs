@@ -26,17 +26,27 @@ lazy_static! {
 }
 
 fn main() {
-    let projects: HashMap<String, ProjectPathsConfig> =
+    let projects: HashMap<String, ProjectConfig> =
         toml::from_str(&fs::read_to_string(PROJECTS_FILE.as_path()).unwrap()).unwrap();
     println!("cargo:rerun-if-changed={}", PROJECTS_FILE.display());
 
-    for (feature, cfg) in projects {
-        let module_path = feature.replace("-", "_");
+    for (
+        feature,
+        ProjectConfig {
+            module_path,
+            paths: cfg,
+        },
+    ) in projects
+    {
+        let module_path = module_path.unwrap_or_else(|| feature.replace("-", "_").into());
         {
-            if env::var(format!(
-                "CARGO_FEATURE_{}",
-                module_path.to_ascii_uppercase()
-            ))
+            if env::var(
+                [
+                    "CARGO_FEATURE_".as_ref(),
+                    module_path.as_os_str().to_ascii_uppercase().as_os_str(),
+                ]
+                .join("".as_ref()),
+            )
             .is_err()
             {
                 continue;
@@ -101,7 +111,15 @@ fn main() {
 }
 
 #[derive(Debug, Deserialize)]
+struct ProjectConfig {
+    module_path: Option<PathBuf>,
+    #[serde(flatten)]
+    paths: ProjectPathsConfig,
+}
+
+#[derive(Debug, Deserialize)]
 struct ProjectPathsConfig {
+    module_path: Option<PathBuf>,
     root: PathBuf,
     sources: Option<PathBuf>,
     #[serde(default)]
@@ -121,6 +139,7 @@ impl From<ProjectPathsConfig> for solc::ProjectPathsConfig {
             remappings,
             artifacts,
             cache,
+            ..
         } = value;
 
         let root = CONTRACTS_DIR.join(root);

@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+bitmaps = { workspace = true }
+bytes = { workspace = true }
 ethers = { workspace = true, features = ["abigen"] }
+impl-tools = { workspace = true }
+itertools = { workspace = true }
 
 [build-dependencies]
 ethers = { workspace = true, features = ["abigen", "ethers-solc"] }
@@ -13,6 +17,9 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.5"
 
 [features]
+default = ["multicall"]
+
+multicall = []
 pancake_swap = []
 pancake_toaster = []
 uniswap_v2_core = []

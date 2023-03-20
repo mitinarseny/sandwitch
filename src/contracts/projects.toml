@@ -1,3 +1,11 @@
+[multicall]
+root = "multicall"
+sources = "src"
+libraries = ["lib"]
+remappings."@openzeppelin" = "openzeppelin/contracts"
+artifacts = "out"
+cache = "cache"
+
 [pancake_swap]
 root = "pancake_swap/projects/exchange-protocol"
 sources = "contracts/interfaces"

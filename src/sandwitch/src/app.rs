@@ -119,7 +119,7 @@ where
 
     async fn make_monitor(
         client: impl Into<Arc<Provider<P>>>,
-        accounts: impl Into<Arc<Accounts<P, S>>>,
+        // accounts: impl Into<Arc<Accounts<P, S>>>,
         config: MonitorsConfig,
     ) -> anyhow::Result<(Box<dyn TopTxMonitor>, Box<dyn TopBlockMonitor>)> {
         let (mut tx_monitors, mut block_monitors) =

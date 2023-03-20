@@ -1,0 +1,50 @@
+{
+  "_format": "ethers-rs-sol-cache-3",
+  "paths": {
+    "artifacts": "out",
+    "build_infos": "out/build-info",
+    "sources": "src",
+    "tests": "test",
+    "scripts": "script",
+    "libraries": [
+      "lib"
+    ]
+  },
+  "files": {
+    "src/MultiCall.sol": {
+      "lastModificationDate": 1679263394599,
+      "contentHash": "6e466751debd409841418f2323cd43b0",
+      "sourceName": "src/MultiCall.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": "^0.8.19",
+      "artifacts": {
+        "MultiCall": {
+          "0.8.19+commit.7dd6d404.Linux.gcc": "MultiCall.sol/MultiCall.json"
+        }
+      }
+    }
+  }
+}

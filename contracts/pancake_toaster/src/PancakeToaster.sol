@@ -72,6 +72,7 @@ contract PancakeToaster is Ownable, Toaster {
     }
 
     if ((ETHIn ? from.balance : path[0].balanceOf(from)) < amountIn) {
+      // TODO: check user approval on first token for router
       revert InsufficientBalance(from);
     }
 

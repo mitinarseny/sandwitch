@@ -1,3 +1,5 @@
+#![feature(iterator_try_collect)]
+
 macro_rules! check_mod {
     ($feature:literal => $module:ident) => {
         #[cfg(feature = $feature)]
@@ -10,6 +12,7 @@ macro_rules! check_mod {
 }
 
 check_mod! {
+    "multicall" => multicall_utils,
     "pancake_swap" => pancake_swap,
     "pancake_toaster" => pancake_toaster,
     "uniswap_core_v2" => uniswap_core_v2
