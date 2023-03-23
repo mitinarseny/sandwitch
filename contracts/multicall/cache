@@ -12,8 +12,8 @@
   },
   "files": {
     "src/MultiCall.sol": {
-      "lastModificationDate": 1679263394599,
-      "contentHash": "6e466751debd409841418f2323cd43b0",
+      "lastModificationDate": 1679324623725,
+      "contentHash": "9f233f62fc72cd7a92200279ff470730",
       "sourceName": "src/MultiCall.sol",
       "solcConfig": {
         "settings": {

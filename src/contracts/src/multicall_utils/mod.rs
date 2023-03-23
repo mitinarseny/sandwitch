@@ -1,3 +1,6 @@
+use arrow2::bitmap::{chunk_iter_to_vec, Bitmap, MutableBitmap};
+use bytes::{Buf, BufMut};
+use core::convert;
 use ethers::{
     abi::{
         self, ethabi, AbiArrayType, AbiDecode, AbiEncode, AbiError, AbiType, Detokenize,
@@ -8,19 +11,30 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use itertools::Itertools;
+use std::{array::TryFromSliceError, ops::Index};
 
 #[path = "../multicall/mod.rs"]
 mod inner;
 use inner::multi_call::MultiCall as MultiCallInner;
 
-use self::inner::multi_call::{Failed, MulticallCall};
+use self::inner::multi_call::{
+    Failed as FailedRaw, MulticallCall as MultiCallRaw, MulticallReturn,
+};
+
+#[derive(Clone, Debug)]
+pub enum CallType {
+    Call,
+    GetBalance,
+    Create,
+    Group(Vec<CallType>),
+}
 
 #[derive(Clone)]
 pub enum Call {
     Call {
         target: Address,
         value: U256,
-        calldata: Bytes,
+        calldata: bytes::Bytes,
     },
     GetBalance(BalanceOf),
     Transfer {
@@ -29,15 +43,17 @@ pub enum Call {
     },
     Create {
         value: U256,
-        bytecode: Bytes,
+        bytecode: bytes::Bytes,
     },
     Create2 {
         value: U256,
         salt: U256,
-        bytecode: Bytes,
+        bytecode: bytes::Bytes,
     },
     Group(MultiCall),
 }
+
+type MultiCall = Vec<TryCall>;
 
 #[derive(Clone, Copy)]
 pub enum BalanceOf {
@@ -57,87 +73,53 @@ impl Call {
             value: value.into(),
             calldata: {
                 let inputs = abi::encode(&call.into_tokens());
-                C::selector().into_iter().chain(inputs).collect().into()
+                C::selector().into_iter().chain(inputs).collect()
             },
         }
     }
 
-    pub const fn get_balance_of_this() -> Self {
-        Self::GetBalance(BalanceOf::This)
-    }
-
-    pub const fn get_balance_of_msg_sender() -> Self {
-        Self::GetBalance(BalanceOf::MsgSender)
-    }
-
-    pub const fn get_balance_of(address: Address) -> Self {
-        Self::GetBalance(BalanceOf::Address(address))
-    }
-
-    pub const fn transfer(to: Address, amount: impl Into<U256>) -> Self {
-        Self::Transfer {
-            to,
-            amount: amount.into(),
+    fn call_type(&self) -> CallType {
+        match self {
+            Self::Call | Self::Transfer => CallType::Call,
+            Self::Create | Self::Create2 => CallType::Create,
+            Call::Group(calls) => calls.iter().map(Self::call_type).collect(),
         }
     }
 
-    pub fn create(value: impl Into<U256>, bytecode: impl Into<Bytes>) -> Self {
-        Self::Create {
-            value: value.into(),
-            bytecode: bytecode.into(),
-        }
-    }
-
-    pub fn create2(
-        value: impl Into<U256>,
-        salt: impl Into<U256>,
-        bytecode: impl Into<Bytes>,
-    ) -> Self {
-        Self::Create2 {
-            value: value.into(),
-            salt: salt.into(),
-            bytecode: bytecode.into(),
-        }
-    }
-
-    pub fn group(calls: impl IntoIterator<Item = TryCall>) -> Self {
-        Self::Group(calls.into_iter().collect())
-    }
-
-    pub fn encode(self) -> (Cmd, Bytes) {
+    fn encode(self) -> (Cmd, bytes::Bytes) {
         match self {
             Self::Call {
                 target,
                 value,
                 calldata,
-            } if value.is_zero() => (Cmd::Call, {
-                let mut b =
-                    bytes::BytesMut::with_capacity(target.as_bytes().len() + calldata.len());
-                b.extend(target.to_fixed_bytes());
-                b.extend(calldata);
-                Bytes(b.into())
-            }),
+            } if value.is_zero() => (
+                Cmd::Call,
+                bytes::BytesMut::with_capacity(target.as_bytes().len() + calldata.len())
+                    .write(target.to_fixed_bytes())
+                    .write(calldata)
+                    .into(),
+            ),
             Self::Call {
                 target,
                 value,
                 calldata,
-            } => (Cmd::CallValue, {
-                let value = Big(value).to_fixed_bytes();
-                let mut b = bytes::BytesMut::with_capacity(
-                    value.len() + target.as_bytes().len() + calldata.len(),
-                );
-                b.extend(value);
-                b.extend(target.to_fixed_bytes());
-                b.extend(calldata);
-                Bytes(b.into())
-            }),
+            } => (
+                Cmd::CallValue,
+                bytes::BytesMut::with_capacity(
+                    U256::len_bytes() + Address::len_bytes() + calldata.len(),
+                )
+                .write_big(value)
+                .write(target.to_fixed_bytes())
+                .write(calldata)
+                .into(),
+            ),
             Self::GetBalance(BalanceOf::This) => (Cmd::GetBalanceOfThis, Default::default()),
             Self::GetBalance(BalanceOf::MsgSender) => {
                 (Cmd::GetBalanceOfMsgSender, Default::default())
             }
             Self::GetBalance(BalanceOf::Address(target)) => (
                 Cmd::GetBalanceOfAddress,
-                Bytes(target.to_fixed_bytes().into_iter().collect()),
+                target.to_fixed_bytes().into_iter().collect(),
             ),
             Self::Transfer { to, amount } => Self::Call {
                 target: to,
@@ -146,69 +128,64 @@ impl Call {
             }
             .encode(),
             Self::Create { value, bytecode } if value.is_zero() => (Cmd::Create, bytecode),
-            Self::Create { value, bytecode } => (Cmd::CreateValue, {
-                let value = Big(value).to_fixed_bytes();
-                let mut b = bytes::BytesMut::with_capacity(value.len() + bytecode.len());
-                b.extend(value);
-                b.extend(bytecode);
-                Bytes(b.into())
-            }),
+            Self::Create { value, bytecode } => (
+                Cmd::CreateValue,
+                bytes::BytesMut::with_capacity(U256::len_bytes() + bytecode.len())
+                    .write_big(value)
+                    .write(bytecode)
+                    .into(),
+            ),
             Self::Create2 {
                 value,
                 salt,
                 bytecode,
-            } if value.is_zero() => (Cmd::Create2, {
-                let salt = Big(salt).to_fixed_bytes();
-                let mut b = bytes::BytesMut::with_capacity(salt.len() + bytecode.len());
-                b.extend(salt);
-                b.extend(bytecode);
-                Bytes(b.into())
-            }),
+            } if value.is_zero() => (
+                Cmd::Create2,
+                bytes::BytesMut::with_capacity(U256::len_bytes() + bytecode.len())
+                    .write_big(salt)
+                    .write(bytecode)
+                    .into(),
+            ),
             Self::Create2 {
                 value,
                 salt,
                 bytecode,
-            } => (Cmd::Create2Value, {
-                let value = Big(value).to_fixed_bytes();
-                let salt = Big(salt).to_fixed_bytes();
-                let mut b =
-                    bytes::BytesMut::with_capacity(value.len() + salt.len() + bytecode.len());
-                b.extend(value);
-                b.extend(salt);
-                b.extend(bytecode);
-                Bytes(b.into())
-            }),
+            } => (
+                Cmd::Create2Value,
+                bytes::BytesMut::with_capacity(2 * U256::len_bytes() + bytecode.len())
+                    .write_big(value)
+                    .write_big(salt)
+                    .write(bytecode)
+                    .into(),
+            ),
             Self::Group(calls) => (Cmd::Group, MultiCallWrapper(calls).encode().into()),
         }
     }
 
-    fn decode(cmd: Cmd, inputs: Bytes) -> Result<Self, AbiError> {
-        let mut inputs = inputs.as_ref();
+    fn decode(cmd: Cmd, mut inputs: bytes::Bytes) -> Result<Self, InvalidOutputType> {
         Ok(match cmd {
-            Cmd::Group => Self::Group(MultiCallWrapper::decode(inputs)?.into_inner()),
+            Cmd::Group => Self::Group(
+                MultiCallWrapper::decode(inputs)
+                    .map_err(|e| InvalidOutputType(e.to_string()))?
+                    .into_inner(),
+            ),
             Cmd::GetBalanceOfThis => Self::GetBalance(BalanceOf::This),
             Cmd::GetBalanceOfMsgSender => Self::GetBalance(BalanceOf::MsgSender),
             Cmd::GetBalanceOfAddress => Self::GetBalance(BalanceOf::Address(
-                <[u8; 20]>::try_from(inputs)
-                    .map_err(|_| AbiError::DecodingError(ethabi::Error::InvalidData))?
-                    .into(),
+                Address::try_from_slice(inputs)
+                    .map_err(|_| InvalidOutputType(format!("invalid inputs length for ")))?,
             )),
             _ => {
                 let value = if let Cmd::CallValue | Cmd::CreateValue | Cmd::Create2Value = cmd {
-                    let value = <[u8; 32]>::try_from(inputs)
-                        .map_err(|_| AbiError::DecodingError(ethabi::Error::InvalidData))?
-                        .into();
-                    inputs = &inputs[32..];
-                    value
+                    U256::try_read_from(&mut inputs)
+                        .map_err(|_| AbiError::DecodingError(ethabi::Error::InvalidData))?;
                 } else {
                     U256::zero()
                 };
                 match cmd {
                     Cmd::Call | Cmd::CallValue => {
-                        let target: Address = <[u8; 20]>::try_from(inputs)
-                            .map_err(|_| AbiError::DecodingError(ethabi::Error::InvalidData))?
-                            .into();
-                        inputs = &inputs[20..];
+                        let target = Address::try_read_from(&mut inputs)
+                            .map_err(|_| AbiError::DecodingError(ethabi::Error::InvalidData))?;
                         match cmd {
                             Cmd::CallValue if inputs.is_empty() => Self::Transfer {
                                 to: target,
@@ -226,10 +203,8 @@ impl Call {
                         bytecode: inputs.to_vec().into(),
                     },
                     Cmd::Create2 | Cmd::Create2Value => {
-                        let salt: U256 = <[u8; 32]>::try_from(inputs)
-                            .map_err(|_| AbiError::DecodingError(ethabi::Error::InvalidData))?
-                            .into();
-                        inputs = &inputs[32..];
+                        let salt = U256::try_read_from(&mut inputs)
+                            .map_err(|_| AbiError::DecodingError(ethabi::Error::InvalidData))?;
                         Self::Create2 {
                             value,
                             salt,
@@ -309,12 +284,12 @@ impl TryCall {
         }
     }
 
-    fn encode(self) -> (u8, Bytes) {
+    fn encode(self) -> (u8, bytes::Bytes) {
         let (cmd, inputs) = self.call.encode();
         (cmd.with_allow_failure(self.allow_failure), inputs)
     }
 
-    fn decode(cmd: u8, inputs: Bytes) -> Result<Self, AbiError> {
+    fn decode(cmd: u8, inputs: bytes::Bytes) -> Result<Self, InvalidOutputType> {
         let (cmd, allow_failure) = Cmd::try_from_allow_failure(cmd)
             .ok_or(AbiError::DecodingError(ethabi::Error::InvalidData))?;
         Ok(Self {
@@ -323,8 +298,6 @@ impl TryCall {
         })
     }
 }
-
-type MultiCall = Vec<TryCall>;
 
 #[derive(Clone)]
 struct MultiCallWrapper(MultiCall);
@@ -340,20 +313,20 @@ impl MultiCallWrapper {
         MultiCallWrapper(self.0.into_iter().map(TryCall::reduce).collect())
     }
 
-    fn encode_call(self) -> MulticallCall {
-        let (commands, inputs): (Vec<u8>, Vec<Bytes>) =
+    fn encode_raw(self) -> MultiCallRaw {
+        let (commands, inputs): (Vec<u8>, Vec<bytes::Bytes>) =
             self.0.into_iter().map(TryCall::encode).unzip();
-        MulticallCall {
+        MultiCallRaw {
             commands: commands.into(),
-            inputs,
+            inputs: inputs.into_iter().map(Into::into).collect(),
         }
     }
 
-    fn decode_call(call: MulticallCall) -> Result<Self, AbiError> {
+    fn decode_raw(call: MultiCallRaw) -> Result<Self, InvalidOutputType> {
         call.commands
             .into_iter()
             .zip(call.inputs)
-            .map(|(cmd, inputs)| TryCall::decode(cmd, inputs))
+            .map(|(cmd, inputs)| TryCall::decode(cmd, inputs.0))
             .try_collect()
     }
 
@@ -364,110 +337,278 @@ impl MultiCallWrapper {
 
 impl AbiType for MultiCallWrapper {
     fn param_type() -> ParamType {
-        MulticallCall::param_type()
+        MultiCallRaw::param_type()
+    }
+}
+
+impl Tokenizable for MultiCallWrapper {
+    fn from_token(token: Token) -> Result<Self, InvalidOutputType>
+    where
+        Self: Sized,
+    {
+        Self::decode_raw(MultiCallInner::from_token(token)?)
+    }
+
+    fn into_token(self) -> Token {
+        self.encode_raw().into_token()
     }
 }
 
 impl AbiEncode for MultiCallWrapper {
     fn encode(self) -> Vec<u8> {
-        self.encode_call().encode()
+        abi::encode(&Self::into_tokens(self))
     }
 }
 
 impl AbiDecode for MultiCallWrapper {
     fn decode(bytes: impl AsRef<[u8]>) -> Result<Self, AbiError> {
-        Self::decode_call(MulticallCall::decode(bytes)?)
+        let tokens = abi::decode(&[Self::param_type()], bytes.as_ref())?;
+        Self::from_tokens(tokens).map_err(Into::into)
     }
 }
 
-struct Big<T>(T);
+trait TryFromSlice<const N: usize>: for<'a> From<&'a [u8; N]> {
+    const fn len_bytes() -> usize {
+        N
+    }
+    fn try_from_slice(slice: impl AsRef<[u8]>) -> Result<Self, TryFromSliceError> {
+        <[u8; N]>::try_from(slice).into()
+    }
 
-impl<T> From<T> for Big<T> {
-    fn from(value: T) -> Self {
-        Self(value)
+    fn try_read_from<B: Buf>(buf: &mut B) -> Result<Self, TryFromSliceError> {
+        let self = Self::try_from_slice(buf.chunk())?;
+        buf.advance(N);
+        Ok(self)
     }
 }
 
-impl Big<U256> {
-    fn to_fixed_bytes(&self) -> [u8; 32] {
-        let mut a = [0; 32];
-        self.0.to_big_endian(&mut a);
-        a
+impl<T, const N: usize> TryFromSlice<N> for T where T: for<'a> From<&'a [u8; N]> {}
+
+trait ChainBufMut: BufMut {
+    fn write<B: Buf>(&mut self, src: B) -> &mut Self
+    where
+        Self: Sized,
+    {
+        self.put(src);
+        &mut self
+    }
+
+    fn write_big<const N: usize>(&mut self, v: impl ToFixedBytes<N>) -> &mut Self {
+        self.write(v.to_fixed_bytes())
+    }
+}
+
+impl<B> ChainBufMut for B where B: BufMut {}
+
+trait ToFixedBytes<const N: usize>: TryFromSlice<N> {
+    fn to_fixed_bytes_in(&self, bytes: &mut [u8; N]);
+
+    fn to_fixed_bytes(&self) -> [u8; N] {
+        let mut b = [0; N];
+        self.to_fixed_bytes_in(&mut b);
+        b
+    }
+}
+
+impl ToFixedBytes<32> for U256 {
+    fn to_fixed_bytes_in(&self, bytes: &mut [u8; N]) {
+        self.to_big_endian(bytes)
     }
 }
 
 pub enum CallResult {
-    Call(Result<(), Bytes>),
+    Call(Result<bytes::Bytes, bytes::Bytes>),
     Balance(U256),
-    CreatedAt(Result<Address, Bytes>),
-    Group(Result<Vec<CallResult>, FailedCall>),
+    Create(Result<Address, bytes::Bytes>),
+    Group(Result<MultiCallOutput, (usize, Failed)>),
 }
 
-pub struct MultiCallFailed {
-    index: usize,
-    reason: Failed,
+pub type MultiCallOutput = Vec<CallResult>;
+
+impl CallResult {
+    // TODO: derive custom macro
+    pub fn to_call(self) -> Option<Result<bytes::Bytes, bytes::Bytes>> {
+        if let Self::Call(r) = self {
+            Some(r)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_balance(self) -> Option<U256> {
+        if let Self::Balance(b) = self {
+            Some(b)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_create(self) -> Option<Result<Address, bytes::Bytes>> {
+        if let Self::Create(r) = self {
+            Some(r)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_group(self) -> Option<Result<MultiCallOutput, MultiCallFailed>> {
+        if let Self::Group(r) = self {
+            Some(r)
+        } else {
+            None
+        }
+    }
+
+    fn encode(self) -> (bool, bytes::Bytes) {
+        match self {
+            CallResult::Call(r) => match r {
+                Ok(output) => (true, output),
+                Err(data) => (false, data),
+            },
+            CallResult::Balance(b) => (true, Big(b).to_fixed_bytes().into_iter().collect()),
+            CallResult::Create(r) => match r {
+                Ok(address) => (true, address.to_fixed_bytes().into_iter().collect()),
+                Err(data) => (false, data),
+            },
+            CallResult::Group(r) => match r {
+                Ok(results) => (true, MultiCallOutputWrapper(results).encode().into()),
+                Err(failed) => (false, failed.encode().into()),
+            },
+        }
+    }
+
+    fn decode_as(call_type: CallType, success: bool, output: bytes::Bytes) -> Result<Self> {
+        Ok(match call_type {
+            CallType::Call => Self::Call(if success { Ok(output) } else { Err(output) }),
+            CallType::GetBalance => Self::Balance(Address::try_from_slice(output)?),
+            CallType::Create => Self::Create(if success {
+                Ok(Address::try_from_slice(output)?)
+            } else {
+                Err(output)
+            }),
+            CallType::Group(calls) => Self::Group(if success {
+                Ok(MultiCallOutputWrapper(calls).decode(output)?.into_inner())
+            } else {
+                Err(MultiCallFailed::decode(output)?)
+            }),
+        })
+    }
+}
+
+pub struct MultiCallFailedWrapper((usize, Failed));
+
+impl MultiCallFailed {
+    fn into_inner(self) -> (usize, Failed) {
+        self.0
+    }
+    fn encode_raw(self) -> FailedRaw {
+        FailedRaw {
+            index: self.index.into(),
+            data: self.reason.encode().into(),
+        }
+    }
+
+    fn decode_raw_as(call_types: Vec<CallType>, raw: FailedRaw) -> Result<Self> {
+        let (index, data) = (raw.index.as_usize(), raw.data);
+        if index >= call_types.len() {
+            return Err("TODO");
+        }
+        Ok(Self {
+            index,
+            reason: Failed::decode_as(call_types.swap_remove(index), data)?,
+        })
+    }
+
+    fn decode_as(call_types: Vec<CallType>, data: bytes::Bytes) -> Result<Self> {
+        Self::decode_as_from_raw(call_types, FailedRaw::decode(data)?)
+    }
+}
+
+impl AbiEncode for MultiCallFailed {
+    fn encode(self) -> Vec<u8> {
+        self.encode_raw().encode()
+    }
 }
 
 pub enum Failed {
-    MultiCall(MultiCallFailed),
-    External(Bytes),
+    External(bytes::Bytes),
+    Group(Box<MultiCallFailed>),
 }
 
-pub enum MultiCallError {
-    Failed{
-        index: usize,
-        data: Bytes,
-    },
-    Other(Bytes),
+impl Failed {
+    fn encode(self) -> bytes::Bytes {
+        match self {
+            Failed::External(data) => data,
+            Failed::Group(g) => g.encode().into(),
+        }
+    }
+
+    fn decode_as(call_type: CallType, output: bytes::Bytes) -> Result<Self> {
+        Ok(match call_type {
+            CallType::Call | CallType::Create => Self::External(output),
+            CallType::Group(calls) => {
+                Self::Group(MultiCallFailed::decode_as(call_type, output)?.into())
+            }
+            CallType::GetBalance => return Err("Call {call_type:?} cannot fail"),
+        })
+    }
 }
 
-pub type MultiCallOutput = Result<Vec<CallOutput>>;
+struct MultiCallOutputWrapper(MultiCallOutput);
 
-pub struct MultiCallOutputWrapper(MultiCallOutput);
+impl MultiCallOutputWrapper {
+    fn into_inner(self) -> MultiCallOutput {
+        self.0
+    }
 
-// pub enum CallError {
-//
-// }
-//
-// pub struct CallResult(Result<CallOutput, CallError>);
+    fn encode_raw(self) -> MulticallReturn {
+        let (successes, outputs): (Bitmap, Vec<Bytes>) = self
+            .0
+            .into_iter()
+            .map(CallResult::encode)
+            .map(|(success, output)| (success, output.into()))
+            .unzip();
+        MulticallReturn {
+            successes: chunk_iter_to_vec(successes.chunks()),
+            outputs,
+        }
+    }
+    fn decode_raw_as(call_types: Vec<CallType>, raw: MulticallReturn) -> Result<Self, AbiError> {
+        let MulticallReturn { successes, outputs } = raw;
+        if call_types.len() != outputs.len() {
+            return Err("TODO");
+        }
+        if (call_types.len() + 7) / 8 != successes.len() {
+            return Err("TODO");
+        }
+        let successes = Bitmap::from_u8_slice(successes, outputs.len());
+        Ok(MultiCallOutputWrapper(
+            call_types
+                .into_iter()
+                .zip(successes.into_iter().zip(outputs.into_iter().map(|b| b.0)))
+                .map(|(c, (success, output))| CallResult::decode_as(c, success, output))
+                .try_collect(),
+        ))
+    }
 
-// pub struct Failed<T> {
-//     stack: Vec<usize>,
-//     data: T,
-// }
+    fn decode_as(call_types: Vec<CallType>, data: bytes::Bytes) -> Result<Self, AbiError> {
+        Self::decode_raw_as(call_types, MulticallReturn::decode(data)?)
+    }
+}
 
-// pub struct CallResult<T, E>(Result<T, Failed<E>>);
-//
-// pub struct MultiCallResults<T, E>(Vec<CallResult<T, E>>);
+impl AbiEncode for MultiCallOutputWrapper {
+    fn encode(self) -> Vec<u8> {
+        self.encode_raw().encode()
+    }
+}
 
-// impl<T, E> AbiType for MultiCallResults<T, E> {
-//     fn param_type() -> ParamType {
-//         ParamType::Tuple([ParamType::Bytes, ParamType::Array(ParamType::Bytes.into())].into())
-//     }
-// }
-//
-// impl<T, E> Tokenizable for MultiCallResults<T, E> {
-//     fn from_token(token: Token) -> Result<Self, InvalidOutputType>
-//     where
-//         Self: Sized {
-//         todo!()
-//     }
-//
-//     fn into_token(self) -> Token {
-//         todo!()
-//     }
-// }
-//
-// impl<T, E> AbiEncode for MultiCallResults<T, E> {
-//     fn encode(self) -> Vec<u8> {
-//         let token = self.into_token();
-//         abi::encode(&[token])
-//     }
-// }
-//
-// impl<T, E> AbiDecode for MultiCallResults<T, E> {
-//
-// }
+impl AbiDecode for MultiCallOutputWrapper {
+    fn decode(bytes: impl AsRef<[u8]>) -> Result<Self, ethabi::AbiError> {
+        todo!()
+    }
+}
+
+// TODO: tests
 
 // pub struct MultiCallContract<M: Middleware>(MultiCallInner<M>);
 //

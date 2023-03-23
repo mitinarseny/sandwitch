@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-bitmaps = { workspace = true }
+arrow2 = { workspace = true }
 bytes = { workspace = true }
 ethers = { workspace = true, features = ["abigen"] }
 impl-tools = { workspace = true }
