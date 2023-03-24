@@ -1,0 +1,18 @@
+[package]
+name = "contracts"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+arrow2.workspace = true
+bytes.workspace = true
+ethers.workspace = true
+impl-tools.workspace = true
+itertools.workspace = true
+thiserror.workspace = true
+
+[features]
+multicall = []
+pancake_swap = []
+pancake_toaster = []
+uniswap_v2_core = []

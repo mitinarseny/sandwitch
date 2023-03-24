@@ -1,6 +1,5 @@
 [workspace]
-members = ["./src/*"]
-default-members = ["./src/sandwitch"]
+members = ["./bindings"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,9 +8,45 @@ edition = "2021"
 [workspace.dependencies]
 arrow2 = "0.16"
 bytes = { version = "1.4", features = ["serde"] }
-contracts = { path = "./src/contracts" }
-ethers = { version = "=1.0.2", default-features = false, features = ["rustls"] }
+contracts = { path = "./bindings" }
 impl-tools = "0.8.0"
 itertools = "0.10"
 thiserror = "1"
 
+[workspace.dependencies.ethers]
+version = "=2.0.1"
+default-features = false
+features = ["abigen", "rustls", "ws"]
+
+[package]
+name = "sandwitch"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["bsc"]
+bsc = ["pancake_swap"]
+# TODO: activate legacy feature of ethers?
+pancake_swap = ["contracts/pancake_toaster", "contracts/pancake_swap"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.0", features = ["derive"] }
+contracts = { workspace = true, features = ["multicall"] }
+ethers.workspace = true
+futures = "0.3"
+itertools.workspace = true
+impl-tools.workspace = true
+lazy_static = "1.4"
+metrics = "0.20"
+metrics-exporter-prometheus = { version = "0.11", default-features = false, features = ["http-listener"] }
+pin-project = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror.workspace = true
+tokio = { version = "1", default-features = false, features = ["fs", "time", "rt-multi-thread"] }
+tokio-stream = { version = "0.1", features = ["fs", "sync"] }
+tokio-util = "0.7"
+toml = "0.7.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = { version = "2.2", features = ["serde"] }

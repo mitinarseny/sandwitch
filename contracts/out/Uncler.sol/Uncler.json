@@ -1,0 +1,376 @@
+{
+  "abi": [
+    {
+      "inputs": [],
+      "name": "Uncled",
+      "type": "error"
+    }
+  ],
+  "bytecode": {
+    "object": "0x",
+    "sourceMap": "",
+    "linkReferences": {}
+  },
+  "deployedBytecode": {
+    "object": "0x",
+    "sourceMap": "",
+    "linkReferences": {}
+  },
+  "methodIdentifiers": {},
+  "rawMetadata": "{\"compiler\":{\"version\":\"0.8.19+commit.7dd6d404\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[],\"name\":\"Uncled\",\"type\":\"error\"}],\"devdoc\":{\"kind\":\"dev\",\"methods\":{},\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"version\":1}},\"settings\":{\"compilationTarget\":{\"contracts/lib/uncler/Uncler.sol\":\"Uncler\"},\"evmVersion\":\"london\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\"},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[\":ds-test/=contracts/lib/forge-std/lib/ds-test/src/\",\":forge-std/=contracts/lib/forge-std/src/\",\":multicall/=contracts/lib/multicall/\",\":openzeppelin/=contracts/lib/openzeppelin/contracts/\",\":pancake_swap/=contracts/lib/pancake_swap/projects/\",\":pancake_toaster/=contracts/lib/pancake_toaster/\",\":solmate/=contracts/lib/solmate/src/\",\":uncler/=contracts/lib/uncler/\"]},\"sources\":{\"contracts/lib/uncler/Uncler.sol\":{\"keccak256\":\"0x7239677db2965ab087659eb856ec75239970a567594e577721141bc492da4e2a\",\"urls\":[\"bzz-raw://9b052d9746ca56b59f945d1a31d1897935b20ba35b91e91a26d1065f8c22d7eb\",\"dweb:/ipfs/QmYmNeHPpyu1xVY2rSC84TXFwWmVKnURfwiFYFDiCC1czE\"]}},\"version\":1}",
+  "metadata": {
+    "compiler": {
+      "version": "0.8.19+commit.7dd6d404"
+    },
+    "language": "Solidity",
+    "output": {
+      "abi": [
+        {
+          "inputs": [],
+          "type": "error",
+          "name": "Uncled"
+        }
+      ],
+      "devdoc": {
+        "kind": "dev",
+        "methods": {},
+        "version": 1
+      },
+      "userdoc": {
+        "kind": "user",
+        "methods": {},
+        "version": 1
+      }
+    },
+    "settings": {
+      "remappings": [
+        ":ds-test/=contracts/lib/forge-std/lib/ds-test/src/",
+        ":forge-std/=contracts/lib/forge-std/src/",
+        ":multicall/=contracts/lib/multicall/",
+        ":openzeppelin/=contracts/lib/openzeppelin/contracts/",
+        ":pancake_swap/=contracts/lib/pancake_swap/projects/",
+        ":pancake_toaster/=contracts/lib/pancake_toaster/",
+        ":solmate/=contracts/lib/solmate/src/",
+        ":uncler/=contracts/lib/uncler/"
+      ],
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "metadata": {
+        "bytecodeHash": "ipfs"
+      },
+      "compilationTarget": {
+        "contracts/lib/uncler/Uncler.sol": "Uncler"
+      },
+      "libraries": {}
+    },
+    "sources": {
+      "contracts/lib/uncler/Uncler.sol": {
+        "keccak256": "0x7239677db2965ab087659eb856ec75239970a567594e577721141bc492da4e2a",
+        "urls": [
+          "bzz-raw://9b052d9746ca56b59f945d1a31d1897935b20ba35b91e91a26d1065f8c22d7eb",
+          "dweb:/ipfs/QmYmNeHPpyu1xVY2rSC84TXFwWmVKnURfwiFYFDiCC1czE"
+        ],
+        "license": null
+      }
+    },
+    "version": 1
+  },
+  "ast": {
+    "absolutePath": "contracts/lib/uncler/Uncler.sol",
+    "id": 30304,
+    "exportedSymbols": {
+      "Uncler": [
+        30303
+      ]
+    },
+    "nodeType": "SourceUnit",
+    "src": "0:328:26",
+    "nodes": [
+      {
+        "id": 30281,
+        "nodeType": "PragmaDirective",
+        "src": "0:24:26",
+        "nodes": [],
+        "literals": [
+          "solidity",
+          "^",
+          "0.8",
+          ".19"
+        ]
+      },
+      {
+        "id": 30303,
+        "nodeType": "ContractDefinition",
+        "src": "26:301:26",
+        "nodes": [
+          {
+            "id": 30283,
+            "nodeType": "ErrorDefinition",
+            "src": "57:15:26",
+            "nodes": [],
+            "errorSelector": "7797ae6d",
+            "name": "Uncled",
+            "nameLocation": "63:6:26",
+            "parameters": {
+              "id": 30282,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "69:2:26"
+            }
+          },
+          {
+            "id": 30302,
+            "nodeType": "ModifierDefinition",
+            "src": "163:162:26",
+            "nodes": [],
+            "body": {
+              "id": 30301,
+              "nodeType": "Block",
+              "src": "210:115:26",
+              "nodes": [],
+              "statements": [
+                {
+                  "condition": {
+                    "commonType": {
+                      "typeIdentifier": "t_bytes32",
+                      "typeString": "bytes32"
+                    },
+                    "id": 30294,
+                    "isConstant": false,
+                    "isLValue": false,
+                    "isPure": false,
+                    "lValueRequested": false,
+                    "leftExpression": {
+                      "arguments": [
+                        {
+                          "commonType": {
+                            "typeIdentifier": "t_uint256",
+                            "typeString": "uint256"
+                          },
+                          "id": 30291,
+                          "isConstant": false,
+                          "isLValue": false,
+                          "isPure": false,
+                          "lValueRequested": false,
+                          "leftExpression": {
+                            "expression": {
+                              "id": 30288,
+                              "name": "block",
+                              "nodeType": "Identifier",
+                              "overloadedDeclarations": [],
+                              "referencedDeclaration": -4,
+                              "src": "234:5:26",
+                              "typeDescriptions": {
+                                "typeIdentifier": "t_magic_block",
+                                "typeString": "block"
+                              }
+                            },
+                            "id": 30289,
+                            "isConstant": false,
+                            "isLValue": false,
+                            "isPure": false,
+                            "lValueRequested": false,
+                            "memberLocation": "240:6:26",
+                            "memberName": "number",
+                            "nodeType": "MemberAccess",
+                            "src": "234:12:26",
+                            "typeDescriptions": {
+                              "typeIdentifier": "t_uint256",
+                              "typeString": "uint256"
+                            }
+                          },
+                          "nodeType": "BinaryOperation",
+                          "operator": "-",
+                          "rightExpression": {
+                            "hexValue": "31",
+                            "id": 30290,
+                            "isConstant": false,
+                            "isLValue": false,
+                            "isPure": true,
+                            "kind": "number",
+                            "lValueRequested": false,
+                            "nodeType": "Literal",
+                            "src": "249:1:26",
+                            "typeDescriptions": {
+                              "typeIdentifier": "t_rational_1_by_1",
+                              "typeString": "int_const 1"
+                            },
+                            "value": "1"
+                          },
+                          "src": "234:16:26",
+                          "typeDescriptions": {
+                            "typeIdentifier": "t_uint256",
+                            "typeString": "uint256"
+                          }
+                        }
+                      ],
+                      "expression": {
+                        "argumentTypes": [
+                          {
+                            "typeIdentifier": "t_uint256",
+                            "typeString": "uint256"
+                          }
+                        ],
+                        "id": 30287,
+                        "name": "blockhash",
+                        "nodeType": "Identifier",
+                        "overloadedDeclarations": [],
+                        "referencedDeclaration": -5,
+                        "src": "224:9:26",
+                        "typeDescriptions": {
+                          "typeIdentifier": "t_function_blockhash_view$_t_uint256_$returns$_t_bytes32_$",
+                          "typeString": "function (uint256) view returns (bytes32)"
+                        }
+                      },
+                      "id": 30292,
+                      "isConstant": false,
+                      "isLValue": false,
+                      "isPure": false,
+                      "kind": "functionCall",
+                      "lValueRequested": false,
+                      "nameLocations": [],
+                      "names": [],
+                      "nodeType": "FunctionCall",
+                      "src": "224:27:26",
+                      "tryCall": false,
+                      "typeDescriptions": {
+                        "typeIdentifier": "t_bytes32",
+                        "typeString": "bytes32"
+                      }
+                    },
+                    "nodeType": "BinaryOperation",
+                    "operator": "!=",
+                    "rightExpression": {
+                      "id": 30293,
+                      "name": "parentHash",
+                      "nodeType": "Identifier",
+                      "overloadedDeclarations": [],
+                      "referencedDeclaration": 30285,
+                      "src": "255:10:26",
+                      "typeDescriptions": {
+                        "typeIdentifier": "t_bytes32",
+                        "typeString": "bytes32"
+                      }
+                    },
+                    "src": "224:41:26",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_bool",
+                      "typeString": "bool"
+                    }
+                  },
+                  "id": 30299,
+                  "nodeType": "IfStatement",
+                  "src": "220:87:26",
+                  "trueBody": {
+                    "id": 30298,
+                    "nodeType": "Block",
+                    "src": "267:40:26",
+                    "statements": [
+                      {
+                        "errorCall": {
+                          "arguments": [],
+                          "expression": {
+                            "argumentTypes": [],
+                            "id": 30295,
+                            "name": "Uncled",
+                            "nodeType": "Identifier",
+                            "overloadedDeclarations": [],
+                            "referencedDeclaration": 30283,
+                            "src": "288:6:26",
+                            "typeDescriptions": {
+                              "typeIdentifier": "t_function_error_pure$__$returns$__$",
+                              "typeString": "function () pure"
+                            }
+                          },
+                          "id": 30296,
+                          "isConstant": false,
+                          "isLValue": false,
+                          "isPure": false,
+                          "kind": "functionCall",
+                          "lValueRequested": false,
+                          "nameLocations": [],
+                          "names": [],
+                          "nodeType": "FunctionCall",
+                          "src": "288:8:26",
+                          "tryCall": false,
+                          "typeDescriptions": {
+                            "typeIdentifier": "t_tuple$__$",
+                            "typeString": "tuple()"
+                          }
+                        },
+                        "id": 30297,
+                        "nodeType": "RevertStatement",
+                        "src": "281:15:26"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": 30300,
+                  "nodeType": "PlaceholderStatement",
+                  "src": "317:1:26"
+                }
+              ]
+            },
+            "name": "ensureParentBlock",
+            "nameLocation": "172:17:26",
+            "parameters": {
+              "id": 30286,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 30285,
+                  "mutability": "mutable",
+                  "name": "parentHash",
+                  "nameLocation": "198:10:26",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 30302,
+                  "src": "190:18:26",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bytes32",
+                    "typeString": "bytes32"
+                  },
+                  "typeName": {
+                    "id": 30284,
+                    "name": "bytes32",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "190:7:26",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_bytes32",
+                      "typeString": "bytes32"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "189:20:26"
+            },
+            "virtual": false,
+            "visibility": "internal"
+          }
+        ],
+        "abstract": true,
+        "baseContracts": [],
+        "canonicalName": "Uncler",
+        "contractDependencies": [],
+        "contractKind": "contract",
+        "fullyImplemented": true,
+        "linearizedBaseContracts": [
+          30303
+        ],
+        "name": "Uncler",
+        "nameLocation": "44:6:26",
+        "scope": 30304,
+        "usedErrors": [
+          30283
+        ]
+      }
+    ]
+  },
+  "id": 26
+}

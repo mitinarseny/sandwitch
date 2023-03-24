@@ -1,0 +1,8 @@
+ds-test/=contracts/lib/forge-std/lib/ds-test/src/
+forge-std/=contracts/lib/forge-std/src/
+multicall/=contracts/lib/multicall/
+openzeppelin/=contracts/lib/openzeppelin/contracts/
+pancake_swap/=contracts/lib/pancake_swap/projects/
+pancake_toaster/=contracts/lib/pancake_toaster/
+solmate/=contracts/lib/solmate/src/
+uncler/=contracts/lib/uncler/

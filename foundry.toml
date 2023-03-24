@@ -1,0 +1,9 @@
+[profile.default]
+src = "contracts/src"
+libs = ["contracts/lib"]
+out = "contracts/out"
+test = "contracts/test"
+cache = true
+cache_path = "contracts/cache"
+auto_detect_remappings = false
+ignore_error_codes = ["license"]
