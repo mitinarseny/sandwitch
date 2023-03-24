@@ -5,16 +5,18 @@ bytes1 constant WITH_VALUE    = bytes1(uint8(1) << 6);
 
 contract MultiCall {
   enum Command {
-    Group,
-    Call,
-    CallValue, // also used for Transfer
-    GetBalanceOfThis,
-    GetBalanceOfMsgSender,
-    GetBalanceOfAddress,
-    Create,
-    CreateValue,
-    Create2,
-    Create2Value
+    /* 0 */ Group,
+    /* 1 */ Call,
+    /* 2 */ CallValue, // also used for Transfer
+    /* 3 */ GetBalanceOfThis,
+    /* 4 */ GetBalanceOfMsgSender,
+    /* 5 */ GetBalanceOfAddress,
+    /* 6 */ Create,
+    /* 7 */ CreateValue,
+    /* 8 */ Create2,
+    /* 9 */ Create2Value
+
+    /* max: 127 */
   }
 
   struct Result {
@@ -70,8 +72,8 @@ contract MultiCall {
 
     uint256 value;
     if (cmd == Command.CallValue || cmd == Command.CreateValue || cmd == Command.Create2Value) {
-      value = uint256(bytes32(inputs));
-      input = inputs[32:];
+      value = uint256(bytes32(input));
+      input = input[32:];
     }
 
     if (cmd == Command.Call || cmd == Command.CallValue) {

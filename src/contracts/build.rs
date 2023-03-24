@@ -1,6 +1,7 @@
 #![feature(iterator_try_collect)]
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
@@ -26,6 +27,7 @@ lazy_static! {
 }
 
 fn main() {
+    let out_dir: PathBuf = env::var_os("OUT_DIR").expect("OUT_DIR is not set").into();
     let projects: HashMap<String, ProjectConfig> =
         toml::from_str(&fs::read_to_string(PROJECTS_FILE.as_path()).unwrap()).unwrap();
     println!("cargo:rerun-if-changed={}", PROJECTS_FILE.display());
@@ -33,28 +35,23 @@ fn main() {
     for (
         feature,
         ProjectConfig {
-            module_path,
+            mod_name,
             paths: cfg,
         },
     ) in projects
     {
-        let module_path = module_path.unwrap_or_else(|| feature.replace("-", "_").into());
+        let mod_name = mod_name.unwrap_or_else(|| feature.replace("-", "_").into());
         {
-            if env::var(
-                [
-                    "CARGO_FEATURE_".as_ref(),
-                    module_path.as_os_str().to_ascii_uppercase().as_os_str(),
-                ]
-                .join("".as_ref()),
-            )
-            .is_err()
-            {
+            if env::var(format!("CARGO_FEATURE_{}", mod_name.to_uppercase())).is_err() {
                 continue;
             }
         }
 
+        let cfg: solc::ProjectPathsConfig = cfg.into();
+        cfg.create_all().unwrap();
+
         let project = Project::builder()
-            .paths(cfg.into())
+            .paths(cfg)
             .offline()
             .no_auto_detect()
             .build()
@@ -91,13 +88,6 @@ fn main() {
             project.artifacts_path().display()
         );
 
-        let module_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("./src")
-            .join(module_path);
-        if module_path.is_dir() {
-            fs::remove_dir_all(&module_path).unwrap();
-        }
-
         artifact_files
             .iter()
             .map(|a| Abigen::from_file(a).map(|a| a.rustfmt(true)))
@@ -105,21 +95,24 @@ fn main() {
             .unwrap()
             .build()
             .unwrap()
-            .write_to_module(module_path, false)
+            .write_to_module(
+                out_dir.join(mod_name),
+                true,
+            )
             .unwrap();
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct ProjectConfig {
-    module_path: Option<PathBuf>,
+    #[serde(rename = "mod")]
+    mod_name: Option<String>,
     #[serde(flatten)]
     paths: ProjectPathsConfig,
 }
 
 #[derive(Debug, Deserialize)]
 struct ProjectPathsConfig {
-    module_path: Option<PathBuf>,
     root: PathBuf,
     sources: Option<PathBuf>,
     #[serde(default)]

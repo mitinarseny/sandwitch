@@ -203,7 +203,7 @@
     "transferFrom(address,address,uint256)": "23b872dd"
   },
   "ast": {
-    "absolutePath": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
+    "absolutePath": "/Users/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
     "id": 191,
     "exportedSymbols": {
       "IERC20": [

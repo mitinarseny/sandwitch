@@ -245,7 +245,7 @@
     "transferFrom(address,address,uint256)": "23b872dd"
   },
   "ast": {
-    "absolutePath": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol",
+    "absolutePath": "/Users/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol",
     "id": 216,
     "exportedSymbols": {
       "IERC20": [
@@ -275,7 +275,7 @@
         "nodeType": "ImportDirective",
         "src": "135:23:2",
         "nodes": [],
-        "absolutePath": "/home/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "absolutePath": "/Users/mitinarseny/dev/sandwitch/contracts/openzeppelin/contracts/token/ERC20/IERC20.sol",
         "file": "../IERC20.sol",
         "nameLocation": "-1:-1:-1",
         "scope": 216,

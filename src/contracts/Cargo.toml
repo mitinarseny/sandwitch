@@ -9,12 +9,13 @@ bytes = { workspace = true }
 ethers = { workspace = true, features = ["abigen"] }
 impl-tools = { workspace = true }
 itertools = { workspace = true }
+thiserror = { workspace = true }
 
 [build-dependencies]
 ethers = { workspace = true, features = ["abigen", "ethers-solc"] }
 lazy_static = "1"
 serde = { version = "1", features = ["derive"] }
-toml = "0.5"
+toml = "0.7.3"
 
 [features]
 default = ["multicall"]

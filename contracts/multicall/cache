@@ -12,8 +12,8 @@
   },
   "files": {
     "src/MultiCall.sol": {
-      "lastModificationDate": 1679324623725,
-      "contentHash": "9f233f62fc72cd7a92200279ff470730",
+      "lastModificationDate": 1679612226304,
+      "contentHash": "347d7976ee634056c332665a8e0dd9a9",
       "sourceName": "src/MultiCall.sol",
       "solcConfig": {
         "settings": {
@@ -42,7 +42,7 @@
       "versionRequirement": "^0.8.19",
       "artifacts": {
         "MultiCall": {
-          "0.8.19+commit.7dd6d404.Linux.gcc": "MultiCall.sol/MultiCall.json"
+          "0.8.19+commit.7dd6d404.Darwin.appleclang": "MultiCall.sol/MultiCall.json"
         }
       }
     }
