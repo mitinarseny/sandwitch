@@ -191,13 +191,13 @@ impl<C: Call> MultiCall for Calls<C> {
 
 macro_rules! tuple_multicall {
     (impl<$N:literal> MultiCall<Reverted = $vis:vis enum $reverted:ident>
-        for ($( .$n:tt: $t:ident($name:ident, $meta:ident) ),+$(,)?)) => {
+        for ($( .$n:tt: $t:ident ),+$(,)?)) => {
         #[derive(Debug)]
         $vis enum $reverted<$( $t ),+> {
             $($t($t)),+
         }
 
-        impl<$( $t ),+> MultiCall for ($( TryCall<$t> ),+,)
+        impl<$( $t ),+> MultiCall for ($( TryCall<$t>, )+)
         where
             $( $t: Call ),+,
         {
@@ -206,36 +206,27 @@ macro_rules! tuple_multicall {
             type Reverted = $reverted<$( $t::Reverted ),+>;
 
             fn encode(self) -> (Calls<RawCall>, Self::Meta) {
-                $(
-                    let ($name, $meta) = self.$n.encode_raw();
-                )+
-                (
-                    [
-                        $($name,)+
-                    ].into(),
-                    (
-                        $($meta,)+
-                    ),
-                )
+                let calls = ($(self.$n.encode_raw(),)+);
+                ([$( calls.$n.0, )+].into(), ($(calls.$n.1,)+))
             }
 
             fn decode(calls: Calls<RawCall>) -> Result<Self, AbiError> {
-                let [$( $name, )+] = <[TryCall::<RawCall>; $N]>::try_from(calls).map_err(|_| LengthMismatch)?;
-                $(let $name = TryCall::decode_raw($name)?;)+
-                Ok((
-                    $($name,)+
-                ))
+                let mut calls = <[TryCall::<RawCall>; $N]>::try_from(calls)
+                    .map_err(|_| LengthMismatch)?
+                    .into_iter();
+                Ok(($(TryCall::<$t>::decode_raw(calls.next().unwrap())?,)+))
             }
 
             fn decode_ok(results: Vec<RawResult>, metas: Self::Meta) -> Result<Self::Ok, AbiError> {
-                let [$( $name, )+] = <[RawResult; $N]>::try_from(results).map_err(|_| LengthMismatch)?;
-                $(let $name = match $name {
-                    Ok(output) => Ok($t::decode_ok(output, metas.$n)?),
-                    Err(data) => Err($t::decode_reverted(data, metas.$n)?),
-                };)+
-                Ok((
-                    $( $name, )+
-                ))
+                let mut results = <[RawResult; $N]>::try_from(results)
+                    .map_err(|_| LengthMismatch)?
+                    .into_iter();
+                Ok(($(
+                    match results.next().unwrap() {
+                        Ok(output) => Ok($t::decode_ok(output, metas.$n)?),
+                        Err(data) => Err($t::decode_reverted(data, metas.$n)?),
+                    },
+                )+))
             }
 
             fn decode_reverted(r: RevertedAt<bytes::Bytes>, metas: Self::Meta) -> Result<Self::Reverted, AbiError> {
@@ -249,89 +240,65 @@ macro_rules! tuple_multicall {
     };
 }
 
-tuple_multicall!(impl<1> MultiCall<Reverted = pub enum Reverted1> for (.0: C0(c0, m0)));
-tuple_multicall!(impl<2> MultiCall<Reverted = pub enum Reverted2> for (.0: C0(c0, m0), .1: C1(c1, m1)));
-tuple_multicall!(impl<3> MultiCall<Reverted = pub enum Reverted3> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),
-));
-tuple_multicall!(impl<4> MultiCall<Reverted = pub enum Reverted4> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),
-));
+tuple_multicall!(impl<1> MultiCall<Reverted = pub enum Reverted1> for (.0: C0,));
+tuple_multicall!(impl<2> MultiCall<Reverted = pub enum Reverted2> for (.0: C0, .1: C1));
+tuple_multicall!(impl<3> MultiCall<Reverted = pub enum Reverted3> for (.0: C0, .1: C1, .2: C2));
+tuple_multicall!(impl<4> MultiCall<Reverted = pub enum Reverted4> for (.0: C0, .1: C1, .2: C2, .3: C3));
 tuple_multicall!(impl<5> MultiCall<Reverted = pub enum Reverted5> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,
 ));
 tuple_multicall!(impl<6> MultiCall<Reverted = pub enum Reverted6> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,
 ));
 tuple_multicall!(impl<7> MultiCall<Reverted = pub enum Reverted7> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,
 ));
 tuple_multicall!(impl<8> MultiCall<Reverted = pub enum Reverted8> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,
 ));
 tuple_multicall!(impl<9> MultiCall<Reverted = pub enum Reverted9> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,
 ));
 tuple_multicall!(impl<10> MultiCall<Reverted = pub enum Reverted10> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
 ));
 tuple_multicall!(impl<11> MultiCall<Reverted = pub enum Reverted11> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10,
 ));
 tuple_multicall!(impl<12> MultiCall<Reverted = pub enum Reverted12> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11,
 ));
 tuple_multicall!(impl<13> MultiCall<Reverted = pub enum Reverted13> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12,
 ));
 tuple_multicall!(impl<14> MultiCall<Reverted = pub enum Reverted14> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12), .13: C13(c13, m13),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12, .13: C13,
 ));
 tuple_multicall!(impl<15> MultiCall<Reverted = pub enum Reverted15> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12), .13: C13(c13, m13), .14: C14(c14, m14),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12, .13: C13, .14: C14,
 ));
 tuple_multicall!(impl<16> MultiCall<Reverted = pub enum Reverted16> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12), .13: C13(c13, m13), .14: C14(c14, m14),
-    .15: C15(c15, m15),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12, .13: C13, .14: C14, .15: C15,
 ));
 tuple_multicall!(impl<17> MultiCall<Reverted = pub enum Reverted17> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12), .13: C13(c13, m13), .14: C14(c14, m14),
-    .15: C15(c15, m15), .16: C16(c16, m16),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12, .13: C13, .14: C14, .15: C15, .16: C16,
 ));
 tuple_multicall!(impl<18> MultiCall<Reverted = pub enum Reverted18> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12), .13: C13(c13, m13), .14: C14(c14, m14),
-    .15: C15(c15, m15), .16: C16(c16, m16), .17: C17(c17, m17),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12, .13: C13, .14: C14, .15: C15, .16: C16, .17: C17,
 ));
 tuple_multicall!(impl<19> MultiCall<Reverted = pub enum Reverted19> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12), .13: C13(c13, m13), .14: C14(c14, m14),
-    .15: C15(c15, m15), .16: C16(c16, m16), .17: C17(c17, m17), .18: C18(c18, m18),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12, .13: C13, .14: C14, .15: C15, .16: C16, .17: C17, .18: C18,
 ));
 tuple_multicall!(impl<20> MultiCall<Reverted = pub enum Reverted20> for (
-    .0:  C0(c0, m0),    .1:  C1(c1, m1),    .2:  C2(c2, m2),    .3:  C3(c3, m3),    .4:  C4(c4, m4),
-    .5:  C5(c5, m5),    .6:  C6(c6, m6),    .7:  C7(c7, m7),    .8:  C8(c8, m8),    .9:  C9(c9, m9),
-    .10: C10(c10, m10), .11: C11(c11, m11), .12: C12(c12, m12), .13: C13(c13, m13), .14: C14(c14, m14),
-    .15: C15(c15, m15), .16: C16(c16, m16), .17: C17(c17, m17), .18: C18(c18, m18), .19: C19(c19, m19),
+    .0:  C0,  .1:  C1,  .2:  C2,  .3:  C3,  .4:  C4,  .5:  C5,  .6:  C6,  .7:  C7,  .8:  C8,  .9:  C9,
+    .10: C10, .11: C11, .12: C12, .13: C13, .14: C14, .15: C15, .16: C16, .17: C17, .18: C18, .19: C19,
 ));
