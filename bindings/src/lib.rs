@@ -1,6 +1,14 @@
 #![feature(iterator_try_collect)]
 
+pub(crate) mod utils;
+
 pub(crate) mod prelude {
+    pub use crate::utils::*;
+    use ethers::{
+        abi::{AbiDecode, AbiEncode},
+        contract::{ContractRevert, EthCall},
+    };
+
     #[allow(unused_macros)]
     macro_rules! tracked_abigen {
         ($name:ident, $path:literal $(, $other:expr)*) => {
@@ -10,9 +18,12 @@ pub(crate) mod prelude {
         };
     }
     pub(crate) use tracked_abigen;
-}
 
-pub(crate) mod utils;
+    pub trait EthTypedCall: EthCall {
+        type Ok: AbiEncode + AbiDecode;
+        type Reverted: ContractRevert;
+    }
+}
 
 #[cfg(feature = "multicall")]
 pub mod multicall;
@@ -23,5 +34,14 @@ pub mod pancake_swap {
     tracked_abigen!(
         PancakeRouter,
         "contracts/out/IPancakeRouter02.sol/IPancakeRouter02.json"
+    );
+}
+
+#[cfg(feature = "pancake_toaster")]
+pub mod pancake_toaster {
+    use crate::prelude::*;
+    tracked_abigen!(
+        PancakeToaster,
+        "contracts/out/PancakeToaster.sol/PancakeToaster.json"
     );
 }

@@ -19,7 +19,7 @@ abstract contract MultiCall {
 
     error LengthMismatch();
     error InvalidCommand();
-    error Failed(uint256 index, bytes data);
+    error Reverted(uint256 index, bytes data);
 
     function multicall(bytes calldata commands, bytes[] calldata inputs)
         public
@@ -29,7 +29,7 @@ abstract contract MultiCall {
     {
         uint256 len = commands.length;
         if (inputs.length != len) revert LengthMismatch();
-        successes = new bytes((len + 7) / 8);
+        successes = new bytes((len + 7) >> 3);
         outputs = new bytes[](len);
 
         bytes1 cmd;
@@ -43,7 +43,7 @@ abstract contract MultiCall {
             if (success) {
                 successes[i >> 3] |= bytes1(uint8(0x8)) >> (i & 7);
             } else if (cmd & ALLOW_FAILURE == 0) {
-                revert Failed(i, output);
+                revert Reverted(i, output);
             }
         }
     }

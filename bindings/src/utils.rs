@@ -4,6 +4,7 @@ use bytes::{Buf, BufMut};
 use ethers::types::U256;
 
 pub trait TryFromSlice<const N: usize>: From<[u8; N]> {
+    #[inline]
     fn len_bytes() -> usize {
         N
     }
