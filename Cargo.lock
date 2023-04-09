@@ -2755,6 +2755,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "pin-project",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tokio-stream",

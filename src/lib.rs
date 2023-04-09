@@ -1,10 +1,11 @@
 #![feature(
+    entry_insert,
     future_join,
     iterator_try_collect,
+    poll_ready,
     result_flattening,
     result_option_inspect,
-    entry_insert,
-    poll_ready
+    slice_group_by
 )]
 
 // pub(crate) mod abort;
@@ -15,6 +16,6 @@
 // pub(crate) mod latency;
 pub mod monitors;
 // pub(crate) mod timed;
-// pub mod timeout;
+pub mod timeout;
 
 // pub use app::{App, Config, EngineConfig, MonitorsConfig};

@@ -1,115 +1,356 @@
 use core::convert::Infallible;
-use std::{marker::PhantomData, sync::Arc};
+use std::{
+    cmp::Reverse,
+    marker::PhantomData,
+    ops::{Add, AddAssign, Deref, DerefMut, Index},
+    slice::SliceIndex,
+    sync::Arc,
+};
 
-use ethers::types::{Block, Log, Transaction, TransactionRequest};
+use contracts::multicall::{Call, Calls, MultiCall, RawCall, TryCall};
+use ethers::types::{Block, Log, Transaction, U256};
 use futures::{
     future::{self, BoxFuture, FutureExt, TryFutureExt},
     lock::Mutex,
     stream::{FuturesUnordered, TryStreamExt},
 };
 use impl_tools::autoimpl;
-
-// pub mod erc20_utils;
-// pub mod inputs;
-
-// #[cfg(feature = "pancake_swap")]
-// pub mod pancake_swap;
-
-// pub(crate) trait BlockMonitor {
-//     type Error;
-//
-//     fn process_block<'a>(
-//         &'a mut self,
-//         block: &'a Block<Transaction>,
-//     ) -> BoxFuture<'a, Result<(), Self::Error>>;
-// }
+use itertools::Itertools;
+use tracing::{event, Level};
 
 #[derive(Default)]
-struct TransactionRequests(Mutex<Vec<TransactionRequests>>);
+#[autoimpl(Deref<Target = [TryCall<RawCall>]> using self.0)]
+pub struct MultiCallGroups(Calls<RawCall>);
 
-impl TransactionRequests {
-    async fn add(&mut self, txs: impl IntoIterator<Item = TransactionRequest>) {
-        let mut inner = self.0.lock().await;
-        inner.extend(txs);
+impl<C: Call> Extend<C> for MultiCallGroups {
+    fn extend<T: IntoIterator<Item = C>>(&mut self, calls: T) {
+        self.0.extend(calls.into_iter().map(|c| {
+            let (call, _meta) = c.encode_raw();
+            TryCall {
+                allow_failure: true,
+                call,
+            }
+        }))
+    }
+}
+
+impl<C: Call> FromIterator<C> for MultiCallGroups {
+    fn from_iter<T: IntoIterator<Item = C>>(calls: T) -> Self {
+        let mut this = Self::default();
+        this.extend(calls);
+        this
+    }
+}
+
+impl MultiCallGroups {
+    fn into_calls(self) -> Calls<RawCall> {
+        self.0
+    }
+}
+
+#[autoimpl(Deref using self.calls)]
+#[autoimpl(DerefMut using self.calls)]
+pub struct PrioritizedMultiCall {
+    calls: MultiCallGroups,
+    priority_fee: U256,
+}
+
+impl PrioritizedMultiCall {
+    fn new(calls: MultiCallGroups, priority_fee: impl Into<U256>) -> Self {
+        Self {
+            calls,
+            priority_fee: priority_fee.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+#[autoimpl(Deref<Target = [Transaction]> using self.txs)]
+pub struct ContiniousPendingTransactions<'a> {
+    txs: &'a [Transaction],
+    to_send: &'a ToSend,
+}
+
+impl<'a> ContiniousPendingTransactions<'a> {
+    #[inline]
+    pub fn priority_fee(&self) -> U256 {
+        self.txs
+            .first()
+            .and_then(|tx| tx.gas_price)
+            .expect("empty continuious transactions")
     }
 
-    fn into_ordered_by_gas(self) -> Vec<TransactionRequest> {}
+    #[inline]
+    pub fn before_priority_fee(&self) -> U256 {
+        self.priority_fee() + 1
+    }
+
+    #[inline]
+    pub fn make_before(&self, calls: MultiCallGroups) -> PrioritizedMultiCall {
+        PrioritizedMultiCall::new(calls, self.before_priority_fee())
+    }
+
+    #[inline]
+    pub fn make_after(&self, calls: MultiCallGroups) -> PrioritizedMultiCall {
+        PrioritizedMultiCall::new(calls, self.priority_fee())
+    }
+
+    pub async fn send_before(&self, calls: MultiCallGroups) {
+        self.to_send.send(Some(self.make_before(calls))).await
+    }
+
+    pub async fn send_after(&self, calls: MultiCallGroups) {
+        self.to_send.send(Some(self.make_after(calls))).await
+    }
+
+    pub async fn send_wrap(&self, before: MultiCallGroups, after: MultiCallGroups) {
+        self.to_send
+            .send([self.make_before(before), self.make_after(after)])
+            .await
+    }
 }
 
 #[derive(Default)]
-pub(crate) struct ProcessState {
-    send_txs: Mutex<Vec<TransactionRequest>>,
-}
+pub struct ToSend(Mutex<Vec<PrioritizedMultiCall>>);
 
-impl ProcessState {
-    pub(crate) async fn send_txs(&self, txs: impl IntoIterator<Item = TransactionRequest>) {
-        let mut send_txs = self.send_txs.lock().await;
-        send_txs.extend(txs);
+impl ToSend {
+    pub async fn send(&self, calls: impl IntoIterator<Item = PrioritizedMultiCall>) {
+        self.0.lock().await.extend(calls)
     }
 
-    pub(crate) fn into_txs(self) -> Vec<TransactionRequest> {
-        let mut txs = self.send_txs.into_inner();
-        txs.sort_by
+    // TODO: return iterator, so we can add others later
+    pub fn into_send_txs(self) -> Vec<PrioritizedMultiCall> {
+        let mut txs: Vec<_> = self
+            .0
+            .into_inner()
+            .into_iter()
+            .filter_map(|c| {
+                let (priority_fee, calls) = (c.priority_fee, c.calls);
+                (!calls.is_empty()).then_some((priority_fee, calls))
+            })
+            .into_grouping_map()
+            .fold_first(|mut g, _, c| {
+                g.extend(c.into_calls().into_iter().map(TryCall::into_call));
+                g
+            })
+            .into_iter()
+            .map(|(priority_fee, calls)| PrioritizedMultiCall::new(calls, priority_fee))
+            .collect();
+        txs.sort_unstable_by_key(|c| Reverse(c.priority_fee));
+        txs
     }
 }
 
-#[autoimpl(Deref using self.tx)]
-#[derive(Default, Debug)]
-pub(crate) struct TransactionWithLogs {
-    pub tx: Transaction,
-    pub logs: Vec<Log>,
-}
-
-#[autoimpl(Deref using self.inner)]
-struct PendingBlock {
-    inner: Block<TransactionWithLogs>,
-    to_send: TransactionRequests,
+#[autoimpl(Deref using self.block)]
+pub struct PendingBlock {
+    block: Block<Transaction>,
+    first_priority_fee: U256,
+    to_send: ToSend,
 }
 
 impl PendingBlock {
-    fn transactions(&self) -> impl Iterator<Item = PendingTransactionWithLog<'_>> {}
-
-    fn send_txs(&self, txs: impl IntoIterator<Item = TransactionRequest>) {
-        self.to_send.add(txs)
+    pub fn new(block: Block<Transaction>, first_prioroty_fee: impl Into<U256>) -> Self {
+        Self {
+            block,
+            first_priority_fee: first_prioroty_fee.into(),
+            to_send: Default::default(),
+        }
     }
-}
 
-#[autoimpl(Deref using self.inner)]
-struct PendingTransactionWithLog<'a> {
-    inner: &'a TransactionWithLogs,
-    to_send: &'a TransactionRequests,
-}
-
-impl<'a> PendingTransactionWithLog<'a> {
-    async fn front_run(
+    pub fn iter_continious_transactions(
         &self,
-        txs: impl IntoIterator<Item = TransactionRequest>,
-        first_in_block: bool,
-    ) {
+    ) -> impl Iterator<Item = ContiniousPendingTransactions<'_>> {
+        self.block
+            .transactions
+            .group_by(|txl, txr| txl.gas_price.unwrap() == txr.gas_price.unwrap())
+            .map(|txs| ContiniousPendingTransactions {
+                txs,
+                to_send: &self.to_send,
+            })
     }
 
-    async fn back_run(&self, txs: impl IntoIterator<Item = TransactionRequest>) {}
+    #[inline]
+    pub fn first_priority_fee(&self) -> U256 {
+        self.first_priority_fee
+    }
 
-    async fn front_back_run(
+    fn make_first(&self, calls: MultiCallGroups) -> PrioritizedMultiCall {
+        PrioritizedMultiCall::new(calls, self.first_priority_fee())
+    }
+
+    pub async fn send_first_in_block(&self, calls: MultiCallGroups) {
+        self.to_send.send(Some(self.make_first(calls))).await
+    }
+
+    pub async fn send_first_in_block_and_wraps(
         &self,
-        front: impl IntoIterator<Item = TransactionRequest>,
-        back: impl IntoIterator<Item = TransactionRequest>,
-        first_in_block: bool,
+        first: MultiCallGroups,
+        wraps: impl IntoIterator<Item = PrioritizedMultiCall>,
     ) {
+        self.to_send
+            .send(Some(self.make_first(first)).into_iter().chain(wraps))
+            .await
     }
 }
-
-impl<'a> [PendingTransactionWithLog<'a>] {}
 
 #[autoimpl(for<T: trait + ?Sized> Arc<T>, Box<T>)]
-pub(crate) trait PendingBlockMonitor {
-    type Error: 'static;
-
+pub trait PendingBlockMonitor {
     fn process_pending_block<'a>(
         &'a self,
         block: &'a PendingBlock,
-    ) -> BoxFuture<'a, Result<(), Self::Error>>;
+    ) -> BoxFuture<'a, anyhow::Result<()>>;
 }
+
+pub struct MultiMonitor<M>(Vec<M>);
+
+impl<M: PendingBlockMonitor> PendingBlockMonitor for MultiMonitor<M> {
+    fn process_pending_block<'a>(
+        &'a self,
+        block: &'a PendingBlock,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        self.0
+            .iter()
+            .map(|m| m.process_pending_block(block))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .boxed()
+    }
+}
+
+pub struct TxMonitor<M>(M);
+
+impl<M: PendingTxMonitor> PendingBlockMonitor for TxMonitor<M> {
+    fn process_pending_block<'a>(
+        &'a self,
+        block: &'a PendingBlock,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        block
+            .transactions
+            .iter()
+            .map(|tx| self.0.process_pending_tx(tx))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .boxed()
+    }
+}
+
+pub trait PendingTxMonitor {
+    fn process_pending_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>>;
+}
+
+impl<M: PendingTxMonitor> PendingTxMonitor for MultiMonitor<M> {
+    fn process_pending_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>> {
+        self.0
+            .iter()
+            .map(|m| m.process_pending_tx(tx))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .boxed()
+    }
+}
+
+pub trait ThinSandwichMonitor {
+    fn wrap_pending_txs<'a>(
+        &'a self,
+        txs: &'a [Transaction],
+    ) -> BoxFuture<'a, anyhow::Result<[MultiCallGroups; 2]>>;
+}
+
+pub struct ThinSandwichWrapper<M>(M);
+
+impl<M> PendingBlockMonitor for ThinSandwichWrapper<M>
+where
+    M: ThinSandwichMonitor + Send + Sync,
+{
+    fn process_pending_block<'a>(
+        &'a self,
+        block: &'a PendingBlock,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        block
+            .iter_continious_transactions()
+            .map(|txs| async move {
+                let [before, after] = self.0.wrap_pending_txs(&txs).await?;
+                txs.send_wrap(before, after).await;
+                Ok(())
+            })
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .boxed()
+    }
+}
+
+// // pub mod erc20_utils;
+// // pub mod inputs;
+
+// // #[cfg(feature = "pancake_swap")]
+// // pub mod pancake_swap;
+
+// // pub(crate) trait BlockMonitor {
+// //     type Error;
+// //
+// //     fn process_block<'a>(
+// //         &'a mut self,
+// //         block: &'a Block<Transaction>,
+// //     ) -> BoxFuture<'a, Result<(), Self::Error>>;
+// // }
+
+// pub struct MultiCallRequest {
+//     value: U256,
+//     calls: Calls<RawCall>,
+// }
+
+// struct MultiCallRequests {
+//     first_in_block: Calls<RawCall>,
+// }
+
+// // #[derive(Default)]
+// // pub(crate) struct ProcessState {
+// //     send_txs: Mutex<Vec<TransactionRequest>>,
+// // }
+
+// // impl ProcessState {
+// //     pub(crate) async fn send_txs(&self, txs: impl IntoIterator<Item = TransactionRequest>) {
+// //         let mut send_txs = self.send_txs.lock().await;
+// //         send_txs.extend(txs);
+// //     }
+
+// //     pub(crate) fn into_txs(self) -> Vec<TransactionRequest> {
+// //         let mut txs = self.send_txs.into_inner();
+// //         txs.sort_by
+// //     }
+// // }
+
+// #[autoimpl(Deref using self.tx)]
+// #[derive(Default, Debug)]
+// pub(crate) struct TransactionWithLogs {
+//     pub tx: Transaction,
+//     pub logs: Vec<Log>,
+// }
+
+// #[autoimpl(Deref using self.inner)]
+// struct PendingTransactionWithLog<'a> {
+//     inner: &'a TransactionWithLogs,
+//     to_send: &'a TransactionRequests,
+// }
+
+// impl<'a> PendingTransactionWithLog<'a> {
+//     async fn front_run(
+//         &self,
+//         txs: impl IntoIterator<Item = TransactionRequest>,
+//         first_in_block: bool,
+//     ) {
+//     }
+
+//     async fn back_run(&self, txs: impl IntoIterator<Item = TransactionRequest>) {}
+
+//     async fn front_back_run(
+//         &self,
+//         front: impl IntoIterator<Item = TransactionRequest>,
+//         back: impl IntoIterator<Item = TransactionRequest>,
+//         first_in_block: bool,
+//     ) {
+//     }
+// }
 
 // pub(crate) struct MapErr<M, F> {
 //     inner: M,
@@ -291,91 +532,91 @@ pub(crate) trait PendingBlockMonitor {
 //     }
 // }
 
-pub(crate) struct Noop;
+// pub(crate) struct Noop;
 
-impl PendingBlockMonitor for Noop {
-    type Error = Infallible;
+// impl PendingBlockMonitor for Noop {
+//     type Error = Infallible;
 
-    fn process_pending_block<'a>(
-        &'a self,
-        _block: &'a Block<TransactionWithLogs>,
-    ) -> BoxFuture<'a, Result<(), Self::Error>> {
-        future::ok(()).boxed()
-    }
-}
+//     fn process_pending_block<'a>(
+//         &'a self,
+//         _block: &'a Block<TransactionWithLogs>,
+//     ) -> BoxFuture<'a, Result<(), Self::Error>> {
+//         future::ok(()).boxed()
+//     }
+// }
 
-pub(crate) trait State: Default + Sync + Send {}
+// pub(crate) trait State: Default + Sync + Send {}
 
-impl State for () {}
+// impl State for () {}
 
-pub(crate) trait FrontRunMonitor: Sync {
-    type Error: 'static;
-    type State: State;
+// pub(crate) trait FrontRunMonitor: Sync {
+//     type Error: 'static;
+//     type State: State;
 
-    // TODO: return bool to indicate if we should continue on next txs
-    fn process_pending_tx<'a>(
-        &'a self,
-        tx: &'a TransactionWithLogs,
-        state: &'a Self::State,
-    ) -> BoxFuture<'a, Result<(), Self::Error>>;
-}
+//     // TODO: return bool to indicate if we should continue on next txs
+//     fn process_pending_tx<'a>(
+//         &'a self,
+//         tx: &'a TransactionWithLogs,
+//         state: &'a Self::State,
+//     ) -> BoxFuture<'a, Result<(), Self::Error>>;
+// }
 
-impl FrontRunMonitor for Noop {
-    type Error = Infallible;
+// impl FrontRunMonitor for Noop {
+//     type Error = Infallible;
 
-    type State = ();
+//     type State = ();
 
-    fn process_pending_tx<'a>(
-        &'a self,
-        tx: &'a TransactionWithLogs,
-        state: &'a Self::State,
-    ) -> BoxFuture<'a, Result<(), Self::Error>> {
-        future::ok(()).boxed()
-    }
-}
+//     fn process_pending_tx<'a>(
+//         &'a self,
+//         tx: &'a TransactionWithLogs,
+//         state: &'a Self::State,
+//     ) -> BoxFuture<'a, Result<(), Self::Error>> {
+//         future::ok(()).boxed()
+//     }
+// }
 
-pub(crate) struct FrontRun<M: FrontRunMonitor> {
-    inner: M,
-}
+// pub(crate) struct FrontRun<M: FrontRunMonitor> {
+//     inner: M,
+// }
 
-impl<M> PendingBlockMonitor for FrontRun<M>
-where
-    M: FrontRunMonitor,
-{
-    type Error = M::Error;
+// impl<M> PendingBlockMonitor for FrontRun<M>
+// where
+//     M: FrontRunMonitor,
+// {
+//     type Error = M::Error;
 
-    fn process_pending_block<'a>(
-        &'a self,
-        block: &'a Block<TransactionWithLogs>,
-    ) -> BoxFuture<'a, Result<(), Self::Error>> {
-        let state = <M::State>::default();
-        async move {
-            block
-                .transactions
-                .iter()
-                .map(|tx| self.inner.process_pending_tx(tx, &state))
-                .collect::<FuturesUnordered<_>>()
-                .try_collect()
-                .await
-        }
-        .boxed()
-    }
-}
+//     fn process_pending_block<'a>(
+//         &'a self,
+//         block: &'a Block<TransactionWithLogs>,
+//     ) -> BoxFuture<'a, Result<(), Self::Error>> {
+//         let state = <M::State>::default();
+//         async move {
+//             block
+//                 .transactions
+//                 .iter()
+//                 .map(|tx| self.inner.process_pending_tx(tx, &state))
+//                 .collect::<FuturesUnordered<_>>()
+//                 .try_collect()
+//                 .await
+//         }
+//         .boxed()
+//     }
+// }
 
-struct A<M: PendingBlockMonitor> {
-    monitor: M,
-}
+// struct A<M: PendingBlockMonitor> {
+//     monitor: M,
+// }
 
-impl<M: PendingBlockMonitor> A<M> {}
+// impl<M: PendingBlockMonitor> A<M> {}
 
-fn f() {
-    let a: A<MultiMonitor<Vec<Box<dyn PendingBlockMonitor<Error = anyhow::Error>>>>> = A {
-        monitor: vec![Box::new(FrontRun { inner: Noop }.err_into())
-            as Box<dyn PendingBlockMonitor<Error = anyhow::Error>>]
-        .into(),
-    };
-    a.monitor.process_pending_block(&Block::default());
-}
+// fn f() {
+//     let a: A<MultiMonitor<Vec<Box<dyn PendingBlockMonitor<Error = anyhow::Error>>>>> = A {
+//         monitor: vec![Box::new(FrontRun { inner: Noop }.err_into())
+//             as Box<dyn PendingBlockMonitor<Error = anyhow::Error>>]
+//         .into(),
+//     };
+//     a.monitor.process_pending_block(&Block::default());
+// }
 
 //
 // impl<I, M> BlockMonitor for MultiMonitor<I>

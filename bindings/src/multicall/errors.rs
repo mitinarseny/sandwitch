@@ -2,11 +2,11 @@ use ethers::abi::{self, AbiError};
 use thiserror::Error as ThisError;
 
 #[derive(ThisError, Debug)]
-#[error("invalid command")]
-pub struct InvalidCommand;
+#[error("upsupported command: {0}")]
+pub struct UnsupportedCommand(pub u8);
 
-impl From<InvalidCommand> for AbiError {
-    fn from(e: InvalidCommand) -> Self {
+impl From<UnsupportedCommand> for AbiError {
+    fn from(e: UnsupportedCommand) -> Self {
         Self::DecodingError(abi::Error::Other(e.to_string().into()))
     }
 }

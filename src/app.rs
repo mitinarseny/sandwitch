@@ -20,9 +20,9 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    accounts::Accounts,
-    engine::{Engine, TopBlockMonitor, TopTxMonitor},
-    monitors::{BlockMonitorExt, Noop, TxMonitorExt},
+    // accounts::Accounts,
+    engine::Engine,
+    monitors::{Noop, PendingBlockMonitor, TxMonitorExt},
     timeout::TimeoutProvider,
 };
 

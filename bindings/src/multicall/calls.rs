@@ -5,7 +5,7 @@ use ethers::{
     types::{Address, Selector, U256},
 };
 
-use super::errors::{InvalidCommand, InvalidLength, WrongCommand};
+use super::errors::{InvalidLength, UnsupportedCommand, WrongCommand};
 use crate::prelude::*;
 
 #[repr(u8)]
@@ -24,7 +24,7 @@ pub enum Cmd {
 }
 
 impl TryFrom<u8> for Cmd {
-    type Error = InvalidCommand;
+    type Error = UnsupportedCommand;
 
     fn try_from(cmd: u8) -> Result<Self, Self::Error> {
         Ok(match cmd {
@@ -38,7 +38,7 @@ impl TryFrom<u8> for Cmd {
             7 => Self::CreateValue,
             8 => Self::Create2,
             9 => Self::Create2Value,
-            _ => return Err(InvalidCommand),
+            _ => return Err(UnsupportedCommand(cmd)),
         })
     }
 }
@@ -473,7 +473,7 @@ pub struct TryCall<C> {
 impl<C: Call> TryCall<C> {
     const ALLOW_FAILURE: u8 = 1 << 7;
 
-    pub(super) fn encode(self) -> (u8, bytes::Bytes, C::Meta) {
+    pub fn encode(self) -> (u8, bytes::Bytes, C::Meta) {
         let (cmd, input, meta) = self.call.encode();
         let mut cmd = cmd as u8;
         if self.allow_failure {
@@ -481,7 +481,7 @@ impl<C: Call> TryCall<C> {
         }
         (cmd, input, meta)
     }
-    pub(super) fn encode_raw(self) -> (TryCall<RawCall>, C::Meta) {
+    pub fn encode_raw(self) -> (TryCall<RawCall>, C::Meta) {
         let Self {
             allow_failure,
             call,
@@ -496,13 +496,13 @@ impl<C: Call> TryCall<C> {
         )
     }
 
-    pub(super) fn decode(cmd: u8, input: bytes::Bytes) -> Result<Self, AbiError> {
+    pub fn decode(cmd: u8, input: bytes::Bytes) -> Result<Self, AbiError> {
         Ok(Self {
             allow_failure: cmd & Self::ALLOW_FAILURE != 0,
             call: C::decode((cmd & !Self::ALLOW_FAILURE).try_into()?, input)?,
         })
     }
-    pub(super) fn decode_raw(c: TryCall<RawCall>) -> Result<Self, AbiError> {
+    pub fn decode_raw(c: TryCall<RawCall>) -> Result<Self, AbiError> {
         let TryCall {
             allow_failure,
             call,
@@ -511,6 +511,10 @@ impl<C: Call> TryCall<C> {
             allow_failure,
             call: C::decode_raw(call)?,
         })
+    }
+
+    pub fn into_call(self) -> C {
+        self.call
     }
 }
 
