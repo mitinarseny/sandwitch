@@ -1,46 +1,54 @@
 use core::pin::pin;
 
-use std::sync::Arc;
+use std::{cmp::Reverse, sync::Arc};
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use ethers::{
-    providers::{Middleware, Provider, ProviderError, PubsubClient},
-    signers::Signer,
-    types::{Block, BlockNumber, Transaction, H256},
+    providers::{Middleware, PendingTransaction, Provider, ProviderError, PubsubClient},
+    signers::{LocalWallet, Signer, Wallet},
+    types::{
+        transaction::eip2718::TypedTransaction, Block, BlockNumber, Bytes, Filter, Transaction,
+        TransactionRequest, TxHash, H256, U256,
+    },
 };
 use futures::{
     future::{self, try_join3, Aborted, Fuse, FutureExt, TryFuture, TryFutureExt},
     select_biased,
-    stream::{FusedStream, FuturesOrdered, FuturesUnordered, StreamExt},
+    stream::{FuturesOrdered, FuturesUnordered, StreamExt},
+    try_join, Future,
 };
+use itertools::Itertools;
 use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use tokio::{
     self,
     task::JoinError,
-    time::{sleep, Duration, Instant},
+    time::{error::Elapsed, sleep, sleep_until, timeout_at, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn, Instrument};
 
 use crate::{
-    monitors::{PendingBlockMonitor, PendingTxMonitor},
+    abort::FutureExt as AbortFutureExt,
+    monitors::{PendingBlock, PendingBlockMonitor, PendingTxMonitor, PrioritizedMultiCall},
     //     abort::{AbortSet, FutureExt as AbortFutureExt, MetricedFuturesQueue},
     //     accounts::Accounts,
     //     monitors::{BlockMonitor, BlockMonitorExt, TxMonitor},
     //     timed::TryFutureExt as TryTimedFutureExt,
-    timeout::{TimeoutProvider},
+    timeout::TimeoutProvider,
 };
+
+const TX_PROPAGATION_DELAY: Duration = Duration::from_millis(200);
 
 pub(crate) struct Engine<P, M>
 where
     P: PubsubClient + 'static,
     P::Error: Send + Sync + 'static,
-    // S: Signer,
-    M: PendingTxMonitor,
+    M: PendingBlockMonitor,
 {
     client: Arc<Provider<TimeoutProvider<P>>>,
+    wallet: LocalWallet,
     // accounts: Arc<Accounts<TimeoutProvider<P>, S>>,
-    monitor: Arc<M>,
+    monitor: M,
     metrics: Arc<Metrics>,
 }
 
@@ -48,62 +56,122 @@ impl<P, M> Engine<P, M>
 where
     P: PubsubClient + 'static,
     P::Error: Send + Sync + 'static,
-    // S: Signer + 'static,
-    M: PendingTxMonitor,
+    M: PendingBlockMonitor,
 {
     pub(crate) fn new(
         client: impl Into<Arc<Provider<TimeoutProvider<P>>>>,
-        // accounts: impl Into<Arc<Accounts<TimeoutProvider<P>, S>>>,
-        monitor: impl Into<Arc<M>>,
+        wallet: impl Into<LocalWallet>,
+        monitor: M,
     ) -> Self {
         Self {
             client: client.into(),
-            // accounts: accounts.into(),
-            monitor: monitor.into(),
+            wallet: wallet.into(),
+            monitor,
             metrics: Metrics::default().into(),
         }
     }
 
-    // fn next_block_in(&self) -> Duration {
-    //
-    // }
-
-    pub async fn run(&mut self) -> anyhow::Result<()> {
-        let mut blocks = self
+    pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
+        // TODO: check that self.wallet is owner of multicall contract
+        let cancelled = pin!(cancel.cancelled());
+        let blocks = self
             .client
             .subscribe_blocks()
-            .inspect_ok(|st| debug!(subscription_id = %st.id, "subscribed to new blocks"))
-            .map(|r| r.with_context(|| "failed to subscribe to new blocks"))
+            .with_abort(cancelled.map(|_| Aborted))
             .await?
-            .fuse(); // TODO: with_abort
+            .with_context(|| "failed to subscribe to new blocks")?;
+        debug!(subscription_id = %blocks.id, "subscribed to new blocks");
 
+        let cancelled = pin!(cancel.cancelled());
+        let mut blocks = blocks.take_until(cancelled);
         let mut process_pending_block = pin!(Fuse::terminated());
+        let mut send_txs = FuturesUnordered::new();
 
-        while !blocks.is_terminated() {
+        loop {
             select_biased! {
+                sent_tx_hash = send_txs.select_next_some() => {
+                    info!(tx_hash = %sent_tx_hash?, "tx sent");
+                    // TODO: watch sent txs to see if they have been included in processed pending block
+                },
                 block = blocks.select_next_some() => {
-                    process_pending_block.set({
-                        let s = sleep(Duration::from_secs(2));
-                        async move {
-                            s.await;
-                            debug!("sleep elapsed");
-                            anyhow::Ok(())
-                        }.fuse()
-                    });
+                    process_pending_block.set(
+                        self.process_pending_block_with_deadline(self.next_block_at(block))
+                            .fuse(),
+                    );
                 },
-                r = &mut process_pending_block => match r {
-                    Ok(a) => {
-                        debug!("processed");
-                    },
-                    Err(e) => {
-                        error!("{e}");
-                    },
+                processed_block = &mut process_pending_block => {
+                    send_txs.extend(
+                        self.extract_txs_to_send(processed_block?)
+                            .map(|tx| self.sign_and_send(tx)),
+                    );
                 },
+                complete => return Ok(()),
             }
         }
-
-        Ok(())
     }
+
+    fn next_block_at(&self, new: Block<TxHash>) -> Instant {
+        // TODO
+        Instant::now() + Duration::from_secs(3)
+    }
+
+    async fn get_pending_block(&self) -> Result<PendingBlock, ProviderError> {
+        let log_filter = Filter::new().select(BlockNumber::Pending);
+        let (block, logs) = try_join!(
+            self.client.get_block_with_txs(BlockNumber::Pending),
+            self.client.get_logs(&log_filter),
+        )?;
+        let Some(block) = block else {
+            warn!("pending block doest not exist");
+            return Err(ProviderError::UnsupportedRPC);
+        };
+        Ok(PendingBlock::new(block, logs, 0)) // TODO: priority_fee
+    }
+
+    // TODO: return signed txs to send
+    async fn process_pending_block_with_deadline(
+        &self,
+        next_block_at: Instant,
+    ) -> anyhow::Result<PendingBlock> {
+        // TODO: half time
+        sleep_until(next_block_at).await;
+        // TODO: get account balance and check if there is enoght ETH to send txs
+        let block = self.get_pending_block().await?;
+        match timeout_at(
+            next_block_at - TX_PROPAGATION_DELAY,
+            self.monitor.process_pending_block(&block),
+        )
+        .await
+        {
+            Ok(r) => r?,
+            Err(_) => warn!("elapsed"), // TODO
+        }
+        Ok(block)
+    }
+
+    async fn sign_and_send(&self, tx: TypedTransaction) -> anyhow::Result<TxHash> {
+        let signature = self.wallet.sign_transaction_sync(&tx)?;
+        let raw = tx.rlp_signed(&signature);
+        let pending_tx = self.client.send_raw_transaction(raw).await?;
+        Ok(pending_tx.tx_hash())
+    }
+
+    fn extract_txs_to_send(&self, block: PendingBlock) -> impl Iterator<Item = TypedTransaction> {
+        // TODO: auto add transfer to the account to pay for gas
+        block
+            .into_send_txs()
+            .into_iter()
+            .group_by(|t| t.priority_fee)
+            .into_iter()
+            .map(|(priority_fee, group)| PrioritizedMultiCall {
+                calls: group.map(|g| g.calls).concat(),
+                priority_fee,
+            })
+            .sorted_unstable_by_key(|tx| Reverse(tx.priority_fee))
+            .map(|p| TypedTransaction::default()) // TODO
+    }
+
+    // async fn sign_and_send(&self, txs: impl IntoIterator<Item = TransactionRequest>) ->
 
     // pub(crate) async fn run1(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {
     //     let cancelled = cancel.cancelled().fuse();

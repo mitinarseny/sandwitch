@@ -1,6 +1,8 @@
 use core::convert::Infallible;
 use std::{
     cmp::Reverse,
+    collections::HashMap,
+    iter::Map,
     marker::PhantomData,
     ops::{Add, AddAssign, Deref, DerefMut, Index},
     slice::SliceIndex,
@@ -8,7 +10,7 @@ use std::{
 };
 
 use contracts::multicall::{Call, Calls, MultiCall, RawCall, TryCall};
-use ethers::types::{Block, Log, Transaction, U256};
+use ethers::types::{Block, Log, Transaction, TxHash, U256};
 use futures::{
     future::{self, BoxFuture, FutureExt, TryFutureExt},
     lock::Mutex,
@@ -42,21 +44,26 @@ impl<C: Call> FromIterator<C> for MultiCallGroups {
     }
 }
 
-impl MultiCallGroups {
-    fn into_calls(self) -> Calls<RawCall> {
-        self.0
+impl IntoIterator for MultiCallGroups {
+    type Item = RawCall;
+    type IntoIter =
+        Map<<Calls<RawCall> as IntoIterator>::IntoIter, fn(TryCall<RawCall>) -> RawCall>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter().map(TryCall::into_call)
     }
 }
 
 #[autoimpl(Deref using self.calls)]
 #[autoimpl(DerefMut using self.calls)]
 pub struct PrioritizedMultiCall {
-    calls: MultiCallGroups,
-    priority_fee: U256,
+    pub calls: MultiCallGroups, // TODO: no pub
+    pub priority_fee: U256,     // TODO: no pub
 }
 
 impl PrioritizedMultiCall {
-    fn new(calls: MultiCallGroups, priority_fee: impl Into<U256>) -> Self {
+    pub fn new(calls: MultiCallGroups, priority_fee: impl Into<U256>) -> Self {
+        // TODO: no pub
         Self {
             calls,
             priority_fee: priority_fee.into(),
@@ -64,14 +71,20 @@ impl PrioritizedMultiCall {
     }
 }
 
+#[autoimpl(Deref using self.tx)]
+pub struct TxWithLogs {
+    pub tx: Transaction,
+    pub logs: Vec<Log>,
+}
+
 #[derive(Clone, Copy)]
-#[autoimpl(Deref<Target = [Transaction]> using self.txs)]
-pub struct ContiniousPendingTransactions<'a> {
-    txs: &'a [Transaction],
+#[autoimpl(Deref<Target = [TxWithLogs]> using self.txs)]
+pub struct ContiniousPendingTxsWithLogs<'a> {
+    txs: &'a [TxWithLogs],
     to_send: &'a ToSend,
 }
 
-impl<'a> ContiniousPendingTransactions<'a> {
+impl<'a> ContiniousPendingTxsWithLogs<'a> {
     #[inline]
     pub fn priority_fee(&self) -> U256 {
         self.txs
@@ -95,17 +108,19 @@ impl<'a> ContiniousPendingTransactions<'a> {
         PrioritizedMultiCall::new(calls, self.priority_fee())
     }
 
-    pub async fn send_before(&self, calls: MultiCallGroups) {
-        self.to_send.send(Some(self.make_before(calls))).await
-    }
-
-    pub async fn send_after(&self, calls: MultiCallGroups) {
-        self.to_send.send(Some(self.make_after(calls))).await
-    }
-
-    pub async fn send_wrap(&self, before: MultiCallGroups, after: MultiCallGroups) {
+    pub async fn add_to_send_before(&self, calls: MultiCallGroups) {
         self.to_send
-            .send([self.make_before(before), self.make_after(after)])
+            .add_to_send(Some(self.make_before(calls)))
+            .await
+    }
+
+    pub async fn add_to_send_after(&self, calls: MultiCallGroups) {
+        self.to_send.add_to_send(Some(self.make_after(calls))).await
+    }
+
+    pub async fn add_to_send_wrap(&self, before: MultiCallGroups, after: MultiCallGroups) {
+        self.to_send
+            .add_to_send([self.make_before(before), self.make_after(after)])
             .await
     }
 }
@@ -114,56 +129,102 @@ impl<'a> ContiniousPendingTransactions<'a> {
 pub struct ToSend(Mutex<Vec<PrioritizedMultiCall>>);
 
 impl ToSend {
-    pub async fn send(&self, calls: impl IntoIterator<Item = PrioritizedMultiCall>) {
+    pub async fn add_to_send(&self, calls: impl IntoIterator<Item = PrioritizedMultiCall>) {
         self.0.lock().await.extend(calls)
     }
 
-    // TODO: return iterator, so we can add others later
-    pub fn into_send_txs(self) -> Vec<PrioritizedMultiCall> {
-        let mut txs: Vec<_> = self
-            .0
-            .into_inner()
-            .into_iter()
-            .filter_map(|c| {
-                let (priority_fee, calls) = (c.priority_fee, c.calls);
-                (!calls.is_empty()).then_some((priority_fee, calls))
-            })
-            .into_grouping_map()
-            .fold_first(|mut g, _, c| {
-                g.extend(c.into_calls().into_iter().map(TryCall::into_call));
-                g
-            })
-            .into_iter()
-            .map(|(priority_fee, calls)| PrioritizedMultiCall::new(calls, priority_fee))
-            .collect();
-        txs.sort_unstable_by_key(|c| Reverse(c.priority_fee));
-        txs
+    pub fn into_inner(self) -> Vec<PrioritizedMultiCall> {
+        self.0.into_inner()
     }
 }
 
 #[autoimpl(Deref using self.block)]
 pub struct PendingBlock {
-    block: Block<Transaction>,
+    block: Block<TxWithLogs>,
     first_priority_fee: U256,
     to_send: ToSend,
 }
 
 impl PendingBlock {
-    pub fn new(block: Block<Transaction>, first_prioroty_fee: impl Into<U256>) -> Self {
+    pub fn new(
+        block: Block<Transaction>,
+        logs: impl IntoIterator<Item = Log>,
+        first_prioroty_fee: impl Into<U256>,
+    ) -> Self {
+        let Block {
+            hash,
+            parent_hash,
+            uncles_hash,
+            author,
+            state_root,
+            transactions_root,
+            receipts_root,
+            number,
+            gas_used,
+            gas_limit,
+            extra_data,
+            logs_bloom,
+            timestamp,
+            difficulty,
+            total_difficulty,
+            seal_fields,
+            uncles,
+            transactions,
+            size,
+            mix_hash,
+            nonce,
+            base_fee_per_gas,
+            other,
+        } = block;
         Self {
-            block,
+            block: Block {
+                hash,
+                parent_hash,
+                uncles_hash,
+                author,
+                state_root,
+                transactions_root,
+                receipts_root,
+                number,
+                gas_used,
+                gas_limit,
+                extra_data,
+                logs_bloom,
+                timestamp,
+                difficulty,
+                total_difficulty,
+                seal_fields,
+                uncles,
+                transactions: transactions
+                    .into_iter()
+                    .map({
+                        let mut logs = logs.into_iter().peekable();
+                        move |tx| TxWithLogs {
+                            logs: logs
+                                .peeking_take_while(|l| {
+                                    l.transaction_hash.is_some_and(|tx_hash| tx_hash == tx.hash)
+                                })
+                                .collect(),
+                            tx,
+                        }
+                    })
+                    .collect(),
+                size,
+                mix_hash,
+                nonce,
+                base_fee_per_gas,
+                other,
+            },
             first_priority_fee: first_prioroty_fee.into(),
             to_send: Default::default(),
         }
     }
 
-    pub fn iter_continious_transactions(
-        &self,
-    ) -> impl Iterator<Item = ContiniousPendingTransactions<'_>> {
+    pub fn iter_continious_txs(&self) -> impl Iterator<Item = ContiniousPendingTxsWithLogs<'_>> {
         self.block
             .transactions
-            .group_by(|txl, txr| txl.gas_price.unwrap() == txr.gas_price.unwrap())
-            .map(|txs| ContiniousPendingTransactions {
+            .group_by(|l, r| l.gas_price.unwrap() == r.gas_price.unwrap())
+            .map(|txs| ContiniousPendingTxsWithLogs {
                 txs,
                 to_send: &self.to_send,
             })
@@ -178,22 +239,26 @@ impl PendingBlock {
         PrioritizedMultiCall::new(calls, self.first_priority_fee())
     }
 
-    pub async fn send_first_in_block(&self, calls: MultiCallGroups) {
-        self.to_send.send(Some(self.make_first(calls))).await
+    pub async fn add_to_send_first_in_block(&self, calls: MultiCallGroups) {
+        self.to_send.add_to_send(Some(self.make_first(calls))).await
     }
 
-    pub async fn send_first_in_block_and_wraps(
+    pub async fn add_to_send_first_in_block_and_wraps(
         &self,
         first: MultiCallGroups,
         wraps: impl IntoIterator<Item = PrioritizedMultiCall>,
     ) {
         self.to_send
-            .send(Some(self.make_first(first)).into_iter().chain(wraps))
+            .add_to_send(Some(self.make_first(first)).into_iter().chain(wraps))
             .await
+    }
+
+    pub fn into_send_txs(self) -> Vec<PrioritizedMultiCall> {
+        self.to_send.into_inner()
     }
 }
 
-#[autoimpl(for<T: trait + ?Sized> Arc<T>, Box<T>)]
+#[autoimpl(for<M: trait + ?Sized> Arc<M>, Box<M>)]
 pub trait PendingBlockMonitor {
     fn process_pending_block<'a>(
         &'a self,
@@ -201,7 +266,30 @@ pub trait PendingBlockMonitor {
     ) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
+impl PendingBlockMonitor for () {
+    fn process_pending_block<'a>(
+        &'a self,
+        _block: &'a PendingBlock,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        future::ok(()).boxed()
+    }
+}
+
+#[autoimpl(Deref using self.0)]
+#[autoimpl(DerefMut using self.0)]
 pub struct MultiMonitor<M>(Vec<M>);
+
+impl<M> From<Vec<M>> for MultiMonitor<M> {
+    fn from(monitors: Vec<M>) -> Self {
+        Self(monitors)
+    }
+}
+
+impl<M> MultiMonitor<M> {
+    pub fn into_inner(self) -> Vec<M> {
+        self.0
+    }
+}
 
 impl<M: PendingBlockMonitor> PendingBlockMonitor for MultiMonitor<M> {
     fn process_pending_block<'a>(
@@ -238,6 +326,12 @@ pub trait PendingTxMonitor {
     fn process_pending_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
+impl PendingTxMonitor for () {
+    fn process_pending_tx<'a>(&'a self, _tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>> {
+        future::ok(()).boxed()
+    }
+}
+
 impl<M: PendingTxMonitor> PendingTxMonitor for MultiMonitor<M> {
     fn process_pending_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>> {
         self.0
@@ -250,9 +344,9 @@ impl<M: PendingTxMonitor> PendingTxMonitor for MultiMonitor<M> {
 }
 
 pub trait ThinSandwichMonitor {
-    fn wrap_pending_txs<'a>(
+    fn wrap_continious_pending_txs<'a>(
         &'a self,
-        txs: &'a [Transaction],
+        txs: &'a [TxWithLogs],
     ) -> BoxFuture<'a, anyhow::Result<[MultiCallGroups; 2]>>;
 }
 
@@ -267,10 +361,10 @@ where
         block: &'a PendingBlock,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         block
-            .iter_continious_transactions()
+            .iter_continious_txs()
             .map(|txs| async move {
-                let [before, after] = self.0.wrap_pending_txs(&txs).await?;
-                txs.send_wrap(before, after).await;
+                let [before, after] = self.0.wrap_continious_pending_txs(&txs).await?;
+                txs.add_to_send_wrap(before, after).await;
                 Ok(())
             })
             .collect::<FuturesUnordered<_>>()
@@ -278,6 +372,8 @@ where
             .boxed()
     }
 }
+
+// TODO: contract call monitor, function call monitor
 
 // // pub mod erc20_utils;
 // // pub mod inputs;

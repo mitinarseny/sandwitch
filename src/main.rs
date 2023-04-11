@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::{Parser, ValueHint};
+use ethers::prelude::k256::ecdsa::SigningKey;
 use metrics::register_counter;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
 use tokio::{fs, main, net, signal::ctrl_c};
@@ -23,16 +24,6 @@ struct Args {
         default_value_os_t = PathBuf::from("./sandwitch.toml"),
     )]
     config: PathBuf,
-
-    #[arg(
-        short,
-        long,
-        value_parser,
-        value_hint = ValueHint::DirPath,
-        value_name = "FILE",
-        default_value_os_t = PathBuf::from("./accounts"),
-    )]
-    accounts_dir: PathBuf,
 
     #[arg(
         long,
@@ -122,9 +113,10 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
-    let mut app = App::from_config(config, args.accounts_dir).await?;
+    let app = App::from_config(config, SigningKey::from_slice(&[])?).await?;
 
     let cancel = make_ctrl_c_cancel();
+
     app.run(cancel.child_token()).await?;
 
     info!("shutdown");
