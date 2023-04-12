@@ -194,7 +194,9 @@ macro_rules! tuple_multicall {
         for ($( .$n:tt: $t:ident ),+$(,)?)) => {
         #[derive(Debug)]
         $vis enum $reverted<$( $t ),+> {
-            $($t($t)),+
+            $(
+                $t($t),
+            )+
         }
 
         impl<$( $t ),+> MultiCall for ($( TryCall<$t>, )+)
@@ -232,7 +234,9 @@ macro_rules! tuple_multicall {
             fn decode_reverted(r: RevertedAt<bytes::Bytes>, metas: Self::Meta) -> Result<Self::Reverted, AbiError> {
                 let RevertedAt(index, data) = r;
                 Ok(match index {
-                    $( $n => <Self::Reverted>::$t(<$t as Call>::decode_reverted(data, metas.$n)?),)+
+                    $(
+                        $n => <Self::Reverted>::$t(<$t as Call>::decode_reverted(data, metas.$n)?),
+                    )+
                     _ => return Err(IndexTooBig.into()),
                 })
             }

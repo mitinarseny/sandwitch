@@ -1,18 +1,39 @@
+use std::{
+    fmt::{self, Debug, Display},
+    sync::Arc,
+};
+
 use ethers::{
     abi::{self, AbiDecode, AbiError, InvalidOutputType},
     contract::{Contract, ContractError as RawContractError},
     providers::{Middleware, ProviderError},
-    types::Bytes,
+    types::{Address, Bytes},
 };
 use impl_tools::autoimpl;
 use thiserror::Error as ThisError;
 
-use super::{raw, multicall::{MultiCall, MultiCallErrors}};
+use super::{
+    multicall::{MultiCall, MultiCallErrors},
+    raw,
+};
 
-#[autoimpl(Deref<Target = Contract<M>> using self.0)]
-pub struct MultiCallContract<M: Middleware>(raw::MultiCall<M>);
+// #[autoimpl(Deref<Target = Contract<M>> using self.0)]
+pub struct MultiCallContract<M>(raw::MultiCall<M>);
 
-impl<M: Middleware> MultiCallContract<M> {
+impl<M> MultiCallContract<M> {
+    pub fn address(&self) -> Address {
+        self.0.address()
+    }
+}
+
+impl<M> MultiCallContract<M>
+where
+    M: Middleware + 'static,
+{
+    pub fn new(address: Address, client: impl Into<Arc<M>>) -> Self {
+        Self(raw::MultiCall::new(address, client.into()))
+    }
+
     pub async fn multicall<C: MultiCall>(
         &self,
         calls: C,
@@ -36,6 +57,20 @@ impl<M: Middleware> MultiCallContract<M> {
                 RawContractError::ContractNotDeployed => ContractError::ContractNotDeployed,
             }),
         }
+    }
+
+    pub async fn owner(&self) -> Result<Address, RawContractError<M>> {
+        self.0.owner().await
+    }
+
+    pub async fn transfer_ownership(&self, new_owner: Address) -> Result<(), RawContractError<M>> {
+        self.0.transfer_ownership(new_owner).await
+    }
+}
+
+impl<M> Debug for MultiCallContract<M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 

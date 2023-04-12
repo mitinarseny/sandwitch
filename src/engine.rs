@@ -1,50 +1,74 @@
 use core::pin::pin;
 
-use std::{cmp::Reverse, sync::Arc};
+use std::{
+    cmp::Reverse,
+    fmt::format,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::{anyhow, Context};
+use contracts::multicall::MultiCallContract;
 use ethers::{
-    providers::{Middleware, PendingTransaction, Provider, ProviderError, PubsubClient},
+    providers::{
+        Middleware, PendingTransaction, Provider, ProviderError, PubsubClient, SubscriptionStream,
+    },
     signers::{LocalWallet, Signer, Wallet},
     types::{
-        transaction::eip2718::TypedTransaction, Block, BlockNumber, Bytes, Filter, Transaction,
-        TransactionRequest, TxHash, H256, U256,
+        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Bytes, Filter,
+        Signature, TxHash, H256, U256,
     },
+    utils::keccak256,
 };
 use futures::{
     future::{self, try_join3, Aborted, Fuse, FusedFuture, FutureExt, TryFuture, TryFutureExt},
     select_biased,
     stream::{FuturesOrdered, FuturesUnordered, StreamExt},
-    try_join, Future,
+    try_join, Future, Stream,
 };
 use itertools::Itertools;
 use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
+use serde::Deserialize;
+use serde_with::{serde_as, DurationMilliSeconds};
 use tokio::{
     self,
     task::JoinError,
     time::{error::Elapsed, sleep, sleep_until, timeout_at, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn, Instrument};
+use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 
 use crate::{
     abort::FutureExt as AbortFutureExt,
     monitors::{PendingBlock, PendingBlockMonitor, PendingTxMonitor, PrioritizedMultiCall},
+    timed::StreamExt as TimedStreamExt,
     //     abort::{AbortSet, FutureExt as AbortFutureExt, MetricedFuturesQueue},
     //     accounts::Accounts,
     //     monitors::{BlockMonitor, BlockMonitorExt, TxMonitor},
     //     timed::TryFutureExt as TryTimedFutureExt,
-    timeout::TimeoutProvider,
+    providers::timeout::TimeoutProvider,
+    transactions::{Transaction, TransactionRequest},
 };
 
-const TX_PROPAGATION_DELAY: Duration = Duration::from_millis(200); // TODO: move into config
+#[serde_as]
+#[derive(Deserialize, Debug)]
+pub struct EngineConfig {
+    #[serde(rename = "tx_propagation_delay_ms")]
+    #[serde_as(as = "DurationMilliSeconds")]
+    pub tx_propagation_delay: Duration,
+    pub multicall: Address,
+}
 
 pub(crate) struct Engine<P, M> {
     client: Arc<Provider<TimeoutProvider<P>>>,
+    tx_propagation_delay: Duration,
+    multicall: MultiCallContract<Arc<Provider<TimeoutProvider<P>>>>,
     wallet: LocalWallet,
+    next_nonce: AtomicU64,
     // accounts: Arc<Accounts<TimeoutProvider<P>, S>>,
     monitor: M,
-    metrics: Arc<Metrics>,
 }
 
 impl<P, M> Engine<P, M>
@@ -53,21 +77,41 @@ where
     P::Error: Send + Sync + 'static,
     M: PendingBlockMonitor,
 {
-    pub(crate) fn new(
+    pub(crate) async fn new(
         client: impl Into<Arc<Provider<TimeoutProvider<P>>>>,
+        cfg: EngineConfig,
         wallet: impl Into<LocalWallet>,
         monitor: M,
-    ) -> Self {
-        Self {
-            client: client.into(),
-            wallet: wallet.into(),
+    ) -> anyhow::Result<Self> {
+        let client = client.into();
+        let wallet = wallet.into();
+        let multicall = MultiCallContract::new(cfg.multicall, client.clone());
+        // let multicall_owner = multicall
+        //     .owner()
+        //     .await
+        //     .with_context(|| format!("failed to get owner of {multicall:?}"))?;
+        // if wallet.address() != multicall_owner {
+        //     return Err(anyhow!(
+        //         "{multicall:?} is owned by {multicall_owner:?}, but given wallet has address {:?}",
+        //         wallet.address()
+        //     ));
+        // }
+        Ok(Self {
+            multicall,
+            client,
+            tx_propagation_delay: cfg.tx_propagation_delay,
+            wallet,
+            next_nonce: Default::default(),
             monitor,
-            metrics: Metrics::default().into(),
-        }
+        })
+    }
+
+    pub fn account(&self) -> Address {
+        self.wallet.address()
     }
 
     pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
-        // TODO: check that self.wallet is owner of multicall contract
+        // TODO: check there is no pending txs yet
         let cancelled = pin!(cancel.cancelled());
         let blocks = self
             .client
@@ -78,31 +122,61 @@ where
         debug!(subscription_id = %blocks.id, "subscribed to new blocks");
 
         let cancelled = pin!(cancel.cancelled());
-        let mut blocks = blocks.take_until(cancelled);
+        let mut blocks = blocks
+            .inspect(|block| {
+                debug!(
+                    block_hash = ?block.hash.unwrap(),
+                    block_number = ?block.number.unwrap(),
+                    parent_block_hash = ?block.parent_hash,
+                    "new head",
+                );
+            })
+            .timed()
+            .take_until(cancelled);
         let mut process_pending_block = pin!(Fuse::terminated());
-        let mut send_txs = FuturesUnordered::new();
+        let mut send_txs = FuturesOrdered::new();
 
         loop {
             select_biased! {
-                sent_tx_hash = send_txs.select_next_some() => {
-                    info!(tx_hash = %sent_tx_hash?, "tx sent");
+                sent_tx = send_txs.select_next_some() => {
+                    sent_tx?;
                     // TODO: watch sent txs to see if they have been included in processed pending block
                 },
-                block = blocks.select_next_some() => {
-                    debug!(block_hash = %block.hash.unwrap(), "new block mined");
+                (block, received_at) = blocks.select_next_some() => {
                     if !process_pending_block.is_terminated() {
-                        warn!("block came too early");
-                        // TODO: check for uncles
+                        warn!("new block came too early, \
+                            aborting processing of previous pending block...");
+                        process_pending_block.set(Fuse::terminated());
+                        // TODO: check for parent and uncles
+                    }
+
+                    if !send_txs.is_empty() {
+                        // TODO: warn that we are still sending transactions
+                        warn!("we are still sending transactions, skipping this block");
+                        continue;
+                    }
+
+                    let pending_txs_count = self.get_pending_txs_count_at(&block).await?;
+                    if pending_txs_count > 0 {
+                        warn!(
+                            pending_txs_count,
+                            account = ?self.account(),
+                            "there are still pending transactions from our account, \
+                                waiting for them to be included in one of next blocks...",
+                        );
+                        // TODO: adjust delays, so we can catch on next time
+                        continue;
                     }
                     process_pending_block.set(
-                        self.process_pending_block(self.next_block_at(block))
+                        self.process_pending_block(block, received_at)
                             .fuse(),
                     );
                 },
                 processed_block = &mut process_pending_block => {
+                    let pending_block = processed_block?;
                     debug!("pending block processed");
                     send_txs.extend(
-                        self.extract_txs_to_send(processed_block?)
+                        self.extract_txs_to_send(pending_block)
                             .map(|tx| self.sign_and_send(tx)),
                     );
                 },
@@ -111,9 +185,18 @@ where
         }
     }
 
-    fn next_block_at(&self, new: Block<TxHash>) -> Instant {
-        // TODO
-        Instant::now() + Duration::from_secs(3)
+    async fn get_pending_txs_count_at(&self, new_block: &Block<TxHash>) -> anyhow::Result<u64> {
+        let (next, pending) = try_join!(
+            self.client
+                // .get_transaction_count(self.account(), Some(new_block.hash.unwrap().into())),
+                .get_transaction_count(self.account(), Some(BlockNumber::Latest.into())),
+            self.client
+                .get_transaction_count(self.account(), Some(BlockNumber::Pending.into())),
+        )?;
+        if pending == next {
+            self.next_nonce.store(next.as_u64(), Ordering::SeqCst);
+        }
+        Ok((pending - next).as_u64())
     }
 
     async fn get_pending_block(&self) -> Result<PendingBlock, ProviderError> {
@@ -127,17 +210,23 @@ where
             warn!("pending block doest not exist");
             return Err(ProviderError::UnsupportedRPC);
         };
+        // TODO: check that it is parent of last mined block
         Ok(PendingBlock::new(block, logs, 0)) // TODO: priority_fee
     }
 
-    // TODO: return signed txs to send
-    async fn process_pending_block(&self, next_block_at: Instant) -> anyhow::Result<PendingBlock> {
+    #[instrument(err, skip_all, fields(parent_hash = ?latest_block.hash.unwrap()))]
+    async fn process_pending_block(
+        &self,
+        latest_block: Block<TxHash>,
+        received_at: Instant,
+    ) -> anyhow::Result<PendingBlock> {
+        let next_block_at = self.estimate_next_block_at(received_at);
         // TODO: half time
         sleep_until(next_block_at - Duration::from_secs(1)).await;
         // TODO: get account balance and check if there is enoght ETH to send txs
         let block = self.get_pending_block().await?;
         match timeout_at(
-            next_block_at - TX_PROPAGATION_DELAY, // TODO: subtract latency
+            next_block_at - self.tx_propagation_delay, // TODO: subtract latency
             self.monitor.process_pending_block(&block),
         )
         .await
@@ -148,14 +237,12 @@ where
         Ok(block)
     }
 
-    async fn sign_and_send(&self, tx: TypedTransaction) -> anyhow::Result<TxHash> {
-        let signature = self.wallet.sign_transaction_sync(&tx)?;
-        let raw = tx.rlp_signed(&signature);
-        let pending_tx = self.client.send_raw_transaction(raw).await?;
-        Ok(pending_tx.tx_hash())
+    fn estimate_next_block_at(&self, received_at: Instant) -> Instant {
+        // TODO
+        received_at + Duration::from_secs(3)
     }
 
-    fn extract_txs_to_send(&self, block: PendingBlock) -> impl Iterator<Item = TypedTransaction> {
+    fn extract_txs_to_send(&self, block: PendingBlock) -> impl Iterator<Item = TransactionRequest> {
         // TODO: auto add transfer to the account to pay for gas
         block
             .into_send_txs()
@@ -167,7 +254,32 @@ where
                 priority_fee,
             })
             .sorted_unstable_by_key(|tx| Reverse(tx.priority_fee))
-            .map(|p| TypedTransaction::default()) // TODO
+            .map(|p| TransactionRequest::default()) // TODO
+    }
+
+    #[instrument(err, skip_all, fields(
+        from = ?tx.from.unwrap(),
+        gas = ?tx.gas.unwrap(),
+        tx_hash, nonce
+    ))]
+    async fn sign_and_send(&self, tx: TransactionRequest) -> anyhow::Result<Transaction> {
+        // TODO: set and increase nonce
+        let tx = tx.into();
+        let signature = self.wallet.sign_transaction_sync(&tx)?;
+        let tx = match tx {
+            #[cfg(not(feature = "legacy"))]
+            TypedTransaction::Eip1559(tx) => tx,
+            #[cfg(feature = "legacy")]
+            TypedTransaction::Legacy(tx) => tx,
+            _ => unreachable!(),
+        };
+        let raw = tx.rlp_signed(&signature);
+        let tx = Transaction::from_request(tx, signature)?;
+        Span::current()
+            .record("tx_hash", format!("{:?}", tx.hash))
+            .record("nonce", format!("{}", tx.nonce));
+        let pending_tx = self.client.send_raw_transaction(raw).await?;
+        Ok(tx)
     }
 
     // async fn sign_and_send(&self, txs: impl IntoIterator<Item = TransactionRequest>) ->
@@ -501,105 +613,87 @@ where
     // }
 }
 
-// pub(crate) trait TopTxMonitor:
-//     TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
-// {
+// struct Metrics {
+//     seen_txs: Counter,
+//     resolve_tx_duration: Histogram,
+//     valid_txs: Counter,
+//     resolved_as_pendning_txs: Counter,
+//     process_tx_duration: Histogram,
+//     missed_txs: Counter,
+
+//     height: Counter,
+//     resolve_block_duration: Histogram,
+//     block_gas_used: Histogram,
+//     block_gas_limit: Histogram,
+//     txs_in_block: Histogram,
+//     tx_gas_price: Histogram,
+//     process_block_duration: Histogram,
 // }
 
-// impl<M> TopTxMonitor for M where M: TxMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
-// {}
-
-// pub(crate) trait TopBlockMonitor:
-//     BlockMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
-// {
+// impl Default for Metrics {
+//     fn default() -> Self {
+//         Self {
+//             seen_txs: register_counter!("sandwitch_seen_txs"),
+//             resolve_tx_duration: register_histogram!("sandwitch_resolve_tx_duration"),
+//             valid_txs: register_counter!("sandwitch_valid_txs"),
+//             resolved_as_pendning_txs: register_counter!("sandwitch_resolved_as_pending_txs"),
+//             process_tx_duration: register_histogram!("sandwitch_process_tx_duration"),
+//             missed_txs: register_counter!("sandwitch_missed_txs"),
+//             height: register_counter!("sandwitch_height"),
+//             resolve_block_duration: register_histogram!("sandwitch_resolve_block_duration"),
+//             block_gas_used: register_histogram!("sandwitch_block_gas_used"),
+//             block_gas_limit: register_histogram!("sandwitch_block_gas_limit"),
+//             txs_in_block: register_histogram!("sandwitch_txs_in_block"),
+//             tx_gas_price: register_histogram!("sandwitch_tx_gas_price"),
+//             process_block_duration: register_histogram!("sandwitch_process_block_duration"),
+//         }
+//     }
 // }
 
-// impl<M> TopBlockMonitor for M where
-//     M: BlockMonitor<Ok = (), Error = anyhow::Error> + Sync + Send + 'static
-// {
+// impl Metrics {
+//     fn new_tx(&self) {
+//         self.seen_txs.increment(1);
+//     }
+
+//     fn tx_resolved(&self, elapsed: Duration) {
+//         self.resolve_tx_duration.record(elapsed)
+//     }
+
+//     fn tx_valid(&self) {
+//         self.valid_txs.increment(1);
+//     }
+
+//     fn tx_resolved_as_pending(&self) {
+//         self.resolved_as_pendning_txs.increment(1);
+//     }
+
+//     fn tx_processed(&self, elapsed: Duration) {
+//         self.process_tx_duration.record(elapsed);
+//     }
+
+//     fn tx_missed(&self) {
+//         self.missed_txs.increment(1);
+//     }
+
+//     fn new_block<TX>(&self, block: &Block<TX>) {
+//         self.height.absolute(block.number.unwrap().as_u64());
+//     }
+
+//     fn block_resolved(&self, elapsed: Duration) {
+//         self.resolve_block_duration.record(elapsed);
+//     }
+
+//     fn block_valid(&self, block: &Block<Transaction>) {
+//         self.block_gas_used.record(block.gas_used.as_u128() as f64);
+//         self.block_gas_limit
+//             .record(block.gas_limit.as_u128() as f64);
+//         self.txs_in_block.record(block.transactions.len() as f64);
+//         for gas_price in block.transactions.iter().filter_map(|tx| tx.gas_price) {
+//             self.tx_gas_price.record(gas_price.as_u128() as f64);
+//         }
+//     }
+
+//     fn block_processed(&self, elapsed: Duration) {
+//         self.process_block_duration.record(elapsed);
+//     }
 // }
-
-struct Metrics {
-    seen_txs: Counter,
-    resolve_tx_duration: Histogram,
-    valid_txs: Counter,
-    resolved_as_pendning_txs: Counter,
-    process_tx_duration: Histogram,
-    missed_txs: Counter,
-
-    height: Counter,
-    resolve_block_duration: Histogram,
-    block_gas_used: Histogram,
-    block_gas_limit: Histogram,
-    txs_in_block: Histogram,
-    tx_gas_price: Histogram,
-    process_block_duration: Histogram,
-}
-
-impl Default for Metrics {
-    fn default() -> Self {
-        Self {
-            seen_txs: register_counter!("sandwitch_seen_txs"),
-            resolve_tx_duration: register_histogram!("sandwitch_resolve_tx_duration"),
-            valid_txs: register_counter!("sandwitch_valid_txs"),
-            resolved_as_pendning_txs: register_counter!("sandwitch_resolved_as_pending_txs"),
-            process_tx_duration: register_histogram!("sandwitch_process_tx_duration"),
-            missed_txs: register_counter!("sandwitch_missed_txs"),
-            height: register_counter!("sandwitch_height"),
-            resolve_block_duration: register_histogram!("sandwitch_resolve_block_duration"),
-            block_gas_used: register_histogram!("sandwitch_block_gas_used"),
-            block_gas_limit: register_histogram!("sandwitch_block_gas_limit"),
-            txs_in_block: register_histogram!("sandwitch_txs_in_block"),
-            tx_gas_price: register_histogram!("sandwitch_tx_gas_price"),
-            process_block_duration: register_histogram!("sandwitch_process_block_duration"),
-        }
-    }
-}
-
-impl Metrics {
-    fn new_tx(&self) {
-        self.seen_txs.increment(1);
-    }
-
-    fn tx_resolved(&self, elapsed: Duration) {
-        self.resolve_tx_duration.record(elapsed)
-    }
-
-    fn tx_valid(&self) {
-        self.valid_txs.increment(1);
-    }
-
-    fn tx_resolved_as_pending(&self) {
-        self.resolved_as_pendning_txs.increment(1);
-    }
-
-    fn tx_processed(&self, elapsed: Duration) {
-        self.process_tx_duration.record(elapsed);
-    }
-
-    fn tx_missed(&self) {
-        self.missed_txs.increment(1);
-    }
-
-    fn new_block<TX>(&self, block: &Block<TX>) {
-        self.height.absolute(block.number.unwrap().as_u64());
-    }
-
-    fn block_resolved(&self, elapsed: Duration) {
-        self.resolve_block_duration.record(elapsed);
-    }
-
-    fn block_valid(&self, block: &Block<Transaction>) {
-        self.block_gas_used.record(block.gas_used.as_u128() as f64);
-        self.block_gas_limit
-            .record(block.gas_limit.as_u128() as f64);
-        self.txs_in_block.record(block.transactions.len() as f64);
-        for gas_price in block.transactions.iter().filter_map(|tx| tx.gas_price) {
-            self.tx_gas_price.record(gas_price.as_u128() as f64);
-        }
-    }
-
-    fn block_processed(&self, elapsed: Duration) {
-        self.process_block_duration.record(elapsed);
-    }
-}

@@ -151,6 +151,7 @@ impl PendingBlock {
         logs: impl IntoIterator<Item = Log>,
         first_prioroty_fee: impl Into<U256>,
     ) -> Self {
+        // TODO: ensure all logs are from the same block as `block`
         let Block {
             hash,
             parent_hash,

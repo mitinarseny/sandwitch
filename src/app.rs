@@ -1,8 +1,9 @@
 use std::{str::FromStr, sync::Arc, time::Duration, vec::Vec};
 
+use anyhow::anyhow;
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    providers::{Middleware, Provider, PubsubClient, Ws},
+    providers::{Ipc, Middleware, Provider, PubsubClient, Ws},
     signers::LocalWallet,
     types::Address,
     utils::secret_key_to_address,
@@ -20,10 +21,9 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    // accounts::Accounts,
-    engine::Engine,
+    engine::{Engine, EngineConfig},
     monitors::{MultiMonitor, PendingBlockMonitor},
-    timeout::TimeoutProvider,
+    providers::{one_of::OneOf, timeout::TimeoutProvider},
 };
 
 // #[cfg(feature = "pancake_swap")]
@@ -31,14 +31,14 @@ use crate::{
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
+    pub network: NetworkConfig,
     pub engine: EngineConfig,
     pub monitors: MonitorsConfig,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct EngineConfig {
-    pub wss: Url,
-    pub multicall: Address,
+pub struct NetworkConfig {
+    pub node: Url,
 }
 
 #[derive(Deserialize, Debug)]
@@ -47,31 +47,37 @@ pub struct MonitorsConfig {
     // pub pancake_swap: Option<PancakeSwapConfig>,
 }
 
-const TIMEOUT: Duration = Duration::from_secs(5);
-
 pub struct App<P, M> {
     engine: Engine<P, M>,
 }
 
-impl App<Ws, Box<dyn PendingBlockMonitor>> {
+impl App<OneOf<Ws, Ipc>, Box<dyn PendingBlockMonitor>> {
     pub async fn from_config(config: Config, signing_key: SigningKey) -> anyhow::Result<Self> {
-        info!("connecting to web socket...");
-        let client = Ws::connect(config.engine.wss).await?;
-        info!("connected to web socket");
-        Self::from_client(client, signing_key, config.monitors).await
+        info!("connecting to node...");
+        let client = Self::connect(&config.network.node).await?;
+        info!("connected to node");
+        Self::from_client(client, signing_key, config).await
+    }
+
+    async fn connect(url: &Url) -> anyhow::Result<OneOf<Ws, Ipc>> {
+        Ok(match url.scheme() {
+            "wss" => OneOf::P1(Ws::connect(&url).await?),
+            "file" => OneOf::P2(
+                Ipc::connect(url.to_file_path().map_err(|_| anyhow!("invalid IPC url"))?).await?,
+            ),
+            _ => return Err(anyhow!("invalid node url: {url}")),
+        })
     }
 }
+
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl<P> App<P, Box<dyn PendingBlockMonitor>>
 where
     P: PubsubClient + 'static,
 {
-    async fn from_client(
-        client: P,
-        signing_key: SigningKey,
-        monitors_config: MonitorsConfig,
-    ) -> anyhow::Result<Self> {
-        let client = Arc::new(Provider::new(TimeoutProvider::new(client, TIMEOUT)));
+    async fn from_client(client: P, signing_key: SigningKey, cfg: Config) -> anyhow::Result<Self> {
+        let client = Arc::new(Provider::new(TimeoutProvider::new(client, CLIENT_TIMEOUT)));
         info!("initializing...");
         let (network_id, chain_id) = try_join!(
             client.get_net_version(),
@@ -85,17 +91,19 @@ where
         )
         .absolute(1);
 
-        let monitor = App::make_monitor(client.clone(), monitors_config).await?;
+        let monitor = App::make_monitor(client.clone(), cfg.monitors).await?;
 
         Ok(Self {
             engine: Engine::new(
                 client,
+                cfg.engine,
                 {
                     let address = secret_key_to_address(&signing_key);
                     LocalWallet::new_with_signer(signing_key, address, chain_id)
                 },
                 monitor,
-            ),
+            )
+            .await?,
         })
     }
 
