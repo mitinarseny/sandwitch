@@ -12,7 +12,7 @@ use ethers::{
     },
 };
 use futures::{
-    future::{self, try_join3, Aborted, Fuse, FutureExt, TryFuture, TryFutureExt},
+    future::{self, try_join3, Aborted, Fuse, FusedFuture, FutureExt, TryFuture, TryFutureExt},
     select_biased,
     stream::{FuturesOrdered, FuturesUnordered, StreamExt},
     try_join, Future,
@@ -37,14 +37,9 @@ use crate::{
     timeout::TimeoutProvider,
 };
 
-const TX_PROPAGATION_DELAY: Duration = Duration::from_millis(200);
+const TX_PROPAGATION_DELAY: Duration = Duration::from_millis(200); // TODO: move into config
 
-pub(crate) struct Engine<P, M>
-where
-    P: PubsubClient + 'static,
-    P::Error: Send + Sync + 'static,
-    M: PendingBlockMonitor,
-{
+pub(crate) struct Engine<P, M> {
     client: Arc<Provider<TimeoutProvider<P>>>,
     wallet: LocalWallet,
     // accounts: Arc<Accounts<TimeoutProvider<P>, S>>,
@@ -94,12 +89,18 @@ where
                     // TODO: watch sent txs to see if they have been included in processed pending block
                 },
                 block = blocks.select_next_some() => {
+                    debug!(block_hash = %block.hash.unwrap(), "new block mined");
+                    if !process_pending_block.is_terminated() {
+                        warn!("block came too early");
+                        // TODO: check for uncles
+                    }
                     process_pending_block.set(
-                        self.process_pending_block_with_deadline(self.next_block_at(block))
+                        self.process_pending_block(self.next_block_at(block))
                             .fuse(),
                     );
                 },
                 processed_block = &mut process_pending_block => {
+                    debug!("pending block processed");
                     send_txs.extend(
                         self.extract_txs_to_send(processed_block?)
                             .map(|tx| self.sign_and_send(tx)),
@@ -119,7 +120,8 @@ where
         let log_filter = Filter::new().select(BlockNumber::Pending);
         let (block, logs) = try_join!(
             self.client.get_block_with_txs(BlockNumber::Pending),
-            self.client.get_logs(&log_filter),
+            future::ok(Vec::new()), // TODO
+                                    // self.client.get_logs(&log_filter),
         )?;
         let Some(block) = block else {
             warn!("pending block doest not exist");
@@ -129,16 +131,13 @@ where
     }
 
     // TODO: return signed txs to send
-    async fn process_pending_block_with_deadline(
-        &self,
-        next_block_at: Instant,
-    ) -> anyhow::Result<PendingBlock> {
+    async fn process_pending_block(&self, next_block_at: Instant) -> anyhow::Result<PendingBlock> {
         // TODO: half time
-        sleep_until(next_block_at).await;
+        sleep_until(next_block_at - Duration::from_secs(1)).await;
         // TODO: get account balance and check if there is enoght ETH to send txs
         let block = self.get_pending_block().await?;
         match timeout_at(
-            next_block_at - TX_PROPAGATION_DELAY,
+            next_block_at - TX_PROPAGATION_DELAY, // TODO: subtract latency
             self.monitor.process_pending_block(&block),
         )
         .await

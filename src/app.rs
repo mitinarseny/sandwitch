@@ -1,11 +1,13 @@
-use std::{sync::Arc, time::Duration, vec::Vec};
+use std::{str::FromStr, sync::Arc, time::Duration, vec::Vec};
 
 use ethers::{
     core::k256::ecdsa::SigningKey,
     providers::{Middleware, Provider, PubsubClient, Ws},
     signers::LocalWallet,
     types::Address,
+    utils::secret_key_to_address,
 };
+use futures::try_join;
 #[allow(unused_imports)]
 use futures::{
     future::{self, FutureExt, LocalBoxFuture, TryFutureExt},
@@ -36,7 +38,6 @@ pub struct Config {
 #[derive(Deserialize, Debug)]
 pub struct EngineConfig {
     pub wss: Url,
-    pub chain_id: u64,
     pub multicall: Address,
 }
 
@@ -48,59 +49,54 @@ pub struct MonitorsConfig {
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-pub struct App<P>
-where
-    P: PubsubClient + 'static,
-    P::Error: Send + Sync + 'static,
-{
-    engine: Engine<P, Box<dyn PendingBlockMonitor>>,
+pub struct App<P, M> {
+    engine: Engine<P, M>,
 }
 
-impl App<Ws> {
+impl App<Ws, Box<dyn PendingBlockMonitor>> {
     pub async fn from_config(config: Config, signing_key: SigningKey) -> anyhow::Result<Self> {
-        let client = Arc::new(Provider::new(TimeoutProvider::new(
-            Ws::connect(config.engine.wss).await?,
-            TIMEOUT,
-        )));
-        info!("web socket created");
+        info!("connecting to web socket...");
+        let client = Ws::connect(config.engine.wss).await?;
+        info!("connected to web socket");
+        Self::from_client(client, signing_key, config.monitors).await
+    }
+}
 
-        let network_id = client.get_net_version().await?;
-        info!(network_id);
-        register_counter!("sandwitch_info", "network_id" => network_id).absolute(1);
+impl<P> App<P, Box<dyn PendingBlockMonitor>>
+where
+    P: PubsubClient + 'static,
+{
+    async fn from_client(
+        client: P,
+        signing_key: SigningKey,
+        monitors_config: MonitorsConfig,
+    ) -> anyhow::Result<Self> {
+        let client = Arc::new(Provider::new(TimeoutProvider::new(client, TIMEOUT)));
+        info!("initializing...");
+        let (network_id, chain_id) = try_join!(
+            client.get_net_version(),
+            client.get_chainid().map_ok(|v| v.as_u64())
+        )?;
+        info!(network_id, %chain_id, "node info");
+        register_counter!(
+            "sandwitch_info",
+            "network_id" => network_id,
+            "chain_id" => format!("{chain_id}"),
+        )
+        .absolute(1);
 
-        // let accounts_dir = accounts_dir.as_ref();
-        // let keys = Self::read_keys(accounts_dir).await?;
-        // if keys.is_empty() {
-        //     warn!("no keys found in {}", accounts_dir.display());
-        // } else {
-        //     info!(
-        //         count = keys.len(),
-        //         "keys collected, initializing accounts..."
-        //     );
-        // }
-
-        // let accounts = Arc::new(Accounts::from_signers(keys, client.clone()).await?);
-        // info!(count = accounts.len(), "accounts initialized");
-
-        let monitor = App::make_monitor(client.clone(), config.monitors).await?;
+        let monitor = App::make_monitor(client.clone(), monitors_config).await?;
 
         Ok(Self {
             engine: Engine::new(
                 client,
-                LocalWallet::new_with_signer(signing_key, Address::zero(), config.engine.chain_id),
+                {
+                    let address = secret_key_to_address(&signing_key);
+                    LocalWallet::new_with_signer(signing_key, address, chain_id)
+                },
                 monitor,
             ),
         })
-    }
-}
-
-impl<P> App<P>
-where
-    P: PubsubClient + 'static,
-    P::Error: Send + Sync,
-{
-    pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
-        self.engine.run(cancel).await
     }
 
     async fn make_monitor(
@@ -138,5 +134,15 @@ where
         // }
 
         monitors.try_collect().await
+    }
+}
+
+impl<P, M> App<P, M>
+where
+    P: PubsubClient + 'static,
+    M: PendingBlockMonitor,
+{
+    pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
+        self.engine.run(cancel).await
     }
 }

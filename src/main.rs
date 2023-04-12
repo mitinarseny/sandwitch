@@ -25,6 +25,19 @@ struct Args {
     )]
     config: PathBuf,
 
+    /// Path to encrypted JSON signing key
+    #[arg(
+        short, long,
+        value_parser,
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE",
+    )]
+    keystore: PathBuf,
+
+    /// Password to decrypt keystore
+    #[arg(long, env = "SANDWITCH_KEYSTORE_PASSWORD")]
+    keystore_password: String,
+
     #[arg(
         long,
         value_hint = ValueHint::Hostname,
@@ -113,7 +126,11 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
 
-    let app = App::from_config(config, SigningKey::from_slice(&[])?).await?;
+    let app = App::from_config(config, {
+        let secret = eth_keystore::decrypt_key(args.keystore, args.keystore_password)?;
+        SigningKey::from_bytes(secret.as_slice().into())?
+    })
+    .await?;
 
     let cancel = make_ctrl_c_cancel();
 

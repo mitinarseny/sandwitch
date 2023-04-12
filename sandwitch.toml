@@ -1,5 +1,7 @@
 [engine]
 wss = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+chain_id = 56
+multicall = "0x0000000000000000000000000000000000000000"
 # wss = "wss://rpc.ankr.com/bsc_testnet_chapel/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
 # wss = "wss://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
 # http = "https://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"

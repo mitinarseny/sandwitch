@@ -18,7 +18,7 @@ use futures::{
 };
 use impl_tools::autoimpl;
 use itertools::Itertools;
-use tracing::{event, Level};
+use tracing::{debug, event, Level};
 
 #[derive(Default)]
 #[autoimpl(Deref<Target = [TryCall<RawCall>]> using self.0)]
@@ -274,6 +274,17 @@ impl PendingBlockMonitor for () {
         future::ok(()).boxed()
     }
 }
+
+// pub struct LogMonitor;
+
+// impl PendingBlockMonitor for LogMonitor {
+//     fn process_pending_block<'a>(
+//         &'a self,
+//         block: &'a PendingBlock,
+//     ) -> BoxFuture<'a, anyhow::Result<()>> {
+//         debug!("")
+//     }
+// }
 
 #[autoimpl(Deref using self.0)]
 #[autoimpl(DerefMut using self.0)]

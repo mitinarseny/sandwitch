@@ -13,12 +13,12 @@ use tokio::time::{timeout, Duration};
 #[autoimpl(Deref using self.inner)]
 #[autoimpl(DerefMut using self.inner)]
 #[derive(Debug)]
-pub struct TimeoutProvider<P: JsonRpcClient> {
+pub struct TimeoutProvider<P> {
     inner: P,
     timeout: Duration,
 }
 
-impl<P: JsonRpcClient> TimeoutProvider<P> {
+impl<P> TimeoutProvider<P> {
     pub(crate) fn new(client: P, timeout: Duration) -> Self {
         Self {
             inner: client,
