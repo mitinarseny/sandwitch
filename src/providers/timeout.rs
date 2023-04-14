@@ -19,7 +19,7 @@ pub struct TimeoutProvider<P> {
 }
 
 impl<P> TimeoutProvider<P> {
-    pub(crate) fn new(client: P, timeout: Duration) -> Self {
+    pub fn new(client: P, timeout: Duration) -> Self {
         Self {
             inner: client,
             timeout,
@@ -29,10 +29,10 @@ impl<P> TimeoutProvider<P> {
 
 impl<P> JsonRpcClient for TimeoutProvider<P>
 where
-    P: JsonRpcClient + 'static,
-    P::Error: Send + Sync + 'static,
+    P: JsonRpcClient,
+    P::Error: 'static,
 {
-    type Error = TimeoutProviderError<P>;
+    type Error = TimeoutProviderError<P::Error>;
 
     fn request<'life0, 'life1, 'async_trait, T, R>(
         &'life0 self,
@@ -81,17 +81,17 @@ where
 }
 
 #[derive(ThisError, Debug)]
-pub enum TimeoutProviderError<P: JsonRpcClient> {
+pub enum TimeoutProviderError<P> {
     /// Timeout exceeded
     #[error("timeout exceeded: {0:?}")]
     Timeout(Duration),
 
     #[error(transparent)]
-    Inner(P::Error),
+    Inner(P),
 }
 
-impl<P: JsonRpcClient> TimeoutProviderError<P> {
-    fn as_inner(&self) -> Option<&P::Error> {
+impl<P> TimeoutProviderError<P> {
+    fn as_inner(&self) -> Option<&P> {
         match self {
             TimeoutProviderError::Inner(inner) => Some(inner),
             _ => None,
@@ -99,7 +99,10 @@ impl<P: JsonRpcClient> TimeoutProviderError<P> {
     }
 }
 
-impl<P: JsonRpcClient> RpcError for TimeoutProviderError<P> {
+impl<P> RpcError for TimeoutProviderError<P>
+where
+    P: Into<ProviderError> + RpcError,
+{
     fn as_error_response(&self) -> Option<&ethers::providers::JsonRpcError> {
         self.as_inner().map(RpcError::as_error_response).flatten()
     }
@@ -111,8 +114,7 @@ impl<P: JsonRpcClient> RpcError for TimeoutProviderError<P> {
 
 impl<P> From<TimeoutProviderError<P>> for ProviderError
 where
-    P: JsonRpcClient + 'static,
-    P::Error: Send + Sync + 'static,
+    P: Into<ProviderError> + RpcError + 'static,
 {
     fn from(e: TimeoutProviderError<P>) -> Self {
         if let TimeoutProviderError::Inner(e) = e {

@@ -4,7 +4,7 @@ use std::{
     cmp::Reverse,
     fmt::format,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -23,50 +23,53 @@ use ethers::{
     utils::keccak256,
 };
 use futures::{
-    future::{self, try_join3, Aborted, Fuse, FusedFuture, FutureExt, TryFuture, TryFutureExt},
+    future::{Aborted, Fuse, FusedFuture, FutureExt, TryFuture, TryFutureExt},
     select_biased,
-    stream::{FuturesOrdered, FuturesUnordered, StreamExt},
-    try_join, Future, Stream,
+    stream::{self, FuturesUnordered, StreamExt},
+    try_join,
 };
 use itertools::Itertools;
-use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
+// use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use serde::Deserialize;
 use serde_with::{serde_as, DurationMilliSeconds};
 use tokio::{
     self,
-    task::JoinError,
-    time::{error::Elapsed, sleep, sleep_until, timeout_at, Duration, Instant},
+    time::{sleep_until, timeout_at, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, error, error_span, field, info, instrument, warn, Span};
 
 use crate::{
     abort::FutureExt as AbortFutureExt,
-    monitors::{PendingBlock, PendingBlockMonitor, PendingTxMonitor, PrioritizedMultiCall},
+    monitors::{PendingBlock, PendingBlockMonitor, PrioritizedMultiCall},
+    providers::{LatencyProvider, TimeoutProvider},
     timed::StreamExt as TimedStreamExt,
-    //     abort::{AbortSet, FutureExt as AbortFutureExt, MetricedFuturesQueue},
-    //     accounts::Accounts,
-    //     monitors::{BlockMonitor, BlockMonitorExt, TxMonitor},
-    //     timed::TryFutureExt as TryTimedFutureExt,
-    providers::timeout::TimeoutProvider,
     transactions::{Transaction, TransactionRequest},
 };
 
 #[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct EngineConfig {
+    #[serde(rename = "block_interval_ms")]
+    #[serde_as(as = "DurationMilliSeconds")]
+    pub block_interval: Duration,
+
     #[serde(rename = "tx_propagation_delay_ms")]
     #[serde_as(as = "DurationMilliSeconds")]
     pub tx_propagation_delay: Duration,
+
     pub multicall: Address,
 }
 
+pub type ProviderStack<P> = Provider<LatencyProvider<TimeoutProvider<P>>>;
+
 pub(crate) struct Engine<P, M> {
-    client: Arc<Provider<TimeoutProvider<P>>>,
-    tx_propagation_delay: Duration,
-    multicall: MultiCallContract<Arc<Provider<TimeoutProvider<P>>>>,
+    client: Arc<ProviderStack<P>>,
+    multicall: MultiCallContract<Arc<ProviderStack<P>>>,
     wallet: LocalWallet,
     next_nonce: AtomicU64,
+    tx_propagation_delay: Duration,
+    block_interval: Duration,
     // accounts: Arc<Accounts<TimeoutProvider<P>, S>>,
     monitor: M,
 }
@@ -78,7 +81,7 @@ where
     M: PendingBlockMonitor,
 {
     pub(crate) async fn new(
-        client: impl Into<Arc<Provider<TimeoutProvider<P>>>>,
+        client: impl Into<Arc<ProviderStack<P>>>,
         cfg: EngineConfig,
         wallet: impl Into<LocalWallet>,
         monitor: M,
@@ -99,9 +102,10 @@ where
         Ok(Self {
             multicall,
             client,
-            tx_propagation_delay: cfg.tx_propagation_delay,
             wallet,
             next_nonce: Default::default(),
+            tx_propagation_delay: cfg.tx_propagation_delay,
+            block_interval: cfg.block_interval,
             monitor,
         })
     }
@@ -111,30 +115,21 @@ where
     }
 
     pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
-        // TODO: check there is no pending txs yet
-        let cancelled = pin!(cancel.cancelled());
+        let mut cancelled = pin!(cancel.cancelled().map(|_| Aborted));
         let blocks = self
             .client
             .subscribe_blocks()
-            .with_abort(cancelled.map(|_| Aborted))
+            .with_abort(&mut cancelled)
             .await?
             .with_context(|| "failed to subscribe to new blocks")?;
         debug!(subscription_id = %blocks.id, "subscribed to new blocks");
 
-        let cancelled = pin!(cancel.cancelled());
-        let mut blocks = blocks
-            .inspect(|block| {
-                debug!(
-                    block_hash = ?block.hash.unwrap(),
-                    block_number = ?block.number.unwrap(),
-                    parent_block_hash = ?block.parent_hash,
-                    "new head",
-                );
-            })
-            .timed()
-            .take_until(cancelled);
+        let (blocks, blocks_handle) = stream::abortable(blocks.timed());
+        let mut blocks = blocks.fuse();
         let mut process_pending_block = pin!(Fuse::terminated());
-        let mut send_txs = FuturesOrdered::new();
+        // process_pending_block.
+        let mut send_txs = FuturesUnordered::new();
+        let mut cancelled = pin!(cancel.cancelled().map(|_| Aborted));
 
         loop {
             select_biased! {
@@ -142,54 +137,67 @@ where
                     sent_tx?;
                     // TODO: watch sent txs to see if they have been included in processed pending block
                 },
-                (block, received_at) = blocks.select_next_some() => {
+                _ = &mut cancelled => error_span!("cancelled").in_scope(||{
+                    info!("stop receiving new heads...");
+                    blocks_handle.abort();
                     if !process_pending_block.is_terminated() {
-                        warn!("new block came too early, \
-                            aborting processing of previous pending block...");
+                        warn!("pending block was being processed, aborting...");
                         process_pending_block.set(Fuse::terminated());
-                        // TODO: check for parent and uncles
                     }
+                    if !send_txs.is_empty() {
+                        info!(
+                            left_to_send = send_txs.len(),
+                            "still sending transactions, waiting for them to finish...",
+                        );
+                    }
+                }),
+                (block, received_at) = blocks.select_next_some() => Self::new_head_span(&block).in_scope(|| {
+                    debug!("new head received");
+                    // TODO: check if block_time is not too small
+                    // TODO: check for parent and uncles
 
+                    if !process_pending_block.is_terminated() {
+                        warn!("new head came too early, \
+                            aborting previous pending block processing...");
+                        process_pending_block.set(Fuse::terminated());
+                    }
                     if !send_txs.is_empty() {
                         // TODO: warn that we are still sending transactions
-                        warn!("we are still sending transactions, skipping this block");
-                        continue;
-                    }
-
-                    let pending_txs_count = self.get_pending_txs_count_at(&block).await?;
-                    if pending_txs_count > 0 {
                         warn!(
-                            pending_txs_count,
-                            account = ?self.account(),
-                            "there are still pending transactions from our account, \
-                                waiting for them to be included in one of next blocks...",
+                            left_to_send = send_txs.len(),
+                            "we are still sending transactions, skipping this block...",
                         );
-                        // TODO: adjust delays, so we can catch on next time
-                        continue;
+                        return;
                     }
                     process_pending_block.set(
-                        self.process_pending_block(block, received_at)
+                        self.process_pending_block(block, received_at, Span::current())
                             .fuse(),
                     );
-                },
-                processed_block = &mut process_pending_block => {
-                    let pending_block = processed_block?;
-                    debug!("pending block processed");
-                    send_txs.extend(
-                        self.extract_txs_to_send(pending_block)
-                            .map(|tx| self.sign_and_send(tx)),
-                    );
-                },
+                }),
+                to_send = &mut process_pending_block => send_txs.extend(
+                    to_send?
+                        .into_iter()
+                        .flatten()
+                        .map(TryFutureExt::into_future),
+                ),
                 complete => return Ok(()),
             }
         }
     }
 
+    fn new_head_span(block: &Block<TxHash>) -> Span {
+        error_span!(
+            "new head",
+            block_hash = ?block.hash.unwrap(),
+            block_number = ?block.number.unwrap().as_u64(),
+            parent_block_hash = ?block.parent_hash,
+        )
+    }
+
     async fn get_pending_txs_count_at(&self, new_block: &Block<TxHash>) -> anyhow::Result<u64> {
         let (next, pending) = try_join!(
             self.client
-                // .get_transaction_count(self.account(), Some(new_block.hash.unwrap().into())),
-                .get_transaction_count(self.account(), Some(BlockNumber::Latest.into())),
+                .get_transaction_count(self.account(), Some(new_block.hash.unwrap().into())),
             self.client
                 .get_transaction_count(self.account(), Some(BlockNumber::Pending.into())),
         )?;
@@ -203,46 +211,95 @@ where
         let log_filter = Filter::new().select(BlockNumber::Pending);
         let (block, logs) = try_join!(
             self.client.get_block_with_txs(BlockNumber::Pending),
-            future::ok(Vec::new()), // TODO
-                                    // self.client.get_logs(&log_filter),
+            self.client.get_logs(&log_filter),
         )?;
         let Some(block) = block else {
-            warn!("pending block doest not exist");
+            error!("pending block doest not exist");
             return Err(ProviderError::UnsupportedRPC);
         };
         // TODO: check that it is parent of last mined block
         Ok(PendingBlock::new(block, logs, 0)) // TODO: priority_fee
     }
 
-    #[instrument(err, skip_all, fields(parent_hash = ?latest_block.hash.unwrap()))]
+    fn estimate_next_block_at(&self, received_at: Instant) -> Instant {
+        received_at + self.block_interval
+    }
+
+    fn latency(&self) -> Duration {
+        self.client.as_ref().as_ref().latency()
+    }
+
+    #[instrument(
+        follows_from = [new_head_span],
+        skip_all,
+        fields(
+            parent_block_hash,
+            block_number,
+        ),
+        err,
+    )]
     async fn process_pending_block(
         &self,
         latest_block: Block<TxHash>,
         received_at: Instant,
-    ) -> anyhow::Result<PendingBlock> {
-        let next_block_at = self.estimate_next_block_at(received_at);
-        // TODO: half time
-        sleep_until(next_block_at - Duration::from_secs(1)).await;
-        // TODO: get account balance and check if there is enoght ETH to send txs
-        let block = self.get_pending_block().await?;
-        match timeout_at(
-            next_block_at - self.tx_propagation_delay, // TODO: subtract latency
-            self.monitor.process_pending_block(&block),
-        )
-        .await
-        {
-            Ok(r) => r?,
-            Err(_) => warn!("elapsed"), // TODO
+        new_head_span: impl Into<Option<tracing::Id>>,
+    ) -> anyhow::Result<
+        Option<impl Iterator<Item = impl TryFuture<Ok = Transaction, Error = anyhow::Error> + '_>>,
+    > {
+        let span = Span::current();
+
+        let pending_txs_count = self.get_pending_txs_count_at(&latest_block).await?;
+        if pending_txs_count > 0 {
+            warn!(
+                pending_txs_count,
+                account = ?self.account(),
+                "there are still pending transactions from our account, \
+                    waiting for them to be included in one of next blocks...",
+            );
+            // TODO: adjust delays, so we can catch on next time
+            return Ok(None);
         }
-        Ok(block)
+
+        let next_block_at = self.estimate_next_block_at(received_at);
+        let latency = self.latency();
+        let abort_processing_at = next_block_at - self.tx_propagation_delay - latency;
+
+        // TODO: keep track of monitor latency
+        sleep_until(abort_processing_at - Duration::from_secs(1)).await;
+        debug!("requesting pending block...");
+        // TODO: get account balance and check if there is enoght ETH to send txs
+        let pending_block = self.get_pending_block().await?;
+        span.record("parent_block_hash", field::debug(pending_block.parent_hash))
+            .record("block_number", pending_block.number.unwrap().as_u64());
+        if !latest_block
+            .hash
+            .is_some_and(|h| h == pending_block.parent_hash)
+        {
+            warn!("pending block is not a child of latest, skipping...");
+            return Ok(None);
+        }
+        debug!("processing pending block");
+        timeout_at(
+            abort_processing_at,
+            self.monitor.process_pending_block(&pending_block),
+        )
+        .unwrap_or_else(|_| {
+            warn!("elapsed");
+            Ok(())
+        })
+        .await?;
+        debug!("pending block processed");
+        // TODO: maybe force sleep until abort_processing_at, so we would send just at the end of the block?
+        Ok(Some(
+            self.extract_txs_to_send(pending_block)
+                .map(move |tx| self.sign_and_send(tx, span.clone())),
+        ))
     }
 
-    fn estimate_next_block_at(&self, received_at: Instant) -> Instant {
-        // TODO
-        received_at + Duration::from_secs(3)
-    }
-
-    fn extract_txs_to_send(&self, block: PendingBlock) -> impl Iterator<Item = TransactionRequest> {
+    fn extract_txs_to_send(
+        &self,
+        block: PendingBlock,
+    ) -> impl ExactSizeIterator<Item = TransactionRequest> {
         // TODO: auto add transfer to the account to pay for gas
         block
             .into_send_txs()
@@ -257,14 +314,25 @@ where
             .map(|p| TransactionRequest::default()) // TODO
     }
 
-    #[instrument(err, skip_all, fields(
-        from = ?tx.from.unwrap(),
-        gas = ?tx.gas.unwrap(),
-        tx_hash, nonce
-    ))]
-    async fn sign_and_send(&self, tx: TransactionRequest) -> anyhow::Result<Transaction> {
+    // TODO: instrument gas price / max_fee_*
+    #[instrument(
+        follows_from = [process_pending_block_span],
+        skip_all,
+        fields(
+            from = ?tx.from.unwrap(),
+            gas = ?tx.gas.unwrap(),
+            tx_hash, nonce
+        ),
+        err,
+    )]
+    async fn sign_and_send(
+        &self,
+        tx: TransactionRequest,
+        process_pending_block_span: impl Into<Option<tracing::Id>>,
+    ) -> anyhow::Result<Transaction> {
         // TODO: set and increase nonce
         let tx = tx.into();
+        // TODO: debug!("assigned nonce: {nonce}");
         let signature = self.wallet.sign_transaction_sync(&tx)?;
         let tx = match tx {
             #[cfg(not(feature = "legacy"))]
@@ -276,341 +344,12 @@ where
         let raw = tx.rlp_signed(&signature);
         let tx = Transaction::from_request(tx, signature)?;
         Span::current()
-            .record("tx_hash", format!("{:?}", tx.hash))
-            .record("nonce", format!("{}", tx.nonce));
+            .record("tx_hash", field::debug(tx.hash))
+            .record("nonce", field::display(tx.nonce));
         let pending_tx = self.client.send_raw_transaction(raw).await?;
+        info!("transaction sent");
         Ok(tx)
     }
-
-    // async fn sign_and_send(&self, txs: impl IntoIterator<Item = TransactionRequest>) ->
-
-    // pub(crate) async fn run1(&mut self, cancel: CancellationToken) -> anyhow::Result<()> {
-    //     let cancelled = cancel.cancelled().fuse();
-    //     pin_mut!(cancelled);
-
-    //     let blocks = self
-    //         .client
-    //         .subscribe_blocks()
-    //         .inspect_ok(|st| debug!(subscription_id = %st.id, "subscribed to new blocks"))
-    //         .map(|r| r.with_context(|| "failed to subscribe to new blocks"))
-    //         .await?; // TODO: with_abort
-
-    //     let blocks = blocks
-    //         .fuse()
-    //         .take_while(|_| future::ready(!cancel.is_cancelled()));
-
-    //     let request_pendings = sleep(Duration::from_secs(9999));
-    //     pin_mut!(request_pendings);
-
-    //     while !(blocks.is_terminated()) {
-    //         select_biased! {
-    //             block = blocks.select_next_some() => {
-    //                 // TODO: request account balance every time new block arrives
-    //                 // to ensure that we have enough gas to send txs
-    //                 request_pendings.as_mut().reset(Instant::now() + Duration::from_secs(3));
-    //             },
-    //             () = &mut request_pendings => {
-
-    //             },
-    //             complete => break,
-    //         }
-    //     }
-
-    //     Ok(())
-
-    //     // TODO: subscribe logs about successful front-run events
-    //     // get logs topics from monitors
-
-    //     // TODO: real-time calculate latency
-
-    //     // let (blocks, last_block) = try_join3(
-    //     //     self.client
-    //     //         .subscribe_blocks()
-    //     //         .inspect_ok(|st| info!(subscription_id = %st.id, "subscribed to new blocks"))
-    //     //         .map(|r| r.with_context(|| "failed to subscribe to new blocks")),
-    //     //     self.client
-    //     //         .subscribe_pending_txs()
-    //     //         .inspect_ok(
-    //     //             |st| info!(subscription_id = %st.id, "subscribed to new pending transactions"),
-    //     //         )
-    //     //         .map(|r| r.with_context(|| "failed to subscribe to new pending transactions")),
-    //     //     self.client
-    //     //         .get_block_with_txs(BlockNumber::Latest)
-    //     //         .map_ok(Option::unwrap)
-    //     //         .err_into::<anyhow::Error>(),
-    //     // )
-    //     // .with_abort(cancelled.map(|_| Aborted))
-    //     // .await??;
-    //     //
-    //     // let mut last_block_hash = last_block.hash.unwrap();
-    //     // info!(?last_block_hash, "starting from last block...");
-    //     // self.metrics.new_block(&last_block);
-    //     // self.metrics.block_valid(&last_block);
-    //     //
-    //     // let tx_hashes = tx_hashes
-    //     //     .fuse()
-    //     //     .take_while(|_| future::ready(!cancel.is_cancelled()));
-    //     // let mut txs = AbortSet::new(
-    //     //     MetricedFuturesQueue::<FuturesUnordered<_>, _>::new_with_default(register_gauge!(
-    //     //         "sandwitch_resolving_txs"
-    //     //     )),
-    //     // );
-    //     // let mut process_txs = AbortSet::new(
-    //     //     MetricedFuturesQueue::<FuturesUnordered<_>, _>::new_with_default(register_gauge!(
-    //     //         "sandwitch_processing_txs"
-    //     //     )),
-    //     // );
-    //     //
-    //     // let blocks = blocks
-    //     //     .fuse()
-    //     //     .take_while(|_| future::ready(!cancel.is_cancelled()));
-    //     // let mut blocks_with_txs = AbortSet::new(
-    //     //     MetricedFuturesQueue::<FuturesOrdered<_>, _>::new_with_default(register_gauge!(
-    //     //         "sandwitch_resolving_blocks"
-    //     //     )),
-    //     // );
-    //     // let mut process_blocks = AbortSet::new(
-    //     //     MetricedFuturesQueue::<FuturesOrdered<_>, _>::new_with_default(register_gauge!(
-    //     //         "sandwtich_processing_blocks"
-    //     //     )),
-    //     // );
-    //     //
-    //     // let cancelled = cancel.cancelled().fuse();
-    //     // pin_mut!(tx_hashes, blocks, cancelled);
-    //     //
-    //     // let mut first_err: Option<anyhow::Error> = None;
-    //     // let mut fatal_err = |err| {
-    //     //     if first_err.is_none() {
-    //     //         cancel.cancel();
-    //     //         first_err = Some(err);
-    //     //     }
-    //     // };
-    //     //
-    //     // while !(tx_hashes.is_terminated()
-    //     //     && blocks.is_terminated()
-    //     //     && process_txs.is_terminated()
-    //     //     && process_blocks.is_terminated())
-    //     // {
-    //     //     select_biased! {
-    //     //         _ = cancelled => {
-    //     //             txs.abort_all();
-    //     //             process_txs.abort_all();
-    //     //             blocks_with_txs.abort_all();
-    //     //             process_blocks.abort_all();
-    //     //         },
-    //     //         (r, block_hash) = process_blocks.select_next_some() => {
-    //     //             let r: Result<anyhow::Result<(_, Duration)>, JoinError> = r;
-    //     //             match r.map_err(Into::into).flatten() {
-    //     //                 Ok((_, elapsed)) => {
-    //     //                     trace!(?block_hash, ?elapsed, "block proceesed");
-    //     //                     self.metrics.block_processed(elapsed);
-    //     //                 },
-    //     //                 Err(err) => {
-    //     //                     error!(?block_hash, "block processing failed: {err:#}");
-    //     //                     fatal_err(err.context(format!(
-    //     //                         "block processing failed for: {block_hash:?}")));
-    //     //                 },
-    //     //             }
-    //     //         },
-    //     //         (r, tx_hash) = process_txs.select_next_some() => {
-    //     //             let r: Result<anyhow::Result<(_, Duration)>, JoinError> = r;
-    //     //             match r.map_err(Into::into).flatten() {
-    //     //                 Ok((_, elapsed)) => {
-    //     //                     trace!(?tx_hash, ?elapsed, "transaction processed");
-    //     //                     self.metrics.tx_processed(elapsed);
-    //     //                 },
-    //     //                 Err(err) => {
-    //     //                     error!(?tx_hash, "transaction processing failed: {err:#}");
-    //     //                     fatal_err(err.context(format!(
-    //     //                         "transaction processing failed for: {tx_hash:?}")));
-    //     //                 },
-    //     //             }
-    //     //         },
-    //     //         (block, block_hash) = blocks_with_txs.select_next_some() => {
-    //     //             let block: Result<(Option<Block<Transaction>>, Duration), _> = block;
-    //     //             match block {
-    //     //                 Ok((block, elapsed)) => {
-    //     //                     trace!(?block_hash, ?elapsed, "block resolved");
-    //     //                     self.metrics.block_resolved(elapsed);
-    //     //                     let Some(block): Option<Block<Transaction>> = block else {
-    //     //                         warn!(?block_hash, "invalid block, skipping...");
-    //     //                         continue;
-    //     //                     };
-    //     //                     let Ok(h) = process_blocks.try_insert(block_hash) else {
-    //     //                         warn!(
-    //     //                             ?block_hash,
-    //     //                             "this block is already being processed, skipping...",
-    //     //                         );
-    //     //                         continue;
-    //     //                     };
-    //     //                     // TODO: check block timestamp?
-    //     //
-    //     //                     last_block_hash = block_hash;
-    //     //                     self.metrics.block_valid(&block);
-    //     //                     for tx in &block.transactions {
-    //     //                         if txs.abort(&tx.hash)
-    //     //                             .or(process_txs.abort(&tx.hash))
-    //     //                             .is_some() {
-    //     //                             debug!(
-    //     //                                 ?tx.hash,
-    //     //                                 ?block_hash,
-    //     //                                 "transaction has just been mined, \
-    //     //                                     cancelling its processing...",
-    //     //                             );
-    //     //                             self.metrics.tx_missed();
-    //     //                         };
-    //     //                     }
-    //     //                     h.spawn(self.process_block(block).into_future().try_timed());
-    //     //                 },
-    //     //                 Err(err) => {
-    //     //                     error!(?block_hash, "failed to resolve block: {err:#}");
-    //     //                     if let ProviderError::JsonRpcClientError(err) = &err {
-    //     //                         if let Some(TimeoutProviderError::<P>::Timeout(_)) =
-    //     //                             err.downcast_ref() {
-    //     //                             continue;
-    //     //                         }
-    //     //                     }
-    //     //                     fatal_err(anyhow::Error::from(err)
-    //     //                         .context(format!("failed to resolve block: {block_hash:?}")));
-    //     //                 },
-    //     //             }
-    //     //         },
-    //     //         block = blocks.select_next_some() => {
-    //     //             let block_hash = block.hash.unwrap();
-    //     //             if process_blocks.contains(&block_hash) {
-    //     //                 warn!(
-    //     //                     ?block_hash,
-    //     //                     "received block is already being processing, skipping...",
-    //     //                 );
-    //     //                 continue;
-    //     //             }
-    //     //             let Ok(h) = blocks_with_txs.try_insert(block_hash) else {
-    //     //                 warn!(
-    //     //                     ?block_hash,
-    //     //                     "received block is already being resolved, skipping...",
-    //     //                 );
-    //     //                 continue;
-    //     //             };
-    //     //             trace!(
-    //     //                 ?block_hash,
-    //     //                 block_number = block.number.unwrap().as_u64(),
-    //     //                 "received new block"
-    //     //             );
-    //     //             self.metrics.new_block(&block);
-    //     //             h.insert(self.client.get_block_with_txs(block_hash).try_timed());
-    //     //         },
-    //     //         (tx, tx_hash) = txs.select_next_some() => {
-    //     //             let tx: Result<(Option<Transaction>, Duration), _> = tx;
-    //     //             match tx {
-    //     //                 Ok((tx, elapsed)) => {
-    //     //                     self.metrics.tx_resolved(elapsed);
-    //     //                     trace!(?tx_hash, ?elapsed, "transaction resolved");
-    //     //                     let Some(tx) = tx else {
-    //     //                         trace!(?tx_hash, "invalid tx, skipping...");
-    //     //                         continue;
-    //     //                     };
-    //     //                     self.metrics.tx_valid();
-    //     //                     if let Some(block_hash) = tx.block_hash {
-    //     //                         trace!(
-    //     //                             ?tx_hash,
-    //     //                             ?block_hash,
-    //     //                             "transaction resolved as already mined, skipping...",
-    //     //                         );
-    //     //                         continue;
-    //     //                     }
-    //     //                     let Ok(h) = process_txs.try_insert(tx_hash) else {
-    //     //                         warn!(
-    //     //                             ?tx_hash,
-    //     //                             "this transaction is already being processed, skipping...",
-    //     //                         );
-    //     //                         continue;
-    //     //                     };
-    //     //
-    //     //                     trace!(
-    //     //                         ?tx_hash,
-    //     //                         ?last_block_hash,
-    //     //                         "transaction resolved as pending, processing...",
-    //     //                     );
-    //     //                     self.metrics.tx_resolved_as_pending();
-    //     //                     h.spawn(
-    //     //                         self.process_tx(tx, last_block_hash)
-    //     //                             .into_future()
-    //     //                             .try_timed(),
-    //     //                     );
-    //     //                 },
-    //     //                 Err(err) => {
-    //     //                     error!(?tx_hash, "failed to resolve transaction: {err:#}");
-    //     //                     if let ProviderError::JsonRpcClientError(err) = &err {
-    //     //                         if let Some(TimeoutProviderError::<P>::Timeout(_)) =
-    //     //                             err.downcast_ref() {
-    //     //                             self.metrics.tx_missed();
-    //     //                             continue;
-    //     //                         }
-    //     //                     }
-    //     //                     fatal_err(anyhow::Error::from(err).context(format!(
-    //     //                         "failed to resolve transaction: {tx_hash:?}")));
-    //     //                 },
-    //     //             }
-    //     //         },
-    //     //         tx_hash = tx_hashes.select_next_some() => {
-    //     //             if process_txs.contains(&tx_hash) {
-    //     //                 warn!(
-    //     //                     ?tx_hash,
-    //     //                     "received transaction is already being processed, skipping...",
-    //     //                 );
-    //     //                 continue;
-    //     //             }
-    //     //
-    //     //             let Ok(h) = txs.try_insert(tx_hash) else {
-    //     //                 warn!(
-    //     //                     ?tx_hash,
-    //     //                     "received transaction is already being resolving, skipping...",
-    //     //                 );
-    //     //                 continue;
-    //     //             };
-    //     //             trace!(?tx_hash, "received new transaction hash");
-    //     //             self.metrics.new_tx();
-    //     //
-    //     //             h.insert(self.client.get_transaction(tx_hash).try_timed());
-    //     //         },
-    //     //         complete => break,
-    //     //     }
-    //     // }
-    //     //
-    //     // first_err.map_or(Ok(()), Err)
-    // }
-
-    // #[tracing::instrument(
-    //     skip_all,
-    //     fields(
-    //         block_hash = ?block.hash.unwrap(),
-    //         block_number = block.number.unwrap().as_u64(),
-    //     ),
-    // )]
-    // fn process_block(
-    //     &self,
-    //     block: Block<Transaction>,
-    // ) -> impl TryFuture<Ok = BM::Ok, Error = BM::Error> {
-    //     let block_monitor = self.monitor.clone();
-    //     let accounts = self.accounts.clone();
-    //     async move {
-    //         (accounts.map_err(|_| unreachable!()), block_monitor)
-    //             .map(|_| ())
-    //             .process_block(&block)
-    //             .await
-    //     }
-    //     .in_current_span()
-    // }
-
-    // #[tracing::instrument(skip_all, fields(?tx.hash, ?block_hash))]
-    // fn process_tx(
-    //     &self,
-    //     tx: Transaction,
-    //     block_hash: H256,
-    // ) -> impl TryFuture<Ok = TM::Ok, Error = TM::Error> {
-    //     let tx_monitor = self.tx_monitor.clone();
-    //     async move { tx_monitor.process_tx(&tx, block_hash).await }.in_current_span()
-    // }
 }
 
 // struct Metrics {

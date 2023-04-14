@@ -71,6 +71,7 @@ impl PrioritizedMultiCall {
     }
 }
 
+#[derive(Debug)]
 #[autoimpl(Deref using self.tx)]
 pub struct TxWithLogs {
     pub tx: Transaction,

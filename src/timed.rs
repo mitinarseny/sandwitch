@@ -3,7 +3,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{Future, Stream, TryFuture, TryStream};
+use futures::{future::FusedFuture, stream::FusedStream, Future, Stream, TryFuture, TryStream};
+use impl_tools::autoimpl;
 use pin_project::pin_project;
 use tokio::time::{Duration, Instant};
 
@@ -28,6 +29,8 @@ impl<F> TryFutureExt for F where F: TryFuture {}
 
 #[pin_project]
 #[must_use = "futures do nothing unless polled"]
+#[autoimpl(Deref using self.inner)]
+#[autoimpl(DerefMut using self.inner)]
 pub struct TimedFuture<Fut>
 where
     Fut: Future,
@@ -51,8 +54,19 @@ where
     }
 }
 
+impl<Fut> FusedFuture for TimedFuture<Fut>
+where
+    Fut: FusedFuture,
+{
+    fn is_terminated(&self) -> bool {
+        self.inner.is_terminated()
+    }
+}
+
 #[pin_project]
 #[must_use = "futures do nothing unless polled"]
+#[autoimpl(Deref<Target = Fut> using self.0)]
+#[autoimpl(DerefMut using self.0)]
 pub struct TryTimedFuture<Fut>(#[pin] TimedFuture<Fut>)
 where
     Fut: TryFuture;
@@ -64,13 +78,26 @@ where
     type Output = Result<(T, Duration), E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        this.0.poll(cx).map(|(r, t)| r.map(move |v| (v, t)))
+        self.project()
+            .0
+            .poll(cx)
+            .map(|(r, t)| r.map(move |v| (v, t)))
+    }
+}
+
+impl<Fut, T, E> FusedFuture for TryTimedFuture<Fut>
+where
+    Fut: FusedFuture<Output = Result<T, E>>,
+{
+    fn is_terminated(&self) -> bool {
+        self.0.is_terminated()
     }
 }
 
 #[pin_project]
 #[must_use = "streams do nothing unless polled"]
+#[autoimpl(Deref using self.0)]
+#[autoimpl(DerefMut using self.0)]
 pub struct TimedStream<St>(#[pin] St)
 where
     St: Stream;
@@ -82,12 +109,23 @@ where
     type Item = (St::Item, Instant);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        this.0.poll_next(cx).map(|o| o.map(|v| (v, Instant::now())))
+        self.project()
+            .0
+            .poll_next(cx)
+            .map(|o| o.map(|v| (v, Instant::now())))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.0.size_hint()
+    }
+}
+
+impl<St> FusedStream for TimedStream<St>
+where
+    St: FusedStream,
+{
+    fn is_terminated(&self) -> bool {
+        self.0.is_terminated()
     }
 }
 
@@ -100,6 +138,8 @@ pub trait StreamExt: Stream + Sized {
 impl<St> StreamExt for St where St: Stream {}
 
 #[pin_project]
+#[autoimpl(Deref<Target = St> using self.0)]
+#[autoimpl(DerefMut using self.0)]
 pub struct TryTimedStream<St>(#[pin] TimedStream<St>)
 where
     St: TryStream;
@@ -119,6 +159,15 @@ where
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.0.size_hint()
+    }
+}
+
+impl<St, T, E> FusedStream for TryTimedStream<St>
+where
+    St: FusedStream<Item = Result<T, E>>,
+{
+    fn is_terminated(&self) -> bool {
+        self.0.is_terminated()
     }
 }
 

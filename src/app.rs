@@ -23,7 +23,7 @@ use url::Url;
 use crate::{
     engine::{Engine, EngineConfig},
     monitors::{MultiMonitor, PendingBlockMonitor},
-    providers::{one_of::OneOf, timeout::TimeoutProvider},
+    providers::{LatencyProvider, TimeoutProvider},
 };
 
 // #[cfg(feature = "pancake_swap")]
@@ -51,33 +51,17 @@ pub struct App<P, M> {
     engine: Engine<P, M>,
 }
 
-impl App<OneOf<Ws, Ipc>, Box<dyn PendingBlockMonitor>> {
-    pub async fn from_config(config: Config, signing_key: SigningKey) -> anyhow::Result<Self> {
-        info!("connecting to node...");
-        let client = Self::connect(&config.network.node).await?;
-        info!("connected to node");
-        Self::from_client(client, signing_key, config).await
-    }
-
-    async fn connect(url: &Url) -> anyhow::Result<OneOf<Ws, Ipc>> {
-        Ok(match url.scheme() {
-            "wss" => OneOf::P1(Ws::connect(&url).await?),
-            "file" => OneOf::P2(
-                Ipc::connect(url.to_file_path().map_err(|_| anyhow!("invalid IPC url"))?).await?,
-            ),
-            _ => return Err(anyhow!("invalid node url: {url}")),
-        })
-    }
-}
-
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl<P> App<P, Box<dyn PendingBlockMonitor>>
 where
     P: PubsubClient + 'static,
 {
-    async fn from_client(client: P, signing_key: SigningKey, cfg: Config) -> anyhow::Result<Self> {
-        let client = Arc::new(Provider::new(TimeoutProvider::new(client, CLIENT_TIMEOUT)));
+    pub async fn new(client: P, signing_key: SigningKey, cfg: Config) -> anyhow::Result<Self> {
+        let client = Arc::new(Provider::new(LatencyProvider::new(TimeoutProvider::new(
+            client,
+            CLIENT_TIMEOUT,
+        ))));
         info!("initializing...");
         let (network_id, chain_id) = try_join!(
             client.get_net_version(),

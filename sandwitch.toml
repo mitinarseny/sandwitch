@@ -1,7 +1,10 @@
 [network]
-node = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+# `wss://` or `file://` (requires `ipc` feature)
+# node = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+node = "wss://eth.getblock.io/e8f67b62-6caf-4b0d-997d-3b73827496b4/mainnet/"
 
 [engine]
+block_interval_ms = 12_000
 tx_propagation_delay_ms = 200
 multicall = "0x0000000000000000000000000000000000000000"
 

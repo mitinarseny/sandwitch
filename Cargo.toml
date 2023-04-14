@@ -18,7 +18,7 @@ thiserror = "1"
 [workspace.dependencies.ethers]
 version = "=2.0.1"
 default-features = false
-features = ["abigen", "ipc", "rustls", "ws"]
+features = ["abigen", "rustls"]
 
 [package]
 name = "sandwitch"
@@ -26,7 +26,9 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["pancake_swap"]
+default = ["ws", "ipc", "pancake_swap"]
+ipc = ["ethers/ipc"]
+ws = ["ethers/ws"]
 pancake_swap = ["legacy", "contracts/pancake_toaster", "contracts/pancake_swap"]
 
 legacy = ["ethers/legacy"]

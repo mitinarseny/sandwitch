@@ -1,15 +1,16 @@
 #![feature(result_option_inspect, result_flattening)]
 use std::path::PathBuf;
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use clap::{Parser, ValueHint};
-use ethers::prelude::k256::ecdsa::SigningKey;
+use ethers::core::k256::ecdsa::SigningKey;
 use metrics::register_counter;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
 use tokio::{fs, main, net, signal::ctrl_c};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, metadata::LevelFilter};
 use tracing_subscriber::{prelude::*, Registry};
+use url::Url;
 
 use sandwitch::{App, Config};
 
@@ -81,36 +82,69 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
 
+    init_tracing_subscriber(
+        [
+            LevelFilter::ERROR,
+            LevelFilter::WARN,
+            LevelFilter::INFO,
+            LevelFilter::DEBUG,
+            LevelFilter::TRACE,
+        ][(args.verbose.min(4)) as usize],
+    )
+    .with_context(|| "failed to init tracing subscriber")?;
+
+    install_prometheus_metrics_recoder_and_exporter(args.metrics_host, args.metrics_port)
+        .await
+        .with_context(|| "failed to install prometheus metrics recorder/exporter")?;
+
+    info!("connecting to node...");
+    let client = connect(&config.network.node).await?;
+    info!("connected to node");
+
+    let app = App::new(
+        client,
+        {
+            let secret = eth_keystore::decrypt_key(args.keystore, args.keystore_password)?;
+            SigningKey::from_bytes(secret.as_slice().into())?
+        },
+        config,
+    )
+    .await?;
+
+    let cancel = make_ctrl_c_cancel();
+
+    app.run(cancel.child_token()).await?;
+
+    info!("shutdown");
+    Ok(())
+}
+
+fn init_tracing_subscriber(level: LevelFilter) -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(
         Registry::default().with(
-            tracing_subscriber::fmt::layer().with_filter(
-                tracing_subscriber::EnvFilter::new(
-                    "h2=info,hyper=info,tokio_util=info,ethers_providers=info",
-                )
-                .add_directive(
-                    [
-                        LevelFilter::ERROR,
-                        LevelFilter::WARN,
-                        LevelFilter::INFO,
-                        LevelFilter::DEBUG,
-                        LevelFilter::TRACE,
-                    ][(args.verbose.min(4)) as usize]
-                        .into(),
+            tracing_subscriber::fmt::layer()
+                .map_event_format(|f| f.pretty().with_source_location(false)) // TODO: remove
+                .with_filter(
+                    tracing_subscriber::EnvFilter::new(
+                        "h2=info,hyper=info,tokio_util=info,ethers_providers=info",
+                    )
+                    .add_directive(level.into()),
                 ),
-            ),
         ),
     )?;
+    Ok(())
+}
 
+async fn install_prometheus_metrics_recoder_and_exporter(
+    host: impl AsRef<str>,
+    port: u16,
+) -> anyhow::Result<()> {
+    let host = host.as_ref();
     PrometheusBuilder::new()
         .with_http_listener(
-            net::lookup_host((args.metrics_host.as_ref(), args.metrics_port))
+            net::lookup_host((host, port))
                 .await
-                .with_context(|| {
-                    format!(
-                        "failed to lookup host: {}:{}",
-                        args.metrics_host, args.metrics_port
-                    )
-                })?
+                .with_context(|| format!("failed to lookup host: {host}:{port}",))?
                 .next()
                 .unwrap(),
         )
@@ -122,22 +156,39 @@ async fn main() -> anyhow::Result<()> {
             ],
         )
         .unwrap()
-        .install()
-        .with_context(|| "unable to install prometheus metrics recorder/exporter")?;
+        .install()?;
     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
-
-    let app = App::from_config(config, {
-        let secret = eth_keystore::decrypt_key(args.keystore, args.keystore_password)?;
-        SigningKey::from_bytes(secret.as_slice().into())?
-    })
-    .await?;
-
-    let cancel = make_ctrl_c_cancel();
-
-    app.run(cancel.child_token()).await?;
-
-    info!("shutdown");
     Ok(())
+}
+
+#[cfg(all(feature = "ws", not(feature = "ipc")))]
+type connect = connect_ws;
+#[cfg(feature = "ws")]
+async fn connect_ws(url: &Url) -> anyhow::Result<ethers::providers::Ws> {
+    Ok(ethers::providers::Ws::connect(url).await?)
+}
+
+#[cfg(all(feature = "ipc", not(feature = "ws")))]
+type connect = connect_ipc;
+#[cfg(feature = "ipc")]
+async fn connect_ipc(url: &Url) -> anyhow::Result<ethers::providers::Ipc> {
+    Ok(
+        ethers::providers::Ipc::connect(
+            url.to_file_path().map_err(|_| anyhow!("invalid IPC url"))?,
+        )
+        .await?,
+    )
+}
+
+#[cfg(all(feature = "ipc", feature = "ws"))]
+async fn connect(
+    url: &Url,
+) -> anyhow::Result<sandwitch::providers::OneOf<ethers::providers::Ws, ethers::providers::Ipc>> {
+    Ok(match url.scheme() {
+        "wss" => sandwitch::providers::OneOf::P1(connect_ws(url).await?),
+        "file" => sandwitch::providers::OneOf::P2(connect_ipc(url).await?),
+        _ => return Err(anyhow!("invalid node url: {url}")),
+    })
 }
 
 fn make_ctrl_c_cancel() -> CancellationToken {
