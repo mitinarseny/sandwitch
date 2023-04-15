@@ -17,8 +17,6 @@ use super::{
 pub enum MultiCallErrors<R> {
     #[error("reverted: {0}")]
     Reverted(R),
-    #[error("invalid command")]
-    InvalidCommand,
     #[error("length mismatch")]
     LengthMismatch,
     #[error("uncled")]
@@ -32,9 +30,9 @@ pub trait MultiCall: Sized {
     type Ok;
     type Reverted;
 
-    fn encode(self) -> (Calls<RawCall>, Self::Meta);
-    fn encode_raw(self) -> (raw::MulticallCall, Self::Meta) {
-        let (calls, meta) = self.encode();
+    fn encode_calls(self) -> (Calls<RawCall>, Self::Meta);
+    fn encode_calls_raw(self) -> (raw::MulticallCall, Self::Meta) {
+        let (calls, meta) = self.encode_calls();
         let (commands, inputs): (Vec<u8>, Vec<Bytes>) = calls
             .into_iter()
             .map(TryCall::encode)
@@ -49,13 +47,13 @@ pub trait MultiCall: Sized {
         )
     }
 
-    fn decode(calls: Calls<RawCall>) -> Result<Self, AbiError>;
-    fn decode_raw(r: raw::MulticallCall) -> Result<Self, AbiError> {
+    fn decode_calls(calls: Calls<RawCall>) -> Result<Self, AbiError>;
+    fn decode_calls_raw(r: raw::MulticallCall) -> Result<Self, AbiError> {
         let raw::MulticallCall { commands, inputs } = r;
         if commands.len() != inputs.len() {
             return Err(LengthMismatch.into());
         }
-        Self::decode(
+        Self::decode_calls(
             commands
                 .into_iter()
                 .zip(inputs.into_iter().map(|input| input.0))
@@ -93,9 +91,6 @@ pub trait MultiCall: Sized {
             raw::MultiCallErrors::Reverted(r) => {
                 MultiCallErrors::Reverted(Self::decode_reverted(r.try_into()?, meta)?)
             }
-            raw::MultiCallErrors::InvalidCommand(raw::InvalidCommand) => {
-                MultiCallErrors::InvalidCommand
-            }
             raw::MultiCallErrors::LengthMismatch(raw::LengthMismatch) => {
                 MultiCallErrors::LengthMismatch
             }
@@ -111,7 +106,7 @@ impl<C: MultiCall> Call for C {
     type Reverted = MultiCallErrors<C::Reverted>;
 
     fn encode(self) -> (Cmd, bytes::Bytes, Self::Meta) {
-        let (r, meta) = Self::encode_raw(self);
+        let (r, meta) = Self::encode_calls_raw(self);
         (Cmd::Group, r.encode().into(), meta)
     }
 
@@ -119,7 +114,7 @@ impl<C: MultiCall> Call for C {
         if cmd != Cmd::Group {
             return Err(WrongCommand.into());
         }
-        Self::decode_raw(raw::MulticallCall::decode(input)?)
+        Self::decode_calls_raw(raw::MulticallCall::decode(input)?)
     }
 
     fn decode_ok(output: bytes::Bytes, meta: Self::Meta) -> Result<Self::Ok, AbiError> {
@@ -152,11 +147,11 @@ impl<C: Call> MultiCall for Calls<C> {
     type Ok = Vec<Result<C::Ok, C::Reverted>>;
     type Reverted = RevertedAt<C::Reverted>;
 
-    fn encode(self) -> (Calls<RawCall>, Self::Meta) {
+    fn encode_calls(self) -> (Calls<RawCall>, Self::Meta) {
         self.into_iter().map(TryCall::encode_raw).unzip()
     }
 
-    fn decode(calls: Calls<RawCall>) -> Result<Self, AbiError> {
+    fn decode_calls(calls: Calls<RawCall>) -> Result<Self, AbiError> {
         calls.into_iter().map(TryCall::decode_raw).try_collect()
     }
 
@@ -207,12 +202,12 @@ macro_rules! tuple_multicall {
             type Ok = ($( Result<$t::Ok, $t::Reverted> ),+,);
             type Reverted = $reverted<$( $t::Reverted ),+>;
 
-            fn encode(self) -> (Calls<RawCall>, Self::Meta) {
+            fn encode_calls(self) -> (Calls<RawCall>, Self::Meta) {
                 let calls = ($(self.$n.encode_raw(),)+);
                 ([$( calls.$n.0, )+].into(), ($(calls.$n.1,)+))
             }
 
-            fn decode(calls: Calls<RawCall>) -> Result<Self, AbiError> {
+            fn decode_calls(calls: Calls<RawCall>) -> Result<Self, AbiError> {
                 let mut calls = <[TryCall::<RawCall>; $N]>::try_from(calls)
                     .map_err(|_| LengthMismatch)?
                     .into_iter();

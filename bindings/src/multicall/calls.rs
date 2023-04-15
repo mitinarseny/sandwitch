@@ -243,7 +243,7 @@ impl Call for RawContractCall {
 pub type Transfer = ContractCall<()>;
 
 impl Transfer {
-    pub fn new(to: Address, amount: impl Into<U256>) -> Self {
+    pub fn transafer(to: Address, amount: impl Into<U256>) -> Self {
         Self {
             target: to,
             value: amount.into(),

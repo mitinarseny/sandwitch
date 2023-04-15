@@ -5,11 +5,10 @@ use std::{
 
 use ethers::{
     abi::{self, AbiDecode, AbiError, InvalidOutputType},
-    contract::{Contract, ContractError as RawContractError},
+    contract::{ContractError as RawContractError},
     providers::{Middleware, ProviderError},
     types::{Address, Bytes},
 };
-use impl_tools::autoimpl;
 use thiserror::Error as ThisError;
 
 use super::{
@@ -38,7 +37,7 @@ where
         &self,
         calls: C,
     ) -> Result<C::Ok, MultiCallContractError<M, C::Reverted>> {
-        let (r, meta) = calls.encode_raw();
+        let (r, meta) = calls.encode_calls_raw();
         match self.0.multicall(r.commands, r.inputs).call().await {
             Ok((successes, outputs)) => {
                 C::decode_ok_raw(raw::MulticallReturn { successes, outputs }, meta)

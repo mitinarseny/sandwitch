@@ -22,8 +22,13 @@ pub(crate) mod prelude {
     pub trait EthTypedCall: EthCall {
         type Ok: AbiEncode + AbiDecode;
         type Reverted: ContractRevert;
+
+        fn encode_calldata(self) -> Vec<u8> {
+            [Self::selector().as_slice(), self.encode().as_slice()].concat()
+        }
     }
 }
+pub use prelude::EthTypedCall;
 
 #[cfg(feature = "multicall")]
 pub mod multicall;

@@ -2892,6 +2892,7 @@ name = "sandwitch"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap 4.1.4",
  "contracts",
  "eth-keystore",

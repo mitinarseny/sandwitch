@@ -1,7 +1,7 @@
 pragma solidity ^0.8.19;
 
 abstract contract MultiCall {
-    bytes1 constant ALLOW_FAILURE = bytes1(uint8(1) << 7);
+    uint8 constant ALLOW_FAILURE = uint8(1) << 7;
 
     // up to 127 max
     enum Command {
@@ -18,7 +18,6 @@ abstract contract MultiCall {
     }
 
     error LengthMismatch();
-    error InvalidCommand();
     error Reverted(uint256 index, bytes data);
 
     function multicall(bytes calldata commands, bytes[] calldata inputs)
@@ -32,18 +31,22 @@ abstract contract MultiCall {
         successes = new bytes((len + 7) >> 3);
         outputs = new bytes[](len);
 
-        bytes1 cmd;
+        uint8 cmd;
         bool success;
         bytes memory output;
 
         for (uint256 i; i < len;) {
-            cmd = commands[i];
+            cmd = uint8(commands[i]);
             output = outputs[i];
-            (success, output) = dispatch(Command(uint8(cmd & ~ALLOW_FAILURE)), inputs[i]);
+
+            (success, output) = dispatch(Command(cmd & ~ALLOW_FAILURE), inputs[i]);
             if (success) {
                 successes[i >> 3] |= bytes1(uint8(0x8)) >> (i & 7);
             } else if (cmd & ALLOW_FAILURE == 0) {
                 revert Reverted(i, output);
+            }
+            unchecked {
+                ++i;
             }
         }
     }
@@ -78,7 +81,7 @@ abstract contract MultiCall {
         }
 
         address addr;
-        if (cmd == Command.Create || cmd == Command.CreateValue) {
+        if (cmd <= Command.CreateValue) {
             assembly ("memory-safe") {
                 let p := mload(0x40)
                 mstore(0x40, add(p, input.length))
@@ -86,7 +89,7 @@ abstract contract MultiCall {
 
                 addr := create(value, p, input.length)
             }
-        } else if (cmd == Command.Create2 || cmd == Command.Create2Value) {
+        } else {
             uint256 salt = uint256(bytes32(input));
             input = input[32:];
 
@@ -97,8 +100,6 @@ abstract contract MultiCall {
 
                 addr := create2(value, p, input.length, salt)
             }
-        } else {
-            revert InvalidCommand();
         }
         if (success = (addr != address(0))) {
             output = abi.encodePacked(addr);

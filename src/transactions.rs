@@ -1,6 +1,6 @@
 use ethers::types::{
-    transaction::eip2930::AccessList, Address, Bytes, NameOrAddress, OtherFields, Signature,
-    TxHash, H256, U256,
+    transaction::{eip2718::TypedTransaction, eip2930::AccessList},
+    Address, Bytes, NameOrAddress, OtherFields, Signature, TxHash, H256, U256,
 };
 use thiserror::Error as ThisError;
 
@@ -43,7 +43,7 @@ pub struct Transaction {
     /// Input data
     pub input: Bytes,
 
-    pub priority_fees: PriorityFees,
+    pub fees: Fees,
 
     /// ECDSA recovery id
     pub v: u64,
@@ -64,7 +64,7 @@ pub struct Transaction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PriorityFees {
+pub enum Fees {
     Legacy {
         gas_price: U256,
     },
@@ -87,72 +87,15 @@ pub enum PriorityFees {
     },
 }
 
-impl Transaction {
-    pub fn from_request(
-        tx: TransactionRequest,
-        signature: Signature,
-    ) -> Result<Self, InvalidTransaction> {
-        Self::maybe_from_request(tx, signature).ok_or(InvalidTransaction)
-    }
-
-    #[cfg(feature = "legacy")]
-    fn maybe_from_request(tx: TransactionRequest, signature: Signature) -> Option<Self> {
-        use ethers::utils::keccak256;
-
-        let hash: TxHash = keccak256(tx.rlp_signed(&signature)).into();
-
-        let TransactionRequest {
-            from,
-            to,
-            gas,
-            #[cfg(feature = "legacy")]
-            gas_price,
-            value,
-            data,
-            nonce,
-            #[cfg(not(feature = "legacy"))]
-            access_list,
-            #[cfg(not(feature = "legacy"))]
-            max_priority_fee_per_gas,
-            #[cfg(not(feature = "legacy"))]
-            max_fee_per_gas,
-            chain_id,
-        } = tx;
-        let Signature { r, s, v } = signature;
-        Some(Self {
-            hash,
-            nonce: nonce?,
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            from: from?,
-            to: match to {
-                None => None,
-                Some(NameOrAddress::Name(_)) => return None,
-                Some(NameOrAddress::Address(addr)) => Some(addr),
-            },
-            value: value?,
-            gas: gas?,
-            input: data?,
-            #[cfg(not(feature = "legacy"))]
-            priority_fees: PriorityFees::EIP1559 {
-                max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or(0.into()),
-                max_fee_per_gas: max_fee_per_gas.unwrap_or(0.into()),
-            },
-            #[cfg(feature = "legacy")]
-            priority_fees: PriorityFees::Legacy {
-                gas_price: gas_price.unwrap_or(0.into()),
-            },
-            v,
-            r,
-            s,
-            #[cfg(not(feature = "legacy"))]
-            access_list: Some(access_list),
-            #[cfg(feature = "legacy")]
-            access_list: None,
-            chain_id: chain_id.map(|n| n.as_u64().into()),
-            other: Default::default(),
-        })
+impl Fees {
+    pub fn priority_fee(&self) -> U256 {
+        match self {
+            Fees::Legacy { gas_price } => *gas_price,
+            Fees::EIP1559 {
+                max_priority_fee_per_gas,
+                ..
+            } => *max_priority_fee_per_gas,
+        }
     }
 }
 
@@ -197,16 +140,16 @@ impl TryFrom<ethers::types::Transaction> for Transaction {
             value,
             gas,
             input,
-            priority_fees: if transaction_type.is_some_and(|n| n == 2.into()) {
+            fees: if transaction_type.is_some_and(|n| n == 2.into()) {
                 let (max_priority_fee_per_gas, max_fee_per_gas) = max_priority_fee_per_gas
                     .zip(max_fee_per_gas)
                     .ok_or(InvalidTransaction)?;
-                PriorityFees::EIP1559 {
+                Fees::EIP1559 {
                     max_priority_fee_per_gas,
                     max_fee_per_gas,
                 }
             } else {
-                PriorityFees::Legacy {
+                Fees::Legacy {
                     gas_price: gas_price.ok_or(InvalidTransaction)?,
                 }
             },
@@ -233,7 +176,7 @@ impl From<Transaction> for ethers::types::Transaction {
             value,
             gas,
             input,
-            priority_fees,
+            fees: priority_fees,
             v,
             r,
             s,
@@ -262,11 +205,11 @@ impl From<Transaction> for ethers::types::Transaction {
             ..Default::default()
         };
         match priority_fees {
-            PriorityFees::Legacy { gas_price } => {
+            Fees::Legacy { gas_price } => {
                 tx.gas_price = Some(gas_price);
                 tx.transaction_type = tx.access_list.is_some().then_some(1.into());
             }
-            PriorityFees::EIP1559 {
+            Fees::EIP1559 {
                 max_priority_fee_per_gas,
                 max_fee_per_gas,
             } => {

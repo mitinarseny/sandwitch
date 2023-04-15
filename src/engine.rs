@@ -1,34 +1,25 @@
 use core::pin::pin;
-
-use std::{
-    cmp::Reverse,
-    fmt::format,
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
-use contracts::multicall::MultiCallContract;
+use contracts::{
+    multicall::{MultiCall, MultiCallContract},
+    EthTypedCall,
+};
 use ethers::{
-    providers::{
-        Middleware, PendingTransaction, Provider, ProviderError, PubsubClient, SubscriptionStream,
-    },
-    signers::{LocalWallet, Signer, Wallet},
+    providers::{Middleware, Provider, ProviderError, PubsubClient},
+    signers::{LocalWallet, Signer},
     types::{
-        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Bytes, Filter,
-        Signature, TxHash, H256, U256,
+        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Filter, TxHash, U256,
     },
     utils::keccak256,
 };
 use futures::{
-    future::{Aborted, Fuse, FusedFuture, FutureExt, TryFuture, TryFutureExt},
+    future::{Aborted, Fuse, FusedFuture, FutureExt, TryFutureExt},
     select_biased,
-    stream::{self, FuturesUnordered, StreamExt},
+    stream::{self, FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
     try_join,
 };
-use itertools::Itertools;
 // use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use serde::Deserialize;
 use serde_with::{serde_as, DurationMilliSeconds};
@@ -37,14 +28,14 @@ use tokio::{
     time::{sleep_until, timeout_at, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, field, info, instrument, warn, Span};
+use tracing::{debug, error, error_span, field, info, instrument, warn, Instrument, Span};
 
 use crate::{
     abort::FutureExt as AbortFutureExt,
     monitors::{PendingBlock, PendingBlockMonitor, PrioritizedMultiCall},
     providers::{LatencyProvider, TimeoutProvider},
     timed::StreamExt as TimedStreamExt,
-    transactions::{Transaction, TransactionRequest},
+    transactions::TransactionRequest,
 };
 
 #[serde_as]
@@ -67,7 +58,6 @@ pub(crate) struct Engine<P, M> {
     client: Arc<ProviderStack<P>>,
     multicall: MultiCallContract<Arc<ProviderStack<P>>>,
     wallet: LocalWallet,
-    next_nonce: AtomicU64,
     tx_propagation_delay: Duration,
     block_interval: Duration,
     // accounts: Arc<Accounts<TimeoutProvider<P>, S>>,
@@ -103,7 +93,6 @@ where
             multicall,
             client,
             wallet,
-            next_nonce: Default::default(),
             tx_propagation_delay: cfg.tx_propagation_delay,
             block_interval: cfg.block_interval,
             monitor,
@@ -151,35 +140,37 @@ where
                         );
                     }
                 }),
-                (block, received_at) = blocks.select_next_some() => Self::new_head_span(&block).in_scope(|| {
-                    debug!("new head received");
-                    // TODO: check if block_time is not too small
-                    // TODO: check for parent and uncles
+                (block, received_at) = blocks.select_next_some() => {
+                    Self::new_head_span(&block).in_scope(|| {
+                        debug!("new head received");
+                        // TODO: check if block_time is not too small
+                        // TODO: check for parent and uncles
 
-                    if !process_pending_block.is_terminated() {
-                        warn!("new head came too early, \
-                            aborting previous pending block processing...");
-                        process_pending_block.set(Fuse::terminated());
-                    }
-                    if !send_txs.is_empty() {
-                        // TODO: warn that we are still sending transactions
-                        warn!(
-                            left_to_send = send_txs.len(),
-                            "we are still sending transactions, skipping this block...",
+                        if !process_pending_block.is_terminated() {
+                            warn!("new head came too early, \
+                                aborting previous pending block processing...");
+                            process_pending_block.set(Fuse::terminated());
+                        }
+                        if !send_txs.is_empty() {
+                            warn!(
+                                left_to_send = send_txs.len(),
+                                "we are still sending transactions, skipping this block...",
+                            );
+                            return;
+                        }
+                        process_pending_block.set(
+                            self.process_pending_block(block, received_at, Span::current())
+                                .fuse(),
                         );
-                        return;
-                    }
-                    process_pending_block.set(
-                        self.process_pending_block(block, received_at, Span::current())
-                            .fuse(),
-                    );
-                }),
-                to_send = &mut process_pending_block => send_txs.extend(
-                    to_send?
-                        .into_iter()
-                        .flatten()
-                        .map(TryFutureExt::into_future),
-                ),
+                    });
+                },
+                to_send = &mut process_pending_block => if let Some((to_send, process_block_span)) = to_send? {
+                    send_txs.extend(
+                        to_send
+                            .into_iter()
+                            .map(|tx| self.sign_and_send(tx, process_block_span.clone())),
+                    )
+                },
                 complete => return Ok(()),
             }
         }
@@ -194,20 +185,32 @@ where
         )
     }
 
-    async fn get_pending_txs_count_at(&self, new_block: &Block<TxHash>) -> anyhow::Result<u64> {
-        let (next, pending) = try_join!(
+    async fn get_next_nonce_at(&self, block: &Block<TxHash>) -> anyhow::Result<Option<U256>> {
+        let (nonce_at_block, pending_nonce) = try_join!(
             self.client
-                .get_transaction_count(self.account(), Some(new_block.hash.unwrap().into())),
+                .get_transaction_count(self.account(), Some(block.hash.unwrap().into())),
             self.client
                 .get_transaction_count(self.account(), Some(BlockNumber::Pending.into())),
         )?;
-        if pending == next {
-            self.next_nonce.store(next.as_u64(), Ordering::SeqCst);
+        if pending_nonce < nonce_at_block {
+            return Err(anyhow!(
+                "pending txs count appears to be less than at some block"
+            ));
         }
-        Ok((pending - next).as_u64())
+        if pending_nonce > nonce_at_block {
+            warn!(
+                pending_txs_count = (pending_nonce - nonce_at_block).as_u64(),
+                account = ?self.account(),
+                "there are still pending transactions from our account, \
+                    waiting for them to be included in one of next blocks...",
+            );
+            // TODO: adjust delays, so we can catch on next time
+            return Ok(None);
+        }
+        Ok(Some(nonce_at_block))
     }
 
-    async fn get_pending_block(&self) -> Result<PendingBlock, ProviderError> {
+    async fn get_pending_block(&self) -> anyhow::Result<PendingBlock> {
         let log_filter = Filter::new().select(BlockNumber::Pending);
         let (block, logs) = try_join!(
             self.client.get_block_with_txs(BlockNumber::Pending),
@@ -215,10 +218,11 @@ where
         )?;
         let Some(block) = block else {
             error!("pending block doest not exist");
-            return Err(ProviderError::UnsupportedRPC);
+            return Err(ProviderError::UnsupportedRPC.into());
         };
         // TODO: check that it is parent of last mined block
-        Ok(PendingBlock::new(block, logs, 0)) // TODO: priority_fee
+        // TODO: check if not legacy that base_fee_per_gas is not none
+        Ok(PendingBlock::try_from(block, logs, 0)?) // TODO: priority_fee
     }
 
     fn estimate_next_block_at(&self, received_at: Instant) -> Instant {
@@ -243,32 +247,22 @@ where
         latest_block: Block<TxHash>,
         received_at: Instant,
         new_head_span: impl Into<Option<tracing::Id>>,
-    ) -> anyhow::Result<
-        Option<impl Iterator<Item = impl TryFuture<Ok = Transaction, Error = anyhow::Error> + '_>>,
-    > {
+    ) -> anyhow::Result<Option<(Vec<TypedTransaction>, Span)>> {
         let span = Span::current();
 
-        let pending_txs_count = self.get_pending_txs_count_at(&latest_block).await?;
-        if pending_txs_count > 0 {
-            warn!(
-                pending_txs_count,
-                account = ?self.account(),
-                "there are still pending transactions from our account, \
-                    waiting for them to be included in one of next blocks...",
-            );
-            // TODO: adjust delays, so we can catch on next time
+        let Some(next_nonce) = self.get_next_nonce_at(&latest_block).await? else {
             return Ok(None);
-        }
+        };
 
         let next_block_at = self.estimate_next_block_at(received_at);
         let latency = self.latency();
-        let abort_processing_at = next_block_at - self.tx_propagation_delay - latency;
+        let abort_processing_at = next_block_at - self.tx_propagation_delay - 2 * latency;
 
         // TODO: keep track of monitor latency
         sleep_until(abort_processing_at - Duration::from_secs(1)).await;
         debug!("requesting pending block...");
         // TODO: get account balance and check if there is enoght ETH to send txs
-        let pending_block = self.get_pending_block().await?;
+        let pending_block = self.get_pending_block().in_current_span().await?;
         span.record("parent_block_hash", field::debug(pending_block.parent_hash))
             .record("block_number", pending_block.number.unwrap().as_u64());
         if !latest_block
@@ -290,28 +284,70 @@ where
         .await?;
         debug!("pending block processed");
         // TODO: maybe force sleep until abort_processing_at, so we would send just at the end of the block?
-        Ok(Some(
-            self.extract_txs_to_send(pending_block)
-                .map(move |tx| self.sign_and_send(tx, span.clone())),
-        ))
+        // TODO: log to_send count
+
+        Ok(Some((
+            self.extract_txs_to_send(pending_block, next_nonce).await?,
+            Span::current(),
+        )))
     }
 
-    fn extract_txs_to_send(
+    async fn extract_txs_to_send(
         &self,
-        block: PendingBlock,
-    ) -> impl ExactSizeIterator<Item = TransactionRequest> {
-        // TODO: auto add transfer to the account to pay for gas
-        block
-            .into_send_txs()
+        processed_block: PendingBlock,
+        mut next_nonce: U256,
+    ) -> anyhow::Result<Vec<TypedTransaction>> {
+        processed_block
+            .to_send
+            .join_adjacent()
             .into_iter()
-            .group_by(|t| t.priority_fee)
-            .into_iter()
-            .map(|(priority_fee, group)| PrioritizedMultiCall {
-                calls: group.map(|g| g.calls).concat(),
-                priority_fee,
+            .map(|p| {
+                self.make_tx(p, &processed_block.block, {
+                    let nonce = next_nonce;
+                    next_nonce += 1.into();
+                    nonce
+                })
             })
-            .sorted_unstable_by_key(|tx| Reverse(tx.priority_fee))
-            .map(|p| TransactionRequest::default()) // TODO
+            .collect::<FuturesOrdered<_>>()
+            .try_collect()
+            .await
+    }
+
+    async fn make_tx<TX>(
+        &self,
+        p: PrioritizedMultiCall,
+        block: &Block<TX>,
+        nonce: impl Into<U256>,
+    ) -> anyhow::Result<TypedTransaction> {
+        // TODO: value?
+        let mut tx = TransactionRequest::default()
+            .from(self.account())
+            .to(self.multicall.address())
+            .data({
+                let (raw, _meta) = p.calls.encode_calls_raw();
+                raw.encode_calldata()
+            })
+            .nonce(nonce)
+            .chain_id(self.wallet.chain_id());
+
+        #[cfg(not(feature = "legacy"))]
+        {
+            tx = tx
+                .max_priority_fee_per_gas(p.priority_fee)
+                .max_fee_per_gas(block.base_fee_per_gas.unwrap());
+        }
+        #[cfg(feature = "legacy")]
+        {
+            tx = tx.gas_price(p.priority_fee);
+        }
+
+        let mut tx: TypedTransaction = tx.into();
+        tx.set_gas(
+            self.client
+                .estimate_gas(&tx, Some(BlockNumber::Pending.into()))
+                .await?,
+        );
+        Ok(tx)
     }
 
     // TODO: instrument gas price / max_fee_*
@@ -319,36 +355,29 @@ where
         follows_from = [process_pending_block_span],
         skip_all,
         fields(
-            from = ?tx.from.unwrap(),
-            gas = ?tx.gas.unwrap(),
-            tx_hash, nonce
+            from = ?tx.from().unwrap(),
+            gas = ?tx.gas().unwrap(),
+            nonce = ?tx.nonce().unwrap(),
+            tx_hash,
         ),
         err,
     )]
     async fn sign_and_send(
         &self,
-        tx: TransactionRequest,
+        tx: TypedTransaction,
         process_pending_block_span: impl Into<Option<tracing::Id>>,
-    ) -> anyhow::Result<Transaction> {
-        // TODO: set and increase nonce
-        let tx = tx.into();
+    ) -> anyhow::Result<TxHash> {
         // TODO: debug!("assigned nonce: {nonce}");
         let signature = self.wallet.sign_transaction_sync(&tx)?;
-        let tx = match tx {
-            #[cfg(not(feature = "legacy"))]
-            TypedTransaction::Eip1559(tx) => tx,
-            #[cfg(feature = "legacy")]
-            TypedTransaction::Legacy(tx) => tx,
-            _ => unreachable!(),
-        };
         let raw = tx.rlp_signed(&signature);
-        let tx = Transaction::from_request(tx, signature)?;
-        Span::current()
-            .record("tx_hash", field::debug(tx.hash))
-            .record("nonce", field::display(tx.nonce));
+        let hash = keccak256(&raw).into();
+        Span::current().record("tx_hash", field::debug(hash));
         let pending_tx = self.client.send_raw_transaction(raw).await?;
+        if pending_tx.tx_hash() != hash {
+            return Err(anyhow!("got wrong pending tx hash after send"));
+        }
         info!("transaction sent");
-        Ok(tx)
+        Ok(hash)
     }
 }
 
