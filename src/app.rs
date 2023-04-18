@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    engine::{Engine, EngineConfig},
+    engine::{Engine, EngineConfig, ProviderStack},
     monitors::{MultiMonitor, PendingBlockMonitor},
     providers::{LatencyProvider, TimeoutProvider},
 };
@@ -53,7 +53,7 @@ pub struct App<P, M> {
 
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 
-impl<P> App<P, Box<dyn PendingBlockMonitor>>
+impl<P> App<P, Box<dyn PendingBlockMonitor<ProviderStack<P>>>>
 where
     P: PubsubClient + 'static,
 {
@@ -95,7 +95,7 @@ where
         client: impl Into<Arc<Provider<P>>>,
         // accounts: impl Into<Arc<Accounts<P, S>>>,
         config: MonitorsConfig,
-    ) -> anyhow::Result<Box<dyn PendingBlockMonitor>> {
+    ) -> anyhow::Result<Box<dyn PendingBlockMonitor<Provider<P>>>> {
         let monitors = Self::make_monitors(client, config).await?;
         Ok(match monitors.len() {
             0 => {
@@ -103,7 +103,7 @@ where
                 Box::new(())
             }
             1 => monitors.into_iter().next().unwrap(),
-            _ => Box::new(MultiMonitor::from(monitors)),
+            _ => Box::new(MultiMonitor::from_iter(monitors)),
         })
     }
 
@@ -112,7 +112,7 @@ where
         client: impl Into<Arc<Provider<P>>>,
         // accounts: impl Into<Arc<Accounts<P, S>>>,
         config: MonitorsConfig,
-    ) -> anyhow::Result<Vec<Box<dyn PendingBlockMonitor>>> {
+    ) -> anyhow::Result<Vec<Box<dyn PendingBlockMonitor<Provider<P>>>>> {
         let client = client.into();
         let monitors = FuturesUnordered::<LocalBoxFuture<_>>::new();
 
@@ -132,7 +132,7 @@ where
 impl<P, M> App<P, M>
 where
     P: PubsubClient + 'static,
-    M: PendingBlockMonitor,
+    M: PendingBlockMonitor<ProviderStack<P>>,
 {
     pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
         self.engine.run(cancel).await

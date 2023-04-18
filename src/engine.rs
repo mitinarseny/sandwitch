@@ -52,11 +52,12 @@ pub struct EngineConfig {
     pub multicall: Address,
 }
 
+// TODO: use Signer Middleware
 pub type ProviderStack<P> = Provider<LatencyProvider<TimeoutProvider<P>>>;
 
 pub(crate) struct Engine<P, M> {
     client: Arc<ProviderStack<P>>,
-    multicall: MultiCallContract<Arc<ProviderStack<P>>>,
+    multicall: MultiCallContract<Arc<ProviderStack<P>>, ProviderStack<P>>,
     wallet: LocalWallet,
     tx_propagation_delay: Duration,
     block_interval: Duration,
@@ -68,7 +69,7 @@ impl<P, M> Engine<P, M>
 where
     P: PubsubClient + 'static,
     P::Error: Send + Sync + 'static,
-    M: PendingBlockMonitor,
+    M: PendingBlockMonitor<ProviderStack<P>>,
 {
     pub(crate) async fn new(
         client: impl Into<Arc<ProviderStack<P>>>,
@@ -79,6 +80,9 @@ where
         let client = client.into();
         let wallet = wallet.into();
         let multicall = MultiCallContract::new(cfg.multicall, client.clone());
+        if !client.mining().await? {
+            return Err(anyhow!("node is not mining"));
+        }
         // let multicall_owner = multicall
         //     .owner()
         //     .await
@@ -122,9 +126,8 @@ where
 
         loop {
             select_biased! {
-                sent_tx = send_txs.select_next_some() => {
-                    sent_tx?;
-                    // TODO: watch sent txs to see if they have been included in processed pending block
+                sent_tx_hash = send_txs.select_next_some() => {
+                    sent_tx_hash?;
                 },
                 _ = &mut cancelled => error_span!("cancelled").in_scope(||{
                     info!("stop receiving new heads...");
@@ -143,8 +146,6 @@ where
                 (block, received_at) = blocks.select_next_some() => {
                     Self::new_head_span(&block).in_scope(|| {
                         debug!("new head received");
-                        // TODO: check if block_time is not too small
-                        // TODO: check for parent and uncles
 
                         if !process_pending_block.is_terminated() {
                             warn!("new head came too early, \
@@ -188,13 +189,13 @@ where
     async fn get_next_nonce_at(&self, block: &Block<TxHash>) -> anyhow::Result<Option<U256>> {
         let (nonce_at_block, pending_nonce) = try_join!(
             self.client
-                .get_transaction_count(self.account(), Some(block.hash.unwrap().into())),
+                .get_transaction_count(self.account(), Some(block.number.unwrap().into())),
             self.client
                 .get_transaction_count(self.account(), Some(BlockNumber::Pending.into())),
         )?;
         if pending_nonce < nonce_at_block {
             return Err(anyhow!(
-                "pending txs count appears to be less than at some block"
+                "pending txs count appears to be less than at some block number"
             ));
         }
         if pending_nonce > nonce_at_block {
@@ -210,7 +211,7 @@ where
         Ok(Some(nonce_at_block))
     }
 
-    async fn get_pending_block(&self) -> anyhow::Result<PendingBlock> {
+    async fn get_pending_block(&self) -> anyhow::Result<PendingBlock<'_, ProviderStack<P>>> {
         let log_filter = Filter::new().select(BlockNumber::Pending);
         let (block, logs) = try_join!(
             self.client.get_block_with_txs(BlockNumber::Pending),
@@ -220,17 +221,22 @@ where
             error!("pending block doest not exist");
             return Err(ProviderError::UnsupportedRPC.into());
         };
-        // TODO: check that it is parent of last mined block
         // TODO: check if not legacy that base_fee_per_gas is not none
-        Ok(PendingBlock::try_from(block, logs, 0)?) // TODO: priority_fee
+        Ok(PendingBlock::try_from(
+            block,
+            logs,
+            None,
+            self.account(),
+            &self.multicall,
+        )?) // TODO: priority_fee
     }
 
     fn estimate_next_block_at(&self, received_at: Instant) -> Instant {
         received_at + self.block_interval
     }
 
-    fn latency(&self) -> Duration {
-        self.client.as_ref().as_ref().latency()
+    async fn latency(&self) -> Duration {
+        self.client.as_ref().as_ref().latency().await
     }
 
     #[instrument(
@@ -255,7 +261,7 @@ where
         };
 
         let next_block_at = self.estimate_next_block_at(received_at);
-        let latency = self.latency();
+        let latency = self.latency().await;
         let abort_processing_at = next_block_at - self.tx_propagation_delay - 2 * latency;
 
         // TODO: keep track of monitor latency
@@ -294,7 +300,7 @@ where
 
     async fn extract_txs_to_send(
         &self,
-        processed_block: PendingBlock,
+        processed_block: PendingBlock<'_, ProviderStack<P>>,
         mut next_nonce: U256,
     ) -> anyhow::Result<Vec<TypedTransaction>> {
         processed_block
@@ -324,7 +330,7 @@ where
             .from(self.account())
             .to(self.multicall.address())
             .data({
-                let (raw, _meta) = p.calls.encode_calls_raw();
+                let (raw, _meta) = p.calls.into_inner().encode_raw_calls();
                 raw.encode_calldata()
             })
             .nonce(nonce)
@@ -333,8 +339,8 @@ where
         #[cfg(not(feature = "legacy"))]
         {
             tx = tx
-                .max_priority_fee_per_gas(p.priority_fee)
-                .max_fee_per_gas(block.base_fee_per_gas.unwrap());
+                .max_priority_fee_per_gas(p.priority_fee_per_gas)
+                .max_fee_per_gas(block.base_fee_per_gas.unwrap() + p.priority_fee_per_gas);
         }
         #[cfg(feature = "legacy")]
         {

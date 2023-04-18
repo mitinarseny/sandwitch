@@ -9,7 +9,7 @@ use super::errors::{InvalidLength, UnsupportedCommand, WrongCommand};
 use crate::prelude::*;
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Cmd {
     Group = 0,
     Call = 1,
@@ -60,10 +60,12 @@ pub trait Call: Sized {
         Self::decode(cmd, input)
     }
 
-    fn decode_ok(output: bytes::Bytes, meta: Self::Meta) -> Result<Self::Ok, AbiError>;
-    fn decode_reverted(output: bytes::Bytes, meta: Self::Meta) -> Result<Self::Reverted, AbiError>;
+    fn decode_ok(output: bytes::Bytes, meta: &Self::Meta) -> Result<Self::Ok, AbiError>;
+    fn decode_reverted(output: bytes::Bytes, meta: &Self::Meta)
+        -> Result<Self::Reverted, AbiError>;
 }
 
+#[derive(Clone, Debug)]
 pub struct RawCall(Cmd, bytes::Bytes);
 pub type RawResult = Result<bytes::Bytes, bytes::Bytes>;
 
@@ -80,13 +82,13 @@ impl Call for RawCall {
         Ok(Self(cmd, input))
     }
 
-    fn decode_ok(output: bytes::Bytes, _meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(output: bytes::Bytes, _meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         Ok(output)
     }
 
     fn decode_reverted(
         output: bytes::Bytes,
-        _meta: Self::Meta,
+        _meta: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         Ok(output)
     }
@@ -135,13 +137,13 @@ where
         Self::try_from_raw(ContractCall::<bytes::Bytes>::decode(cmd, input)?)
     }
 
-    fn decode_ok(output: bytes::Bytes, _meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(output: bytes::Bytes, _meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         <C::Ok as AbiDecode>::decode(output)
     }
 
     fn decode_reverted(
         output: bytes::Bytes,
-        _meta: Self::Meta,
+        _meta: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         <C::Reverted as AbiDecode>::decode(output)
     }
@@ -228,13 +230,13 @@ impl Call for RawContractCall {
         })
     }
 
-    fn decode_ok(output: bytes::Bytes, _meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(output: bytes::Bytes, _meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         Ok(output)
     }
 
     fn decode_reverted(
         output: bytes::Bytes,
-        _meta: Self::Meta,
+        _meta: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         Ok(output)
     }
@@ -281,14 +283,17 @@ impl Call for Transfer {
         Self::try_from_raw(ContractCall::<bytes::Bytes>::decode(cmd, input)?)
     }
 
-    fn decode_ok(output: bytes::Bytes, _meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(output: bytes::Bytes, _meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         if !output.is_empty() {
             return Err(InvalidLength.into());
         }
         Ok(())
     }
 
-    fn decode_reverted(output: bytes::Bytes, meta: Self::Meta) -> Result<Self::Reverted, AbiError> {
+    fn decode_reverted(
+        output: bytes::Bytes,
+        meta: &Self::Meta,
+    ) -> Result<Self::Reverted, AbiError> {
         <ContractCall<bytes::Bytes> as Call>::decode_reverted(output, meta)
     }
 }
@@ -330,13 +335,13 @@ impl Call for GetBalanceOf {
         })
     }
 
-    fn decode_ok(output: bytes::Bytes, _meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(output: bytes::Bytes, _meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         U256::decode(output)
     }
 
     fn decode_reverted(
         _output: bytes::Bytes,
-        _meta: Self::Meta,
+        _meta: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         unreachable!()
     }
@@ -383,7 +388,7 @@ impl Call for Create {
         })
     }
 
-    fn decode_ok(mut output: bytes::Bytes, _meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(mut output: bytes::Bytes, _meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         Address::try_read_from(&mut output)
             .map_err(|_| InvalidLength)
             .map_err(Into::into)
@@ -391,7 +396,7 @@ impl Call for Create {
 
     fn decode_reverted(
         output: bytes::Bytes,
-        _meta: Self::Meta,
+        _meta: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         Ok(output)
     }
@@ -450,7 +455,7 @@ impl Call for Create2 {
         })
     }
 
-    fn decode_ok(mut output: bytes::Bytes, _meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(mut output: bytes::Bytes, _meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         Address::try_read_from(&mut output)
             .map_err(|_| InvalidLength)
             .map_err(Into::into)
@@ -458,13 +463,13 @@ impl Call for Create2 {
 
     fn decode_reverted(
         output: bytes::Bytes,
-        _meta: Self::Meta,
+        _meta: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         Ok(output)
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TryCall<C> {
     pub allow_failure: bool,
     pub call: C,
@@ -650,20 +655,20 @@ impl Call for DynCall {
         })
     }
 
-    fn decode_ok(output: bytes::Bytes, call_type: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(output: bytes::Bytes, call_type: &Self::Meta) -> Result<Self::Ok, AbiError> {
         Ok(match call_type {
             DynCallType::Call => {
-                DynCallOutput::ContractCalled(<RawContractCall as Call>::decode_ok(output, ())?)
+                DynCallOutput::ContractCalled(<RawContractCall as Call>::decode_ok(output, &())?)
             }
             DynCallType::GetBalanceOf => {
-                DynCallOutput::Balance(<GetBalanceOf as Call>::decode_ok(output, ())?)
+                DynCallOutput::Balance(<GetBalanceOf as Call>::decode_ok(output, &())?)
             }
             DynCallType::Transfer => {
-                let () = <Transfer as Call>::decode_ok(output, ())?;
+                let () = <Transfer as Call>::decode_ok(output, &())?;
                 DynCallOutput::Transferred
             }
             DynCallType::Create => {
-                DynCallOutput::ContractCreated(<Create as Call>::decode_ok(output, ())?)
+                DynCallOutput::ContractCreated(<Create as Call>::decode_ok(output, &())?)
             }
             DynCallType::Group(call_types) => {
                 DynCallOutput::Group(<DynCalls as Call>::decode_ok(output, call_types)?)
@@ -673,18 +678,18 @@ impl Call for DynCall {
 
     fn decode_reverted(
         output: bytes::Bytes,
-        call_type: Self::Meta,
+        call_type: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         Ok(match call_type {
             DynCallType::Call => DynCallReverted::ContractCallReverted(
-                <RawContractCall as Call>::decode_reverted(output, ())?,
+                <RawContractCall as Call>::decode_reverted(output, &())?,
             ),
             DynCallType::GetBalanceOf => return Err(WrongCommand.into()),
             DynCallType::Transfer => {
-                DynCallReverted::TransferReverted(<Transfer as Call>::decode_reverted(output, ())?)
+                DynCallReverted::TransferReverted(<Transfer as Call>::decode_reverted(output, &())?)
             }
             DynCallType::Create => DynCallReverted::ContractCreateReverted(
-                <Create as Call>::decode_reverted(output, ())?,
+                <Create as Call>::decode_reverted(output, &())?,
             ),
             DynCallType::Group(call_types) => DynCallReverted::GroupReverted(
                 <DynCalls as Call>::decode_reverted(output, call_types)?.into(),

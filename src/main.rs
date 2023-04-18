@@ -120,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn init_tracing_subscriber(level: LevelFilter) -> anyhow::Result<()> {
+    // TODO: opentelemetry, graphana tempo
     tracing::subscriber::set_global_default(
         Registry::default().with(
             tracing_subscriber::fmt::layer()

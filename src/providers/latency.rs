@@ -5,21 +5,70 @@ use ethers::{
     providers::{JsonRpcClient, PubsubClient},
     types::U256,
 };
+use fixed_vec_deque::FixedVecDeque;
+use futures::{lock::Mutex, FutureExt};
+use nalgebra as na;
 use serde::{de::DeserializeOwned, Serialize};
+use smartcore::{
+    linalg::basic::matrix::DenseMatrix,
+    linear::linear_regression::{
+        LinearRegression, LinearRegressionParameters, LinearRegressionSolverName,
+    },
+};
+
+use crate::timed::TryFutureExt as TimedTryFutureExt;
 
 #[derive(Debug)]
 pub struct LatencyProvider<P> {
     inner: P,
+    latencies: Mutex<FixedVecDeque<[Duration; 2048]>>,
 }
 
 impl<P> LatencyProvider<P> {
     pub fn new(inner: P) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            latencies: Default::default(), // TODO
+        }
     }
 
-    pub fn latency(&self) -> Duration {
+    async fn on_elapsed(&self, elapsed: Duration) {
+        // let latencies = self.latencies.lock().await;
+        // *latencies.push_back() = elapsed;
+    }
+
+    pub async fn latency(&self) -> Duration {
         // TODO
         Duration::from_millis(200)
+    }
+
+    // fn latency_(durations: &[Duration]) -> Duration {
+    //     let x = na::DVector::from_column_slice(durations);
+    // }
+}
+
+struct OUProcess {
+    alpha: f64,
+    gamma: f64,
+    beta: f64,
+}
+
+impl OUProcess {
+    fn estimate(samples: &[f64]) -> Self {
+        // DenseMatrix::from_2d_array()
+        // let x = na::DVector::from_column_slice(samples);
+        // let y = x[1..] - x[..-1];
+
+        // LinearRegression::fit(
+        //     &x,
+        //     &y,
+        //     LinearRegressionParameters::default().with_solver(LinearRegressionSolverName::QR),
+        // );
+        Self {
+            alpha: todo!(),
+            gamma: todo!(),
+            beta: todo!(),
+        }
     }
 }
 
@@ -43,7 +92,12 @@ where
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.request(method, params)
+        async move {
+            let (r, elapsed) = self.inner.request(method, params).try_timed().await?;
+            self.on_elapsed(elapsed).await;
+            Ok(r)
+        }
+        .boxed()
     }
 }
 

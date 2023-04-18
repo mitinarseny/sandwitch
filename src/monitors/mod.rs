@@ -1,62 +1,55 @@
-use core::convert::Infallible;
-use std::{
-    cmp::Reverse,
-    collections::HashMap,
-    iter::Map,
-    marker::PhantomData,
-    ops::{Add, AddAssign, Deref, DerefMut, Index},
-    slice::SliceIndex,
-    sync::Arc,
-};
+use core::{cmp::Reverse, iter::Map, mem};
+use std::sync::Arc;
 
-use contracts::multicall::{Call, Calls, MultiCall, RawCall, RawResult, RevertedAt, TryCall};
+use contracts::multicall::{
+    Call, Calls, MultiCall, MultiCallContract, MultiCallContractError, MultiFunctionCall, RawCall,
+    TryCall,
+};
 use ethers::{
-    abi::AbiError,
-    types::{Block, Log, TxHash, U256},
+    providers::Middleware,
+    types::{Address, Block, BlockNumber, Log, U256},
 };
 use futures::{
-    future::{self, BoxFuture, FutureExt, TryFutureExt},
+    future::{self, BoxFuture, FutureExt},
     lock::Mutex,
     stream::{FuturesUnordered, TryStreamExt},
 };
 use impl_tools::autoimpl;
 use itertools::Itertools;
-use tracing::{debug, event, Level};
 
 use crate::transactions::{InvalidTransaction, Transaction};
 
-#[derive(Default)]
-#[autoimpl(Deref<Target = [TryCall<RawCall>]> using self.0)]
-pub struct MultiCallGroups(Calls<RawCall>);
+#[derive(Default, Debug)]
+#[autoimpl(Deref<Target = [TryCall<RawCall>]> using self.calls)]
+pub struct MultiCallGroups {
+    calls: Calls<RawCall>,
+    extended: bool,
+}
 
-impl MultiCall for MultiCallGroups {
-    type Meta = <Calls<RawCall> as MultiCall>::Meta;
-    type Ok = <Calls<RawCall> as MultiCall>::Ok;
-    type Reverted = <Calls<RawCall> as MultiCall>::Reverted;
-
-    fn encode_calls(self) -> (Calls<RawCall>, Self::Meta) {
-        MultiCall::encode_calls(self.0)
+impl MultiCallGroups {
+    pub fn into_inner(self) -> Calls<RawCall> {
+        self.calls
     }
+}
 
-    fn decode_calls(calls: Calls<RawCall>) -> Result<Self, AbiError> {
-        Ok(Self(MultiCall::decode_calls(calls)?))
-    }
-
-    fn decode_ok(results: Vec<RawResult>, meta: Self::Meta) -> Result<Self::Ok, AbiError> {
-        <Calls<RawCall> as MultiCall>::decode_ok(results, meta)
-    }
-
-    fn decode_reverted(
-        r: RevertedAt<bytes::Bytes>,
-        meta: Self::Meta,
-    ) -> Result<Self::Reverted, AbiError> {
-        <Calls<RawCall> as MultiCall>::decode_reverted(r, meta)
+impl<C: MultiCall> From<C> for MultiCallGroups {
+    fn from(calls: C) -> Self {
+        let (calls, _meta) = calls.encode_calls();
+        Self {
+            calls,
+            extended: false,
+        }
     }
 }
 
 impl<C: Call> Extend<C> for MultiCallGroups {
     fn extend<T: IntoIterator<Item = C>>(&mut self, calls: T) {
-        self.0.extend(calls.into_iter().map(|c| {
+        if !self.extended {
+            self.extended = true;
+            let group = mem::take(&mut self.calls);
+            self.extend(Some(group));
+        }
+        self.calls.extend(calls.into_iter().map(|c| {
             let (call, _meta) = c.encode_raw();
             TryCall {
                 allow_failure: true,
@@ -80,23 +73,22 @@ impl IntoIterator for MultiCallGroups {
         Map<<Calls<RawCall> as IntoIterator>::IntoIter, fn(TryCall<RawCall>) -> RawCall>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter().map(TryCall::into_call)
+        self.calls.into_iter().map(TryCall::into_call)
     }
 }
 
 #[autoimpl(Deref using self.calls)]
 #[autoimpl(DerefMut using self.calls)]
 pub struct PrioritizedMultiCall {
-    pub calls: MultiCallGroups, // TODO: no pub
-    pub priority_fee: U256,     // TODO: no pub
+    pub calls: MultiCallGroups,     // TODO: no pub
+    pub priority_fee_per_gas: U256, // TODO: no pub
 }
 
 impl PrioritizedMultiCall {
-    pub fn new(calls: MultiCallGroups, priority_fee: impl Into<U256>) -> Self {
-        // TODO: no pub
+    fn new(calls: impl MultiCall, priority_fee_per_gas: impl Into<U256>) -> Self {
         Self {
-            calls,
-            priority_fee: priority_fee.into(),
+            calls: calls.into(),
+            priority_fee_per_gas: priority_fee_per_gas.into(),
         }
     }
 }
@@ -110,49 +102,47 @@ pub struct TxWithLogs {
 
 #[derive(Clone, Copy)]
 #[autoimpl(Deref<Target = [TxWithLogs]> using self.txs)]
-pub struct AdjacentPendingTxsWithLogs<'a> {
+pub struct AdjacentPendingTxsWithLogs<'a, M> {
     txs: &'a [TxWithLogs],
-    to_send: &'a ToSend,
+    block: &'a PendingBlock<'a, M>,
 }
 
-impl<'a> AdjacentPendingTxsWithLogs<'a> {
-    #[inline]
-    pub fn priority_fee(&self) -> U256 {
+impl<'a, M> AdjacentPendingTxsWithLogs<'a, M> {
+    fn priority_fee_per_gas(&self) -> U256 {
         self.txs
             .first()
-            .map(|tx| tx.fees.priority_fee())
+            .map(|tx| self.block.base_fee_per_gas() + tx.fees.priority_fee())
             .expect("empty continuious transactions")
     }
 
-    #[inline]
-    pub fn before_priority_fee(&self) -> U256 {
-        self.priority_fee() + 1
+    fn before_priority_fee_per_gas(&self) -> U256 {
+        self.priority_fee_per_gas() + 1
     }
 
-    #[inline]
-    pub fn make_before(&self, calls: MultiCallGroups) -> PrioritizedMultiCall {
-        PrioritizedMultiCall::new(calls, self.before_priority_fee())
+    pub fn make_before(&self, calls: impl MultiCall) -> PrioritizedMultiCall {
+        PrioritizedMultiCall::new(calls, self.before_priority_fee_per_gas())
     }
 
-    #[inline]
-    pub fn make_after(&self, calls: MultiCallGroups) -> PrioritizedMultiCall {
-        PrioritizedMultiCall::new(calls, self.priority_fee())
+    pub fn make_after(&self, calls: impl MultiCall) -> PrioritizedMultiCall {
+        PrioritizedMultiCall::new(calls, self.priority_fee_per_gas())
+    }
+}
+
+impl<'a, M: Middleware> AdjacentPendingTxsWithLogs<'a, M> {
+    pub fn make_before_candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+    ) -> CandidateToSend<'_, M, C> {
+        self.block
+            .make_candidate(calls, self.before_priority_fee_per_gas())
     }
 
-    pub async fn add_to_send_before(&self, calls: MultiCallGroups) {
-        self.to_send
-            .add_to_send(Some(self.make_before(calls)))
-            .await
-    }
-
-    pub async fn add_to_send_after(&self, calls: MultiCallGroups) {
-        self.to_send.add_to_send(Some(self.make_after(calls))).await
-    }
-
-    pub async fn add_to_send_wrap(&self, before: MultiCallGroups, after: MultiCallGroups) {
-        self.to_send
-            .add_to_send([self.make_before(before), self.make_after(after)])
-            .await
+    pub fn make_after_candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+    ) -> CandidateToSend<'_, M, C> {
+        self.block
+            .make_candidate(calls, self.priority_fee_per_gas())
     }
 }
 
@@ -169,30 +159,65 @@ impl ToSend {
             .0
             .into_inner()
             .into_iter()
-            .group_by(|t| t.priority_fee)
+            .group_by(|t| t.priority_fee_per_gas)
             .into_iter()
             .map(|(priority_fee, group)| PrioritizedMultiCall {
                 calls: group.map(|g| g.calls).concat(),
-                priority_fee,
+                priority_fee_per_gas: priority_fee,
             })
             .collect();
-        calls.sort_unstable_by_key(|p| Reverse(p.priority_fee));
+        calls.sort_unstable_by_key(|p| Reverse(p.priority_fee_per_gas));
         calls
     }
 }
 
-#[autoimpl(Deref using self.block)]
-pub struct PendingBlock {
-    pub(crate) block: Block<TxWithLogs>,
-    pub(crate) to_send: ToSend,
-    first_priority_fee: U256,
+pub struct CandidateToSend<'a, M, C: MultiCall> {
+    call: PrioritizedMultiCall,
+    function_call: MultiFunctionCall<Arc<M>, M, C>,
+    block: &'a PendingBlock<'a, M>,
 }
 
-impl PendingBlock {
+impl<'a, M, C: MultiCall> From<CandidateToSend<'a, M, C>> for PrioritizedMultiCall {
+    fn from(candidate: CandidateToSend<'a, M, C>) -> Self {
+        candidate.call
+    }
+}
+
+impl<'a, M, C> CandidateToSend<'a, M, C>
+where
+    M: Middleware,
+    C: MultiCall,
+{
+    pub async fn call(&self) -> Result<C::Ok, MultiCallContractError<M, C::Reverted>> {
+        self.function_call.call().await
+    }
+
+    pub async fn estimate_fee(&self) -> Result<U256, MultiCallContractError<M, C::Reverted>> {
+        let gas = self.function_call.estimate_gas().await?;
+        Ok(gas * (self.block.base_fee_per_gas() + self.call.priority_fee_per_gas))
+    }
+
+    pub async fn add_to_send(self) {
+        self.block.add_to_send(Some(self.call)).await
+    }
+}
+
+#[autoimpl(Deref using self.block)]
+pub struct PendingBlock<'a, M> {
+    pub(crate) block: Block<TxWithLogs>,
+    pub(crate) to_send: ToSend,
+    account: Address, // TODO: get from client from multicall
+    multicall: &'a MultiCallContract<Arc<M>, M>,
+    first_priority_fee_per_gas: U256,
+}
+
+impl<'a, M> PendingBlock<'a, M> {
     pub fn try_from(
         block: Block<ethers::types::Transaction>,
         logs: impl IntoIterator<Item = Log>,
-        first_prioroty_fee: impl Into<U256>,
+        first_prioroty_fee_per_gas: impl Into<Option<U256>>,
+        account: Address,
+        multicall: &'a MultiCallContract<Arc<M>, M>,
     ) -> Result<Self, InvalidTransaction> {
         // TODO: ensure all logs are from the same block as `block`
         let Block {
@@ -221,6 +246,8 @@ impl PendingBlock {
             other,
         } = block;
         Ok(Self {
+            first_priority_fee_per_gas: 0.into(), // TODO
+            // first_priority_fee_per_gas: first_prioroty_fee_per_gas.into().or_else(|| transactions.first().map(|tx| tx)), // TODO: or first tx
             block: Block {
                 hash,
                 parent_hash,
@@ -261,58 +288,75 @@ impl PendingBlock {
                 base_fee_per_gas,
                 other,
             },
-            first_priority_fee: first_prioroty_fee.into(),
             to_send: Default::default(),
+            account,
+            multicall,
         })
     }
 
-    pub fn iter_adjacent_txs(&self) -> impl Iterator<Item = AdjacentPendingTxsWithLogs<'_>> {
+    pub fn account(&self) -> Address {
+        self.account
+    }
+
+    fn base_fee_per_gas(&self) -> U256 {
+        self.block.base_fee_per_gas.unwrap_or(0.into())
+    }
+
+    pub async fn add_to_send(&self, calls: impl IntoIterator<Item = PrioritizedMultiCall>) {
+        self.to_send.add_to_send(calls).await
+    }
+
+    pub fn make_first_in_block(&self, calls: impl MultiCall) -> PrioritizedMultiCall {
+        PrioritizedMultiCall::new(calls, self.first_priority_fee_per_gas)
+    }
+
+    pub fn iter_adjacent_txs(&self) -> impl Iterator<Item = AdjacentPendingTxsWithLogs<'_, M>> {
         self.block
             .transactions
             .group_by(|l, r| l.fees.priority_fee() == r.fees.priority_fee())
-            .map(|txs| AdjacentPendingTxsWithLogs {
-                txs,
-                to_send: &self.to_send,
-            })
-    }
-
-    #[inline]
-    pub fn first_priority_fee(&self) -> U256 {
-        self.first_priority_fee
-    }
-
-    #[inline]
-    fn make_first(&self, calls: MultiCallGroups) -> PrioritizedMultiCall {
-        PrioritizedMultiCall::new(calls, self.first_priority_fee())
-    }
-
-    pub async fn add_to_send_first_in_block(&self, calls: MultiCallGroups) {
-        self.to_send.add_to_send(Some(self.make_first(calls))).await
-    }
-
-    pub async fn add_to_send_first_in_block_and_wraps(
-        &self,
-        first: MultiCallGroups,
-        wraps: impl IntoIterator<Item = PrioritizedMultiCall>,
-    ) {
-        self.to_send
-            .add_to_send(Some(self.make_first(first)).into_iter().chain(wraps))
-            .await
+            .map(move |txs| AdjacentPendingTxsWithLogs { txs, block: &self })
     }
 }
 
-#[autoimpl(for<M: trait + ?Sized> Arc<M>, Box<M>)]
-pub trait PendingBlockMonitor {
+impl<'a, M> PendingBlock<'a, M>
+where
+    M: Middleware,
+{
+    fn make_candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+        priority_fee_per_gas: U256,
+    ) -> CandidateToSend<'_, M, C> {
+        CandidateToSend {
+            function_call: self
+                .multicall
+                .multicall(calls.clone())
+                .block(BlockNumber::Pending), // TODO: priority_fee
+            call: PrioritizedMultiCall::new(calls, priority_fee_per_gas),
+            block: &self,
+        }
+    }
+
+    pub fn make_first_in_block_candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+    ) -> CandidateToSend<'_, M, C> {
+        self.make_candidate(calls, self.first_priority_fee_per_gas)
+    }
+}
+
+#[autoimpl(for<T: trait + ?Sized> &T,Arc<T>, Box<T>)]
+pub trait PendingBlockMonitor<M: Middleware> {
     fn process_pending_block<'a>(
         &'a self,
-        block: &'a PendingBlock,
+        block: &'a PendingBlock<'a, M>,
     ) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
-impl PendingBlockMonitor for () {
+impl<M: Middleware> PendingBlockMonitor<M> for () {
     fn process_pending_block<'a>(
         &'a self,
-        _block: &'a PendingBlock,
+        _block: &'a PendingBlock<M>,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         future::ok(()).boxed()
     }
@@ -333,9 +377,9 @@ impl PendingBlockMonitor for () {
 #[autoimpl(DerefMut using self.0)]
 pub struct MultiMonitor<M>(Vec<M>);
 
-impl<M> From<Vec<M>> for MultiMonitor<M> {
-    fn from(monitors: Vec<M>) -> Self {
-        Self(monitors)
+impl<M> FromIterator<M> for MultiMonitor<M> {
+    fn from_iter<T: IntoIterator<Item = M>>(monitors: T) -> Self {
+        Self(monitors.into_iter().collect())
     }
 }
 
@@ -345,10 +389,14 @@ impl<M> MultiMonitor<M> {
     }
 }
 
-impl<M: PendingBlockMonitor> PendingBlockMonitor for MultiMonitor<M> {
+impl<MW, M> PendingBlockMonitor<MW> for MultiMonitor<M>
+where
+    MW: Middleware,
+    M: PendingBlockMonitor<MW>,
+{
     fn process_pending_block<'a>(
         &'a self,
-        block: &'a PendingBlock,
+        block: &'a PendingBlock<'a, MW>,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         self.0
             .iter()
@@ -361,10 +409,14 @@ impl<M: PendingBlockMonitor> PendingBlockMonitor for MultiMonitor<M> {
 
 pub struct TxMonitor<M>(M);
 
-impl<M: PendingTxMonitor> PendingBlockMonitor for TxMonitor<M> {
+impl<MW, M> PendingBlockMonitor<MW> for TxMonitor<M>
+where
+    MW: Middleware,
+    M: PendingTxMonitor,
+{
     fn process_pending_block<'a>(
         &'a self,
-        block: &'a PendingBlock,
+        block: &'a PendingBlock<'a, MW>,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         block
             .transactions
@@ -397,35 +449,38 @@ impl<M: PendingTxMonitor> PendingTxMonitor for MultiMonitor<M> {
     }
 }
 
-pub trait ThinSandwichMonitor {
-    fn wrap_continious_pending_txs<'a>(
-        &'a self,
-        txs: &'a [TxWithLogs],
-    ) -> BoxFuture<'a, anyhow::Result<[MultiCallGroups; 2]>>;
-}
+// pub trait ThinSandwichMonitor {
+//     fn wrap_adjacent_pending_txs<'a>(
+//         &'a self,
+//         txs: &'a [TxWithLogs],
+//     ) -> BoxFuture<'a, anyhow::Result<Option<[MultiCallGroups; 2]>>>;
+// }
 
-pub struct ThinSandwichWrapper<M>(M);
+// pub struct ThinSandwichWrapper<M>(M);
 
-impl<M> PendingBlockMonitor for ThinSandwichWrapper<M>
-where
-    M: ThinSandwichMonitor + Send + Sync,
-{
-    fn process_pending_block<'a>(
-        &'a self,
-        block: &'a PendingBlock,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
-        block
-            .iter_adjacent_txs()
-            .map(|txs| async move {
-                let [before, after] = self.0.wrap_continious_pending_txs(&txs).await?;
-                txs.add_to_send_wrap(before, after).await;
-                Ok(())
-            })
-            .collect::<FuturesUnordered<_>>()
-            .try_collect()
-            .boxed()
-    }
-}
+// impl<MW, M> PendingBlockMonitor<MW> for ThinSandwichWrapper<M>
+// where
+//     M: ThinSandwichMonitor + Send + Sync,
+//     MW: Middleware,
+// {
+//     fn process_pending_block<'a>(
+//         &'a self,
+//         block: &'a PendingBlock<'a, MW>,
+//     ) -> BoxFuture<'a, anyhow::Result<()>> {
+//         block
+//             .iter_adjacent_txs()
+//             .map(|txs| async move {
+//                 let Some([before, after]) = self.0.wrap_adjacent_pending_txs(&txs).await? else {
+//                     return Ok(())
+//                 };
+//                 txs.add_to_send_wrap(before, after).await;
+//                 Ok(())
+//             })
+//             .collect::<FuturesUnordered<_>>()
+//             .try_collect()
+//             .boxed()
+//     }
+// }
 
 // TODO: contract call monitor, function call monitor
 

@@ -31,7 +31,7 @@ pub trait MultiCall: Sized {
     type Reverted;
 
     fn encode_calls(self) -> (Calls<RawCall>, Self::Meta);
-    fn encode_calls_raw(self) -> (raw::MulticallCall, Self::Meta) {
+    fn encode_raw_calls(self) -> (raw::MulticallCall, Self::Meta) {
         let (calls, meta) = self.encode_calls();
         let (commands, inputs): (Vec<u8>, Vec<Bytes>) = calls
             .into_iter()
@@ -48,7 +48,7 @@ pub trait MultiCall: Sized {
     }
 
     fn decode_calls(calls: Calls<RawCall>) -> Result<Self, AbiError>;
-    fn decode_calls_raw(r: raw::MulticallCall) -> Result<Self, AbiError> {
+    fn decode_raw_calls(r: raw::MulticallCall) -> Result<Self, AbiError> {
         let raw::MulticallCall { commands, inputs } = r;
         if commands.len() != inputs.len() {
             return Err(LengthMismatch.into());
@@ -62,8 +62,8 @@ pub trait MultiCall: Sized {
         )
     }
 
-    fn decode_ok(results: Vec<RawResult>, meta: Self::Meta) -> Result<Self::Ok, AbiError>;
-    fn decode_ok_raw(r: raw::MulticallReturn, meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(results: Vec<RawResult>, meta: &Self::Meta) -> Result<Self::Ok, AbiError>;
+    fn decode_ok_raw(r: raw::MulticallReturn, meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         let raw::MulticallReturn { successes, outputs } = r;
         let successes: &BitSlice<_, Lsb0> =
             TryInto::try_into(successes.deref()).map_err(|_| IndexTooBig)?;
@@ -81,11 +81,11 @@ pub trait MultiCall: Sized {
 
     fn decode_reverted(
         r: RevertedAt<bytes::Bytes>,
-        meta: Self::Meta,
+        meta: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError>;
     fn decode_reverted_raw_errors(
         e: raw::MultiCallErrors,
-        meta: Self::Meta,
+        meta: &Self::Meta,
     ) -> Result<MultiCallErrors<Self::Reverted>, AbiError> {
         Ok(match e {
             raw::MultiCallErrors::Reverted(r) => {
@@ -106,7 +106,7 @@ impl<C: MultiCall> Call for C {
     type Reverted = MultiCallErrors<C::Reverted>;
 
     fn encode(self) -> (Cmd, bytes::Bytes, Self::Meta) {
-        let (r, meta) = Self::encode_calls_raw(self);
+        let (r, meta) = Self::encode_raw_calls(self);
         (Cmd::Group, r.encode().into(), meta)
     }
 
@@ -114,14 +114,17 @@ impl<C: MultiCall> Call for C {
         if cmd != Cmd::Group {
             return Err(WrongCommand.into());
         }
-        Self::decode_calls_raw(raw::MulticallCall::decode(input)?)
+        Self::decode_raw_calls(raw::MulticallCall::decode(input)?)
     }
 
-    fn decode_ok(output: bytes::Bytes, meta: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(output: bytes::Bytes, meta: &Self::Meta) -> Result<Self::Ok, AbiError> {
         C::decode_ok_raw(AbiDecode::decode(output)?, meta)
     }
 
-    fn decode_reverted(output: bytes::Bytes, meta: Self::Meta) -> Result<Self::Reverted, AbiError> {
+    fn decode_reverted(
+        output: bytes::Bytes,
+        meta: &Self::Meta,
+    ) -> Result<Self::Reverted, AbiError> {
         C::decode_reverted_raw_errors(AbiDecode::decode(output)?, meta)
     }
 }
@@ -155,7 +158,7 @@ impl<C: Call> MultiCall for Calls<C> {
         calls.into_iter().map(TryCall::decode_raw).try_collect()
     }
 
-    fn decode_ok(results: Vec<RawResult>, metas: Self::Meta) -> Result<Self::Ok, AbiError> {
+    fn decode_ok(results: Vec<RawResult>, metas: &Self::Meta) -> Result<Self::Ok, AbiError> {
         if results.len() != metas.len() {
             return Err(LengthMismatch.into());
         }
@@ -173,14 +176,13 @@ impl<C: Call> MultiCall for Calls<C> {
 
     fn decode_reverted(
         r: RevertedAt<bytes::Bytes>,
-        mut metas: Self::Meta,
+        metas: &Self::Meta,
     ) -> Result<Self::Reverted, AbiError> {
         let RevertedAt(index, data) = r;
-        if index >= metas.len() {
-            return Err(IndexTooBig.into());
-        }
-        let meta = metas.swap_remove(index);
-        Ok(RevertedAt(index, C::decode_reverted(data, meta)?))
+        Ok(RevertedAt(
+            index,
+            C::decode_reverted(data, metas.get(index).ok_or(IndexTooBig)?)?,
+        ))
     }
 }
 
@@ -214,23 +216,23 @@ macro_rules! tuple_multicall {
                 Ok(($(TryCall::<$t>::decode_raw(calls.next().unwrap())?,)+))
             }
 
-            fn decode_ok(results: Vec<RawResult>, metas: Self::Meta) -> Result<Self::Ok, AbiError> {
+            fn decode_ok(results: Vec<RawResult>, metas: &Self::Meta) -> Result<Self::Ok, AbiError> {
                 let mut results = <[RawResult; $N]>::try_from(results)
                     .map_err(|_| LengthMismatch)?
                     .into_iter();
                 Ok(($(
                     match results.next().unwrap() {
-                        Ok(output) => Ok($t::decode_ok(output, metas.$n)?),
-                        Err(data) => Err($t::decode_reverted(data, metas.$n)?),
+                        Ok(output) => Ok($t::decode_ok(output, &metas.$n)?),
+                        Err(data) => Err($t::decode_reverted(data, &metas.$n)?),
                     },
                 )+))
             }
 
-            fn decode_reverted(r: RevertedAt<bytes::Bytes>, metas: Self::Meta) -> Result<Self::Reverted, AbiError> {
+            fn decode_reverted(r: RevertedAt<bytes::Bytes>, metas: &Self::Meta) -> Result<Self::Reverted, AbiError> {
                 let RevertedAt(index, data) = r;
                 Ok(match index {
                     $(
-                        $n => <Self::Reverted>::$t(<$t as Call>::decode_reverted(data, metas.$n)?),
+                        $n => <Self::Reverted>::$t(<$t as Call>::decode_reverted(data, &metas.$n)?),
                     )+
                     _ => return Err(IndexTooBig.into()),
                 })
