@@ -12,13 +12,14 @@
 mod transactions;
 
 pub(crate) mod abort;
+pub(crate) mod block;
 // pub(crate) mod accounts;
 mod app;
 // pub(crate) mod cached;
 pub(crate) mod engine;
 // pub(crate) mod latency;
 pub mod monitors;
-pub(crate) mod timed;
 pub mod providers;
+pub(crate) mod timed;
 
 pub use app::{App, Config, MonitorsConfig, NetworkConfig};

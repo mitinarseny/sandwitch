@@ -42,6 +42,11 @@ where
         self
     }
 
+    pub fn priority_fee_per_gas(mut self, priority_fee: impl Into<U256>) -> Self {
+        self.inner = self.inner.priority_fee_per_gas(priority_fee);
+        self
+    }
+
     pub fn value(mut self, value: impl Into<U256>) -> Self {
         self.inner = self.inner.value(value);
         self
@@ -74,14 +79,6 @@ where
         err: ContractError<M, <raw::MulticallCall as EthTypedCall>::Reverted>,
     ) -> MultiCallContractError<M, C::Reverted> {
         err.try_decode_revert_with(|r| C::decode_reverted_raw_errors(r, &self.meta))
-    }
-
-    pub fn priority_fee(mut self, priority_fee: impl Into<U256>) -> Self {
-        match &mut self.inner.0.tx {
-            TypedTransaction::Legacy(_) => todo!(),
-            TypedTransaction::Eip2930(_) => todo!(),
-            TypedTransaction::Eip1559(_) => todo!(),
-        }
     }
 }
 

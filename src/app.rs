@@ -1,9 +1,9 @@
-use std::{str::FromStr, sync::Arc, time::Duration, vec::Vec};
+use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration, vec::Vec};
 
 use anyhow::anyhow;
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    providers::{Ipc, Middleware, Provider, PubsubClient, Ws},
+    providers::{Ipc, JsonRpcClient, Middleware, Provider, PubsubClient, Ws},
     signers::LocalWallet,
     types::Address,
     utils::secret_key_to_address,
@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    engine::{Engine, EngineConfig, ProviderStack},
+    engine::{Engine, EngineConfig, MiddlewareStack},
     monitors::{MultiMonitor, PendingBlockMonitor},
     providers::{LatencyProvider, TimeoutProvider},
 };
@@ -47,44 +47,55 @@ pub struct MonitorsConfig {
     // pub pancake_swap: Option<PancakeSwapConfig>,
 }
 
-pub struct App<P, M> {
-    engine: Engine<P, M>,
+pub struct App<P, M>
+where
+    P: JsonRpcClient,
+    P::Error: 'static,
+    M: PendingBlockMonitor<MiddlewareStack<TimeoutProvider<P>>>,
+{
+    engine: Engine<TimeoutProvider<P>, M>,
 }
 
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 
-impl<P> App<P, Box<dyn PendingBlockMonitor<ProviderStack<P>>>>
+impl<P> App<P, Box<dyn PendingBlockMonitor<MiddlewareStack<TimeoutProvider<P>>>>>
 where
     P: PubsubClient + 'static,
 {
-    pub async fn new(client: P, signing_key: SigningKey, cfg: Config) -> anyhow::Result<Self> {
+    pub async fn new(
+        client: P,
+        signing_key: impl Into<Option<SigningKey>>,
+        cfg: Config,
+    ) -> anyhow::Result<Self> {
         let client = Arc::new(Provider::new(LatencyProvider::new(TimeoutProvider::new(
             client,
             CLIENT_TIMEOUT,
         ))));
         info!("initializing...");
-        let (network_id, chain_id) = try_join!(
+        let (network_id, chain_id, client_version) = try_join!(
             client.get_net_version(),
-            client.get_chainid().map_ok(|v| v.as_u64())
+            client.get_chainid().map_ok(|v| v.as_u64()),
+            client.client_version(),
         )?;
-        info!(network_id, %chain_id, "node info");
+        info!(network_id, chain_id, client_version, "node info");
         register_counter!(
             "sandwitch_info",
             "network_id" => network_id,
-            "chain_id" => format!("{chain_id}"),
+            "chain_id" => chain_id.to_string(),
+            "version" => client_version,
         )
         .absolute(1);
 
-        let monitor = App::make_monitor(client.clone(), cfg.monitors).await?;
+        let monitor = Self::make_monitor(client.clone(), cfg.monitors).await?;
 
         Ok(Self {
             engine: Engine::new(
                 client,
                 cfg.engine,
-                {
+                signing_key.into().map(|signing_key| {
                     let address = secret_key_to_address(&signing_key);
                     LocalWallet::new_with_signer(signing_key, address, chain_id)
-                },
+                }),
                 monitor,
             )
             .await?,
@@ -92,10 +103,9 @@ where
     }
 
     async fn make_monitor(
-        client: impl Into<Arc<Provider<P>>>,
-        // accounts: impl Into<Arc<Accounts<P, S>>>,
+        client: impl Into<Arc<MiddlewareStack<TimeoutProvider<P>>>>,
         config: MonitorsConfig,
-    ) -> anyhow::Result<Box<dyn PendingBlockMonitor<Provider<P>>>> {
+    ) -> anyhow::Result<Box<dyn PendingBlockMonitor<MiddlewareStack<TimeoutProvider<P>>>>> {
         let monitors = Self::make_monitors(client, config).await?;
         Ok(match monitors.len() {
             0 => {
@@ -103,16 +113,17 @@ where
                 Box::new(())
             }
             1 => monitors.into_iter().next().unwrap(),
-            _ => Box::new(MultiMonitor::from_iter(monitors)),
+            _ => Box::new(monitors),
         })
     }
 
     #[allow(unused_variables)]
     async fn make_monitors(
-        client: impl Into<Arc<Provider<P>>>,
-        // accounts: impl Into<Arc<Accounts<P, S>>>,
+        client: impl Into<Arc<MiddlewareStack<TimeoutProvider<P>>>>,
         config: MonitorsConfig,
-    ) -> anyhow::Result<Vec<Box<dyn PendingBlockMonitor<Provider<P>>>>> {
+    ) -> anyhow::Result<
+        MultiMonitor<Box<dyn PendingBlockMonitor<MiddlewareStack<TimeoutProvider<P>>>>>,
+    > {
         let client = client.into();
         let monitors = FuturesUnordered::<LocalBoxFuture<_>>::new();
 
@@ -132,7 +143,7 @@ where
 impl<P, M> App<P, M>
 where
     P: PubsubClient + 'static,
-    M: PendingBlockMonitor<ProviderStack<P>>,
+    M: PendingBlockMonitor<MiddlewareStack<TimeoutProvider<P>>>,
 {
     pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
         self.engine.run(cancel).await

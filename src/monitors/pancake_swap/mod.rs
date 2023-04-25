@@ -2,41 +2,32 @@ use std::{collections::HashMap, sync::Arc};
 
 use ethers::{
     abi::AbiDecode,
-    contract::EthCall,
-    prelude::{AbiError, EthCall},
-    providers::{JsonRpcClient, Middleware, Provider},
-    signers::Signer,
-    types::{Address, Block, BlockId, BlockNumber, Transaction, H256, U256},
+    providers::Middleware,
+    types::{Address, U256},
 };
-use futures::{
-    future::{self, BoxFuture, FutureExt},
-    stream::{FuturesUnordered, TryStreamExt},
-};
-use metrics::{describe_counter, register_counter, Counter, Unit};
-use serde::Deserialize;
-use tracing::{info, warn};
+use futures::future::{self, BoxFuture, FutureExt};
 
-use contracts::{
-    pancake_swap::i_pancake_router_02::{
-        IPancakeRouter02Calls, SwapETHForExactTokensCall, SwapExactETHForTokensCall,
-        SwapExactTokensForETHCall, SwapExactTokensForTokensCall, SwapTokensForExactETHCall,
-        SwapTokensForExactTokensCall,
-    },
-    pancake_toaster::{
-        i_pancake_pair::IPancakePairCalls,
-        pancake_toaster::{FrontRunSwapExtCall, PancakeToaster, PancakeToasterCalls},
-    },
-};
+// use contracts::{
+//     pancake_swap::i_pancake_router_02::{
+//         IPancakeRouter02Calls, SwapETHForExactTokensCall, SwapExactETHForTokensCall,
+//         SwapExactTokensForETHCall, SwapExactTokensForTokensCall, SwapTokensForExactETHCall,
+//         SwapTokensForExactTokensCall,
+//     },
+//     pancake_toaster::{
+//         i_pancake_pair::IPancakePairCalls,
+//         pancake_toaster::{FrontRunSwapExtCall, PancakeToaster, PancakeToasterCalls},
+//     },
+// };
 
-use crate::{
-    accounts::Accounts,
-    cached::Cached,
-    monitors::{
-        inputs::{FromWithTx, IntoWithTx},
-        ContractCallMonitor, ContractCallMonitorExt, TxMonitor,
-    },
-    timeout::TimeoutProvider,
-};
+// use crate::{
+//     accounts::Accounts,
+//     cached::Cached,
+//     monitors::{
+//         inputs::{FromWithTx, IntoWithTx},
+//         ContractCallMonitor, ContractCallMonitorExt, TxMonitor,
+//     },
+//     timeout::TimeoutProvider,
+// };
 
 // mod pair;
 // mod router;
@@ -44,102 +35,214 @@ use crate::{
 //
 // use self::{pair::Pair, router::Router};
 
-use super::PendingTxsMonitor;
+use contracts::{
+    erc20::ApproveCall,
+    multicall::{ContractCall, TryCall},
+    pancake_swap::PancakeRouterCalls,
+    pancake_toaster::{FrontRunSwapCall, PancakeToaster},
+};
 
-pub(crate) struct PancakeSwap<M: Middleware> {
-    client: M,
+use crate::transactions::Transaction;
+
+use super::{PendingBlock, PendingBlockMonitor};
+
+pub(crate) struct PancakeSwapMonitor<M: Middleware> {
     router: Address,
     toaster: PancakeToaster<M>,
     base_token: Address,
 }
 
-struct DecodedTransaction<'a, C: EthCall> {
-    tx: &'a Transaction,
-    inputs: C,
+// TODO: different middlewares
+impl<M: Middleware> PendingBlockMonitor<M> for PancakeSwapMonitor<M> {
+    fn process_pending_block<'a>(
+        &'a self,
+        block: &'a PendingBlock<'a, M>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        for adjacent_txs in block.iter_adjacent_txs() {
+            for tx in &adjacent_txs {
+                if !tx.to.is_some_and(|to| to == self.router) {
+                    continue;
+                }
+                let Some(swap) = Swap::from_tx(&tx) else {
+                    continue;
+                };
+                // TODO: check that base_token is included only once
+                let Some(index) = swap.path.iter().position(|token| *token == self.base_token) else {
+                    continue;
+                };
+                // TODO: check if all tokens are in whitelist
+                let token = Address::zero(); // TODO
+                let front_run = block.first_in_block_candidate((
+                    TryCall::must(ContractCall::new(
+                        token,
+                        ApproveCall {
+                            spender: self.toaster.address(),
+                            amount: U256::MAX, // TODO: cache already approved tokens
+                        },
+                    )),
+                    TryCall::must(ContractCall::new(
+                        self.toaster.address(),
+                        FrontRunSwapCall {
+                            from: block.account(),
+                            amount_in,
+                            amount_out,
+                            eth_in,
+                            path,
+                            index_in: index.into(),
+                        },
+                    )),
+                    // TODO: add in backwards direction
+                ));
+                front_run.call();
+                front_run.estimate_fee();
+
+                // TODO: prifit calculations
+
+                front_run.add_to_send();
+                // let Ok()
+            }
+        }
+        future::ok(()).boxed()
+    }
 }
 
-impl<'a, C: EthCall> TryFrom<&'a Transaction> for DecodedTransaction<'a, C> {
-    type Error = AbiError;
+struct Swap {
+    amount_in: U256,
+    amount_out: U256,
+    eth_in: bool,
+    path: Vec<Address>,
+}
 
-    fn try_from(tx: &'a Transaction) -> Result<Self, Self::Error> {
-        Ok(Self {
-            inputs: C::decode(&tx.input)?,
-            tx,
+impl Swap {
+    fn from_tx(tx: &Transaction) -> Option<Self> {
+        let inputs = PancakeRouterCalls::decode(&tx.input).ok()?;
+        Some(match inputs {
+            PancakeRouterCalls::SwapExactETHForTokens(s) => Self {
+                amount_in: tx.value,
+                amount_out: s.amount_out_min,
+                eth_in: true,
+                path: s.path,
+            },
+            PancakeRouterCalls::SwapETHForExactTokens(s) => Self {
+                amount_in: tx.value,
+                amount_out: s.amount_out,
+                eth_in: true,
+                path: s.path,
+            },
+            PancakeRouterCalls::SwapExactTokensForTokens(s) => Self {
+                amount_in: s.amount_in,
+                amount_out: s.amount_out_min,
+                eth_in: false,
+                path: s.path,
+            },
+            PancakeRouterCalls::SwapTokensForExactTokens(s) => Self {
+                amount_in: s.amount_in_max,
+                amount_out: s.amount_out,
+                eth_in: false,
+                path: s.path,
+            },
+            PancakeRouterCalls::SwapExactTokensForETH(s) => Self {
+                amount_in: s.amount_in,
+                amount_out: s.amount_out_min,
+                eth_in: false,
+                path: s.path,
+            },
+            PancakeRouterCalls::SwapTokensForExactETH(s) => Self {
+                amount_in: s.amount_in_max,
+                amount_out: s.amount_out,
+                eth_in: false,
+                path: s.path,
+            },
+            _ => return None,
         })
     }
 }
 
+// struct DecodedTransaction<'a, C: EthCall> {
+//     tx: &'a Transaction,
+//     inputs: C,
+// }
 
+// impl<'a, C: EthCall> TryFrom<&'a Transaction> for DecodedTransaction<'a, C> {
+//     type Error = AbiError;
 
-impl<M: Middleware> PendingTxsMonitor for PancakeSwap<M> {
-    type Error = anyhow::Error;
+//     fn try_from(tx: &'a Transaction) -> Result<Self, Self::Error> {
+//         Ok(Self {
+//             inputs: C::decode(&tx.input)?,
+//             tx,
+//         })
+//     }
+// }
 
-    fn process_pending_tx<'a>(
-        &'a self,
-        txs: &'a Transaction,
-        parent_block_hash: H256,
-    ) -> BoxFuture<'a, Result<Vec<Transaction>, Self::Error>> {
-        txs.into_iter()
-            .filter(|tx| tx.to.map_or(false, |to| to == self.router))
-            .filter_map(|tx| DecodedTransaction::<IPancakeRouter02Calls>::try_from(tx).ok())
-            .filter_map(|tx| {
-                let (amount_in, amount_out, eth_in, path) = match tx.inputs {
-                    IPancakeRouter02Calls::SwapExactETHForTokens(s) => {
-                        (tx.tx.value, s.amount_out_min, true, s.path)
-                    }
-                    IPancakeRouter02Calls::SwapETHForExactTokens(s) => {
-                        (tx.tx.value, s.amount_out, true, s.path)
-                    }
-                    IPancakeRouter02Calls::SwapExactTokensForTokens(s) => {
-                        (s.amount_in, s.amount_out_min, false, s.path)
-                    }
-                    IPancakeRouter02Calls::SwapTokensForExactTokens(s) => {
-                        (s.amount_in_max, s.amount_out, false, s.path)
-                    }
-                    IPancakeRouter02Calls::SwapExactTokensForETH(s) => {
-                        (s.amount_in, s.amount_out_min, false, s.path)
-                    }
-                    IPancakeRouter02Calls::SwapTokensForExactETH(s) => {
-                        (s.amount_in_max, s.amount_out, false, s.path)
-                    }
-                    _ => return None,
-                };
-                // TODO: check that all (expect for last if not playable) tokens are in whitelist
-                // check that nobody else touches exploited pairs
-            })
-            .map(|(amount_in)| {
-                self.toaster
-                    .front_run_swap_ext(
-                        tx.from,
-                        amount_in,
-                        amount_out,
-                        eth_in,
-                        path,
-                        index_in,
-                        parent_block_hash,
-                    )
-                    .block(BlockNumber::Pending)
-                    .gas_price(gas_price)
-                    .call()
-            })
-            .collect::<FuturesUnordered<_>>()
-            .try_next()
-            .await
-    }
-}
+// impl<M: Middleware> PendingTxsMonitor for PancakeSwapMonitor<M> {
+//     type Error = anyhow::Error;
 
-// * filter by router addr
-// * decode inputs
-// * try decode params from inputs
-// * find base_token and ensure all in whitelist (except for last)
-// * check that nobody else previously exploited any pair in path (except for in other direction)
-// * front_run_swap_ext() on every inputs
-// * calculate profits using initial tx
-// * use first profitable or compare using now_or_never()
-// * send front_run_swap() and back_run_swap()
-impl<M: Middleware> PancakeSwap<M> {
-    fn process_tx() -> Option<()> {}
-}
+//     fn process_pending_tx<'a>(
+//         &'a self,
+//         txs: &'a Transaction,
+//         parent_block_hash: H256,
+//     ) -> BoxFuture<'a, Result<Vec<Transaction>, Self::Error>> {
+//         txs.into_iter()
+//             .filter(|tx| tx.to.map_or(false, |to| to == self.router))
+//             .filter_map(|tx| DecodedTransaction::<IPancakeRouter02Calls>::try_from(tx).ok())
+//             .filter_map(|tx| {
+//                 let (amount_in, amount_out, eth_in, path) = match tx.inputs {
+//                     IPancakeRouter02Calls::SwapExactETHForTokens(s) => {
+//                         (tx.tx.value, s.amount_out_min, true, s.path)
+//                     }
+//                     IPancakeRouter02Calls::SwapETHForExactTokens(s) => {
+//                         (tx.tx.value, s.amount_out, true, s.path)
+//                     }
+//                     IPancakeRouter02Calls::SwapExactTokensForTokens(s) => {
+//                         (s.amount_in, s.amount_out_min, false, s.path)
+//                     }
+//                     IPancakeRouter02Calls::SwapTokensForExactTokens(s) => {
+//                         (s.amount_in_max, s.amount_out, false, s.path)
+//                     }
+//                     IPancakeRouter02Calls::SwapExactTokensForETH(s) => {
+//                         (s.amount_in, s.amount_out_min, false, s.path)
+//                     }
+//                     IPancakeRouter02Calls::SwapTokensForExactETH(s) => {
+//                         (s.amount_in_max, s.amount_out, false, s.path)
+//                     }
+//                     _ => return None,
+//                 };
+//                 // TODO: check that all (expect for last if not playable) tokens are in whitelist
+//                 // check that nobody else touches exploited pairs
+//             })
+//             .map(|(amount_in)| {
+//                 self.toaster
+//                     .front_run_swap_ext(
+//                         tx.from,
+//                         amount_in,
+//                         amount_out,
+//                         eth_in,
+//                         path,
+//                         index_in,
+//                         parent_block_hash,
+//                     )
+//                     .block(BlockNumber::Pending)
+//                     .gas_price(gas_price)
+//                     .call()
+//             })
+//             .collect::<FuturesUnordered<_>>()
+//             .try_next()
+//             .await
+//     }
+// }
+
+// // * filter by router addr
+// // * decode inputs
+// // * try decode params from inputs
+// // * find base_token and ensure all in whitelist (except for last)
+// // * check that nobody else previously exploited any pair in path (except for in other direction)
+// // * front_run_swap_ext() on every inputs
+// // * calculate profits using initial tx
+// // * use first profitable or compare using now_or_never()
+// // * send front_run_swap() and back_run_swap()
+// impl<M: Middleware> PancakeSwapMonitor<M> {
+//     fn process_tx() -> Option<()> {}
+// }
 
 // #[derive(Deserialize, Debug)]
 // pub struct PancakeSwapConfig {

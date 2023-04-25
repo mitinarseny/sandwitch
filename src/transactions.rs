@@ -101,7 +101,12 @@ impl Fees {
 
 #[derive(ThisError, Debug)]
 #[error("invalid transaction")]
-pub struct InvalidTransaction;
+pub enum InvalidTransaction {
+    #[error("no fees given for EIP1559 transaction")]
+    NoEIP1559Fees,
+    #[error("no gas price given for legacy transaction")]
+    NoLegacyGasPrice,
+}
 
 impl TryFrom<ethers::types::Transaction> for Transaction {
     type Error = InvalidTransaction;
@@ -143,14 +148,14 @@ impl TryFrom<ethers::types::Transaction> for Transaction {
             fees: if transaction_type.is_some_and(|n| n == 2.into()) {
                 let (max_priority_fee_per_gas, max_fee_per_gas) = max_priority_fee_per_gas
                     .zip(max_fee_per_gas)
-                    .ok_or(InvalidTransaction)?;
+                    .ok_or(InvalidTransaction::NoEIP1559Fees)?;
                 Fees::EIP1559 {
                     max_priority_fee_per_gas,
                     max_fee_per_gas,
                 }
             } else {
                 Fees::Legacy {
-                    gas_price: gas_price.ok_or(InvalidTransaction)?,
+                    gas_price: gas_price.ok_or(InvalidTransaction::NoLegacyGasPrice)?,
                 }
             },
             v: v.as_u64(),

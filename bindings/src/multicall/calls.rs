@@ -102,7 +102,19 @@ pub struct ContractCall<C> {
 }
 
 impl<C: EthTypedCall> ContractCall<C> {
-    fn try_from_raw(call: ContractCall<bytes::Bytes>) -> Result<Self, AbiError> {
+    pub fn new(target: Address, call: C) -> Self {
+        Self::payable(target, 0, call)
+    }
+
+    pub fn payable(target: Address, value: impl Into<U256>, call: C) -> Self {
+        Self {
+            target,
+            value: value.into(),
+            call,
+        }
+    }
+
+    fn try_from_raw(call: RawContractCall) -> Result<Self, AbiError> {
         let ContractCall {
             target,
             value,
@@ -124,7 +136,7 @@ impl<C> Call for ContractCall<C>
 where
     C: EthTypedCall,
 {
-    type Meta = <ContractCall<bytes::Bytes> as Call>::Meta;
+    type Meta = <RawContractCall as Call>::Meta;
 
     type Ok = C::Ok;
     type Reverted = C::Reverted;
@@ -149,7 +161,7 @@ where
     }
 }
 
-impl<C: EthTypedCall> From<ContractCall<C>> for ContractCall<bytes::Bytes> {
+impl<C: EthTypedCall> From<ContractCall<C>> for RawContractCall {
     fn from(call: ContractCall<C>) -> Self {
         let ContractCall {
             target,
@@ -168,7 +180,7 @@ impl<C: EthTypedCall> From<ContractCall<C>> for ContractCall<bytes::Bytes> {
     }
 }
 
-impl From<ContractCall<()>> for ContractCall<bytes::Bytes> {
+impl From<ContractCall<()>> for RawContractCall {
     fn from(call: ContractCall<()>) -> Self {
         let ContractCall { target, value, .. } = call;
         Self {
@@ -271,9 +283,9 @@ impl Transfer {
 }
 
 impl Call for Transfer {
-    type Meta = <ContractCall<bytes::Bytes> as Call>::Meta;
+    type Meta = <RawContractCall as Call>::Meta;
     type Ok = ();
-    type Reverted = <ContractCall<bytes::Bytes> as Call>::Reverted;
+    type Reverted = <RawContractCall as Call>::Reverted;
 
     fn encode(self) -> (Cmd, bytes::Bytes, Self::Meta) {
         ContractCall::<bytes::Bytes>::from(self).encode()
@@ -470,9 +482,25 @@ impl Call for Create2 {
 }
 
 #[derive(Clone, Debug)]
-pub struct TryCall<C> {
+pub struct TryCall<C: Call> {
     pub allow_failure: bool,
     pub call: C,
+}
+
+impl<C: Call> TryCall<C> {
+    pub fn can_fail(call: C) -> Self {
+        Self {
+            allow_failure: true,
+            call,
+        }
+    }
+
+    pub fn must(call: C) -> Self {
+        Self {
+            allow_failure: false,
+            call,
+        }
+    }
 }
 
 impl<C: Call> TryCall<C> {

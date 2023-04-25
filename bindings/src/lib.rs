@@ -9,7 +9,9 @@ pub(crate) mod prelude {
         abi::{self, AbiDecode, AbiEncode, AbiError, InvalidOutputType, Tokenizable},
         contract::{ContractError as RawContractError, ContractRevert, EthCall, FunctionCall},
         providers::{Middleware, ProviderError},
-        types::{Address, BlockId, Bytes, TxHash, U256},
+        types::{
+            transaction::eip2718::TypedTransaction, Address, BlockId, Bytes, Selector, TxHash, U256,
+        },
     };
     use thiserror::Error as ThisError;
 
@@ -24,6 +26,26 @@ pub(crate) mod prelude {
         };
     }
     pub(crate) use tracked_abigen;
+
+    pub struct RawReverted(String);
+
+    impl AbiEncode for RawReverted {
+        fn encode(self) -> Vec<u8> {
+            self.0.encode()
+        }
+    }
+
+    impl AbiDecode for RawReverted {
+        fn decode(bytes: impl AsRef<[u8]>) -> Result<Self, AbiError> {
+            String::decode(bytes).map(Self)
+        }
+    }
+
+    impl ContractRevert for RawReverted {
+        fn valid_selector(_selector: Selector) -> bool {
+            true
+        }
+    }
 
     pub trait EthTypedCall: EthCall {
         type Ok: AbiEncode + AbiDecode + Tokenizable;
@@ -139,6 +161,18 @@ pub(crate) mod prelude {
             self
         }
 
+        pub fn priority_fee_per_gas(mut self, priority_fee_per_gas: impl Into<U256>) -> Self {
+            self.0.tx = match self.0.tx {
+                #[cfg(not(feature = "legacy"))]
+                TypedTransaction::Eip1559(tx) => tx.max_priority_fee_per_gas(priority_fee_per_gas),
+                #[cfg(feature = "legacy")]
+                TypedTransaction::Legacy(tx) => tx.gas_price(priority_fee_per_gas),
+                _ => unreachable!(),
+            }
+            .into();
+            self
+        }
+
         pub fn value(mut self, value: impl Into<U256>) -> Self {
             self.0 = self.0.value(value);
             self
@@ -163,6 +197,17 @@ pub(crate) mod prelude {
 }
 pub use prelude::EthTypedCall;
 
+// #[cfg(feature = "erc20")]
+pub mod erc20 {
+    use crate::prelude::*;
+    tracked_abigen!(ERC20, "contracts/out/ERC20.sol/ERC20.json");
+
+    impl EthTypedCall for ApproveCall {
+        type Ok = maybe::OkOrNone;
+        type Reverted = RawReverted;
+    }
+}
+
 #[cfg(feature = "multicall")]
 pub mod multicall;
 
@@ -182,4 +227,9 @@ pub mod pancake_toaster {
         PancakeToaster,
         "contracts/out/PancakeToaster.sol/PancakeToaster.json"
     );
+
+    impl EthTypedCall for FrontRunSwapCall {
+        type Ok = FrontRunSwapReturn;
+        type Reverted = PancakeToasterErrors;
+    }
 }

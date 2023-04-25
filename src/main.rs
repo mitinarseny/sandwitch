@@ -4,19 +4,21 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context};
 use clap::{Parser, ValueHint};
 use ethers::core::k256::ecdsa::SigningKey;
+use impl_tools::autoimpl;
 use metrics::register_counter;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
+use serde::Deserialize;
 use tokio::{fs, main, net, signal::ctrl_c};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, metadata::LevelFilter};
 use tracing_subscriber::{prelude::*, Registry};
 use url::Url;
 
-use sandwitch::{App, Config};
+use sandwitch::{App, Config as AppConfig};
 
 #[derive(Parser)]
 #[command(version)]
-struct Args {
+struct CliArgs {
     #[arg(
         short, long,
         value_parser,
@@ -26,18 +28,9 @@ struct Args {
     )]
     config: PathBuf,
 
-    /// Path to encrypted JSON signing key
-    #[arg(
-        short, long,
-        value_parser,
-        value_hint = ValueHint::FilePath,
-        value_name = "FILE",
-    )]
-    keystore: PathBuf,
-
     /// Password to decrypt keystore
     #[arg(long, env = "SANDWITCH_KEYSTORE_PASSWORD")]
-    keystore_password: String,
+    keystore_password: Option<String>,
 
     #[arg(
         long,
@@ -65,9 +58,22 @@ struct Args {
     verbose: u8,
 }
 
+#[derive(Deserialize)]
+#[autoimpl(Deref using self.app)]
+pub struct Config {
+    #[serde(flatten)]
+    pub app: AppConfig,
+    pub keystore: Option<KeyStore>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct KeyStore {
+    pub path: PathBuf,
+}
+
 #[main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let args = CliArgs::parse();
 
     let config: Config = toml::from_str(
         fs::read_to_string(&args.config)
@@ -103,11 +109,15 @@ async fn main() -> anyhow::Result<()> {
 
     let app = App::new(
         client,
-        {
-            let secret = eth_keystore::decrypt_key(args.keystore, args.keystore_password)?;
-            SigningKey::from_bytes(secret.as_slice().into())?
-        },
-        config,
+        config
+            .keystore
+            .zip(args.keystore_password)
+            .map(|(keystore, keystore_password)| {
+                let secret = eth_keystore::decrypt_key(keystore.path, keystore_password)?;
+                anyhow::Ok(SigningKey::from_bytes(secret.as_slice().into())?)
+            })
+            .transpose()?,
+        config.app,
     )
     .await?;
 

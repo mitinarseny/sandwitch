@@ -37,7 +37,7 @@ impl<P> LatencyProvider<P> {
         // *latencies.push_back() = elapsed;
     }
 
-    pub async fn latency(&self) -> Duration {
+    pub fn latency(&self) -> Duration {
         // TODO
         Duration::from_millis(200)
     }

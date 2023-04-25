@@ -1,20 +1,24 @@
+[keystore]
+path = "./accounts/543a9bbe-1064-48d2-bf9b-8c142976b37f"
+
 [network]
-# `wss://` or `file://` (requires `ipc` feature)
-# node = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+# Possible protocols:
+#   * `wss://` (requires `wss` feature)
+#   * `file://` (requires `ipc` feature)
 node = "wss://eth.getblock.io/e8f67b62-6caf-4b0d-997d-3b73827496b4/mainnet/"
+# node = "wss://rpc.ankr.com/bsc/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+# node = "wss://rpc.ankr.com/bsc_testnet_chapel/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
+# node = "wss://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
+# node = "https://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
+# node = "wss://bsc-mainnet.nodereal.io/ws/v1/ea16a1827ea944ceb4464da4beb88cd1"
 
 [engine]
 block_interval_ms = 12_000
 tx_propagation_delay_ms = 200
 multicall = "0x0000000000000000000000000000000000000000"
 
-# wss = "wss://rpc.ankr.com/bsc_testnet_chapel/ws/9c78e61be543dba2efa3f23b86d812a830a520ca1e1eea252d76cc6fcf5b6e86"
-# wss = "wss://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
-# http = "https://muddy-white-wind.bsc.discover.quiknode.pro/15438f87c7ceaa9e3d485355ba9a15316b53cf92/"
-# url = "wss://bsc-mainnet.nodereal.io/ws/v1/ea16a1827ea944ceb4464da4beb88cd1"
-
 [monitors.pancake_swap]
-router = "0x10ed43c718714eb63d5aa57b78b54704e256024e"
+router = "0x10ed43c718714eb63d5aa57b78b54704e256024e" # bsc mainnet
 #router = "0x9ac64cc6e4415144c455bd8e4837fea55603e5c3" # test net
 bnb_limit = 100
 gas_price = 0.000000005

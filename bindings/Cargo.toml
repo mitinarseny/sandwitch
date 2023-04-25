@@ -13,6 +13,11 @@ thiserror.workspace = true
 
 [features]
 multicall = []
+
+erc20 = []
+
 pancake_swap = []
 pancake_toaster = []
 uniswap_v2_core = []
+
+legacy = ["ethers/legacy"]

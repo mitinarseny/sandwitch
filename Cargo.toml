@@ -31,7 +31,7 @@ ipc = ["ethers/ipc"]
 ws = ["ethers/ws"]
 pancake_swap = ["legacy", "contracts/pancake_toaster", "contracts/pancake_swap"]
 
-legacy = ["ethers/legacy"]
+legacy = ["contracts/legacy", "ethers/legacy"]
 
 [dependencies]
 anyhow = "1"
