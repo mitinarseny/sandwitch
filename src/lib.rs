@@ -6,7 +6,8 @@
     poll_ready,
     result_flattening,
     result_option_inspect,
-    slice_group_by
+    slice_group_by,
+    unwrap_infallible
 )]
 
 mod transactions;

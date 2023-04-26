@@ -1,9 +1,12 @@
 use core::{cmp::Reverse, iter::Map, mem, slice};
 use std::sync::Arc;
 
-use contracts::multicall::{
-    Call, Calls, MultiCall, MultiCallContract, MultiCallContractError, MultiFunctionCall, RawCall,
-    TryCall,
+use contracts::{
+    multicall::{
+        Call, Calls, DynTryCall, MultiCall, MultiCallContract, MultiCallErrors, MultiFunctionCall,
+        RawCall,
+    },
+    ContractError,
 };
 use ethers::{
     providers::Middleware,
@@ -141,7 +144,7 @@ impl<M> PendingBlockFactory<M> {
 }
 
 #[derive(Default, Debug)]
-#[autoimpl(Deref<Target = [TryCall<RawCall>]> using self.calls)]
+#[autoimpl(Deref<Target = [DynTryCall<RawCall>]> using self.calls)]
 pub struct MultiCallGroups {
     calls: Calls<RawCall>,
     extended: bool,
@@ -172,7 +175,7 @@ impl<C: Call> Extend<C> for MultiCallGroups {
         }
         self.calls.extend(calls.into_iter().map(|c| {
             let (call, _meta) = c.encode_raw();
-            TryCall {
+            DynTryCall {
                 allow_failure: true,
                 call,
             }
@@ -191,10 +194,10 @@ impl<C: Call> FromIterator<C> for MultiCallGroups {
 impl IntoIterator for MultiCallGroups {
     type Item = RawCall;
     type IntoIter =
-        Map<<Calls<RawCall> as IntoIterator>::IntoIter, fn(TryCall<RawCall>) -> RawCall>;
+        Map<<Calls<RawCall> as IntoIterator>::IntoIter, fn(DynTryCall<RawCall>) -> RawCall>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.calls.into_iter().map(TryCall::into_call)
+        self.calls.into_iter().map(DynTryCall::into_call)
     }
 }
 
@@ -312,13 +315,20 @@ where
     M: Middleware,
     C: MultiCall,
 {
-    pub async fn call(&self) -> Result<C::Ok, MultiCallContractError<M, C::Reverted>> {
+    pub async fn call(
+        &self,
+    ) -> Result<Result<C::Ok, MultiCallErrors<C::Reverted>>, ContractError<M>> {
         self.function_call.call().await
     }
 
-    pub async fn estimate_fee(&self) -> Result<U256, MultiCallContractError<M, C::Reverted>> {
-        let gas = self.function_call.estimate_gas().await?;
-        Ok(gas * (self.block.base_fee_per_gas() + self.call.priority_fee_per_gas))
+    pub async fn estimate_fee(
+        &self,
+    ) -> Result<Result<U256, MultiCallErrors<C::Reverted>>, ContractError<M>> {
+        Ok(self
+            .function_call
+            .estimate_gas()
+            .await?
+            .map(|gas| gas * (self.block.base_fee_per_gas() + self.call.priority_fee_per_gas)))
     }
 
     pub async fn add_to_send(self) {

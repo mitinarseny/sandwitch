@@ -1,11 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
-
 use ethers::{
     abi::AbiDecode,
     providers::Middleware,
     types::{Address, U256},
 };
-use futures::future::{self, BoxFuture, FutureExt};
+use futures::{future::{self, BoxFuture, FutureExt}, try_join};
 
 // use contracts::{
 //     pancake_swap::i_pancake_router_02::{
@@ -37,9 +35,9 @@ use futures::future::{self, BoxFuture, FutureExt};
 
 use contracts::{
     erc20::ApproveCall,
-    multicall::{ContractCall, TryCall},
+    multicall::{ContractCall, DynTryCall, Call},
     pancake_swap::PancakeRouterCalls,
-    pancake_toaster::{FrontRunSwapCall, PancakeToaster},
+    pancake_toaster::{BackRunSwapAllCall, FrontRunSwapExtCall, FrontRunSwapExtReturn, PancakeToaster},
 };
 
 use crate::transactions::Transaction;
@@ -53,57 +51,127 @@ pub(crate) struct PancakeSwapMonitor<M: Middleware> {
 }
 
 // TODO: different middlewares
-impl<M: Middleware> PendingBlockMonitor<M> for PancakeSwapMonitor<M> {
+impl<M: Middleware + 'static> PendingBlockMonitor<M> for PancakeSwapMonitor<M> {
     fn process_pending_block<'a>(
         &'a self,
         block: &'a PendingBlock<'a, M>,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
-        for adjacent_txs in block.iter_adjacent_txs() {
-            for tx in &adjacent_txs {
-                if !tx.to.is_some_and(|to| to == self.router) {
-                    continue;
+        async move {
+            for adjacent_txs in block.iter_adjacent_txs() {
+                for tx in &adjacent_txs {
+                    if !tx.to.is_some_and(|to| to == self.router) {
+                        continue;
+                    }
+                    // TODO: check all logs and extract deltas
+                    let Some(swap) = Swap::from_tx(&tx) else {
+                        continue;
+                    };
+                    // TODO: check that base_token is included only once
+                    let Some(index_in) = swap.path.iter().position(|token| *token == self.base_token) else {
+                        continue;
+                    };
+                    if index_in == swap.path.len() - 1 {
+                        // we need base token to be not the last one
+                        continue;
+                    }
+                    // TODO: check if all tokens are in whitelist?
+
+                    let (token_in, token_out) = (swap.path[index_in], swap.path[index_in + 1]); // TODO
+
+                    let front_run = block.first_in_block_candidate((
+                        ContractCall::new(
+                            token_in,
+                            ApproveCall {
+                                spender: self.toaster.address(),
+                                amount: U256::MAX, // TODO: cache already approved tokens
+                            },
+                        ).must(),
+                        ContractCall::new(
+                            self.toaster.address(),
+                            FrontRunSwapExtCall {
+                                from: block.account(),
+                                amount_in: swap.amount_in,
+                                amount_out: swap.amount_out,
+                                eth_in: swap.eth_in,
+                                path: swap.path,
+                                index_in: index_in.into(),
+                            },
+                        ).must(),
+                        // TODO: add in backwards direction
+                    ));
+                    let back_run = adjacent_txs.back_run_candidate((
+                        ContractCall::new(
+                            token_out,
+                            ApproveCall {
+                                spender: self.toaster.address(),
+                                amount: U256::MAX, // TODO
+                            },
+                        ).must(),
+                        ContractCall::new(
+                            self.toaster.address(),
+                            BackRunSwapAllCall {
+                                token_in,
+                                token_out,
+                            },
+                        ).must(),
+                    ));
+
+                    let (
+                        Ok((_approved, Ok(FrontRunSwapExtReturn {
+                            his_amount_in,
+                            his_amount_out,
+                            our_amount_in: front_run_amount_in,
+                            our_amount_out: front_run_amount_out,
+                            new_reserve_in: reserve_in_after_front_run,
+                            new_reserve_out: reserve_out_after_front_run,
+                        }))),
+                        Ok(front_run_cost),
+                        Ok(back_run_cost),
+                    ) = try_join!(
+                        front_run.call(),
+                        front_run.estimate_fee(),
+                        back_run.estimate_fee(),
+                    )? else {
+                        // someone reverted
+                        continue;
+                    };
+
+
+                    
+                    // TODO: prifit calculations
+
+                    // front_run.add_to_send();
+
+                    let reserve_in_after_patty = reserve_in_after_front_run + his_amount_in;
+                    let reserve_out_after_patty = reserve_out_after_front_run - his_amount_out;
+
+                    let back_run_amount_out = get_amount_out(front_run_amount_out, reserve_in_after_patty, reserve_out_after_patty);
+
+                    // let delta = back_run_amount_out - front_run_amount_in;
+                    // let cost = {
+                    //     let (front_run_cost, back_run_cost) = try_join!(
+                    //         front_run.estimate_fee(),
+                    //         back_run.estimate_fee(),
+                    //     )?;
+                    //     front_run_cost + back_run_cost
+                    // };
+                    // if delta > cost {
+                    //     block.add_to_send([front_run.into(), back_run.into()]).await;
+                    // }
+                    // let Ok()
                 }
-                let Some(swap) = Swap::from_tx(&tx) else {
-                    continue;
-                };
-                // TODO: check that base_token is included only once
-                let Some(index) = swap.path.iter().position(|token| *token == self.base_token) else {
-                    continue;
-                };
-                // TODO: check if all tokens are in whitelist
-                let token = Address::zero(); // TODO
-                let front_run = block.first_in_block_candidate((
-                    TryCall::must(ContractCall::new(
-                        token,
-                        ApproveCall {
-                            spender: self.toaster.address(),
-                            amount: U256::MAX, // TODO: cache already approved tokens
-                        },
-                    )),
-                    TryCall::must(ContractCall::new(
-                        self.toaster.address(),
-                        FrontRunSwapCall {
-                            from: block.account(),
-                            amount_in,
-                            amount_out,
-                            eth_in,
-                            path,
-                            index_in: index.into(),
-                        },
-                    )),
-                    // TODO: add in backwards direction
-                ));
-                front_run.call();
-                front_run.estimate_fee();
 
-                // TODO: prifit calculations
-
-                front_run.add_to_send();
-                // let Ok()
             }
+            Ok(())
         }
-        future::ok(()).boxed()
+        .boxed()
     }
+}
+
+const BIP: u64 = 1_0000;
+
+fn get_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256) -> U256 {
+    (reserve_out * amount_in) / (reserve_in * BIP + amount_in)
 }
 
 struct Swap {

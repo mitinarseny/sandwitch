@@ -50,3 +50,13 @@ impl From<IndexTooBig> for AbiError {
         Self::DecodingError(abi::Error::Other(e.to_string().into()))
     }
 }
+
+#[derive(ThisError, Debug)]
+#[error("call must not fail")]
+pub struct MustNotFail;
+
+impl From<MustNotFail> for AbiError {
+    fn from(e: MustNotFail) -> Self {
+        Self::DecodingError(abi::Error::Other(e.to_string().into()))
+    }
+}

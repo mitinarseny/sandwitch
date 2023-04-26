@@ -4,9 +4,10 @@ use core::{
 };
 
 use ethers::{
+    abi::AbiError,
     contract::{ContractInstance, EthCall},
     providers::Middleware,
-    types::{transaction::eip2718::TypedTransaction, Address, BlockId, TxHash, U256},
+    types::{Address, BlockId, TxHash, U256},
 };
 use impl_tools::autoimpl;
 
@@ -52,22 +53,22 @@ where
         self
     }
 
-    pub async fn call(&self) -> Result<C::Ok, MultiCallContractError<M, C::Reverted>> {
-        C::decode_ok_raw(
-            self.inner
-                .call()
-                .await
-                .map_err(|e| self.decode_reverted(e))?,
-            &self.meta,
-        )
-        .map_err(Into::into)
+    pub async fn call(
+        &self,
+    ) -> Result<Result<C::Ok, MultiCallErrors<C::Reverted>>, ContractError<M>> {
+        Ok(match self.inner.call().await? {
+            Ok(output) => Ok(C::decode_ok_raw(output, &self.meta)?),
+            Err(reverted) => Err(self.decode_reverted(reverted)?),
+        })
     }
 
-    pub async fn estimate_gas(&self) -> Result<U256, MultiCallContractError<M, C::Reverted>> {
-        self.inner
-            .estimate_gas()
-            .await
-            .map_err(|e| self.decode_reverted(e))
+    pub async fn estimate_gas(
+        &self,
+    ) -> Result<Result<U256, MultiCallErrors<C::Reverted>>, ContractError<M>> {
+        Ok(match self.inner.estimate_gas().await? {
+            Ok(gas) => Ok(gas),
+            Err(reverted) => Err(self.decode_reverted(reverted)?),
+        })
     }
 
     pub async fn send(&self) -> Result<TxHash, M::Error> {
@@ -76,9 +77,9 @@ where
 
     fn decode_reverted(
         &self,
-        err: ContractError<M, <raw::MulticallCall as EthTypedCall>::Reverted>,
-    ) -> MultiCallContractError<M, C::Reverted> {
-        err.try_decode_revert_with(|r| C::decode_reverted_raw_errors(r, &self.meta))
+        err: <raw::MulticallCall as EthTypedCall>::Reverted,
+    ) -> Result<MultiCallErrors<C::Reverted>, AbiError> {
+        C::decode_reverted_raw_errors(err, &self.meta)
     }
 }
 
@@ -138,5 +139,3 @@ where
         self.0.fmt(f)
     }
 }
-
-pub type MultiCallContractError<M, R> = ContractError<M, MultiCallErrors<R>>;

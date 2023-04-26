@@ -31,11 +31,22 @@ contract PancakeToaster is Owned {
         bool ETHIn,
         ERC20[] calldata path,
         uint256 indexIn
-    ) external returns (uint256 ourAmountIn, uint256 ourAmountOut, uint256 newReserveIn, uint256 newReserveOut) {
-        (ourAmountIn, ourAmountOut) = frontRunSwap(from, amountIn, amountOut, ETHIn, path, indexIn);
+    )
+        external
+        returns (
+            uint256 hisAmountIn,
+            uint256 hisAmountOut,
+            uint256 ourAmountIn,
+            uint256 ourAmountOut,
+            uint256 newReserveIn,
+            uint256 newReserveOut
+        )
+    {
+        (hisAmountIn, hisAmountOut, ourAmountIn, ourAmountOut) =
+            frontRunSwap(from, amountIn, amountOut, ETHIn, path, indexIn);
 
         (newReserveIn, newReserveOut,,) = factory.getPairReserves(path[indexIn], path[indexIn + 1]);
-        return (ourAmountIn, ourAmountOut, newReserveIn, newReserveOut);
+        // return (amountIn, amountOut, ourAmountIn, ourAmountOut, newReserveIn, newReserveOut);
     }
 
     function frontRunSwap(
@@ -45,7 +56,7 @@ contract PancakeToaster is Owned {
         bool ETHIn,
         ERC20[] calldata path,
         uint256 indexIn
-    ) public returns (uint256 ourAmountIn, uint256 ourAmountOut) {
+    ) public returns (uint256 hisAmountIn, uint256 hisAmountOut, uint256 ourAmountIn, uint256 ourAmountOut) {
         if (indexIn + 1 >= path.length) {
             revert PancakeToasterLib.InvalidPath();
         }
@@ -55,14 +66,16 @@ contract PancakeToaster is Owned {
             revert InsufficientBalance(from);
         }
 
+        // TODO: swap into path[indexIn] from base token if we don't have enough balance on this token
+
         if (indexIn > 0) {
-            amountIn = factory.getAmountOut(amountIn, path[:indexIn + 1]);
+            hisAmountIn = factory.getAmountOut(amountIn, path[:indexIn + 1]);
         }
         if (indexIn + 2 < path.length) {
-            amountOut = factory.getAmountIn(amountOut, path[indexIn + 1:]);
+            hisAmountOut = factory.getAmountIn(amountOut, path[indexIn + 1:]);
         }
-
-        return frontRunSingleSwap(amountIn, amountOut, path[indexIn], path[indexIn + 1]);
+        (ourAmountIn, ourAmountOut) = frontRunSingleSwap(hisAmountIn, hisAmountOut, path[indexIn], path[indexIn + 1]);
+        // return (amountIn, amountOut, ourAmountIn, ourAmountOut);
     }
 
     function frontRunSingleSwap(uint256 amountIn, uint256 amountOut, ERC20 tokenIn, ERC20 tokenOut)
@@ -90,7 +103,7 @@ contract PancakeToaster is Owned {
         {
             (uint256 amount0Out, uint256 amount1Out) =
                 inverted ? (ourAmountOut, uint256(0)) : (uint256(0), ourAmountOut);
-            pair.swap(amount0Out, amount1Out, address(this), new bytes(0));
+            pair.swap(amount0Out, amount1Out, msg.sender, new bytes(0));
         }
 
         // TODO: check that there is cycles or reuse of exploited pair
@@ -98,9 +111,9 @@ contract PancakeToaster is Owned {
     }
 
     function backRunSwapAll(ERC20 tokenIn, ERC20 tokenOut) external onlyOwner returns (uint256 amountOut) {
-        uint256 amountIn = tokenIn.balanceOf(address(this));
+        uint256 amountIn = tokenIn.balanceOf(msg.sender);
         if (amountIn == 0) {
-            revert InsufficientBalance(address(this));
+            revert InsufficientBalance(msg.sender);
         }
 
         (uint256 reserveIn, uint256 reserveOut, IPancakePair pair, bool inverted) =

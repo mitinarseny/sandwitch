@@ -5,7 +5,10 @@ use ethers::{
     types::{Address, Selector, U256},
 };
 
-use super::errors::{InvalidLength, UnsupportedCommand, WrongCommand};
+use super::{
+    errors::{InvalidLength, UnsupportedCommand, WrongCommand},
+    MustNotFail,
+};
 use crate::prelude::*;
 
 #[repr(u8)]
@@ -63,6 +66,14 @@ pub trait Call: Sized {
     fn decode_ok(output: bytes::Bytes, meta: &Self::Meta) -> Result<Self::Ok, AbiError>;
     fn decode_reverted(output: bytes::Bytes, meta: &Self::Meta)
         -> Result<Self::Reverted, AbiError>;
+
+    fn must(self) -> MustCall<Self> {
+        self.into()
+    }
+
+    fn maybe(self) -> MaybeCall<Self> {
+        self.into()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -481,29 +492,84 @@ impl Call for Create2 {
     }
 }
 
+pub trait TryCall: Sized {
+    type Call: Call;
+    type Reverted;
+
+    fn to_reverted(reverted: <Self::Call as Call>::Reverted) -> Self::Reverted;
+    fn into_dyn(self) -> DynTryCall<Self::Call>;
+    fn from_dyn(try_call: DynTryCall<Self::Call>) -> Result<Self, MustNotFail>;
+}
+
+#[derive(Clone)]
+pub struct MustCall<C>(pub C);
+
+impl<C> From<C> for MustCall<C> {
+    fn from(call: C) -> Self {
+        Self(call)
+    }
+}
+
+impl<C: Call> TryCall for MustCall<C> {
+    type Call = C;
+    type Reverted = Infallible;
+
+    fn to_reverted(_reverted: C::Reverted) -> Self::Reverted {
+        panic!("MustCall reverted");
+    }
+
+    fn into_dyn(self) -> DynTryCall<Self::Call> {
+        DynTryCall {
+            allow_failure: false,
+            call: self.0,
+        }
+    }
+
+    fn from_dyn(try_call: DynTryCall<Self::Call>) -> Result<Self, MustNotFail> {
+        let DynTryCall {
+            allow_failure,
+            call,
+        } = try_call;
+        allow_failure.then_some(call.into()).ok_or(MustNotFail)
+    }
+}
+
+#[derive(Clone)]
+pub struct MaybeCall<C>(pub C);
+
+impl<C> From<C> for MaybeCall<C> {
+    fn from(call: C) -> Self {
+        Self(call)
+    }
+}
+
+impl<C: Call> TryCall for MaybeCall<C> {
+    type Call = C;
+    type Reverted = C::Reverted;
+
+    fn to_reverted(reverted: C::Reverted) -> Self::Reverted {
+        reverted
+    }
+
+    fn into_dyn(self) -> DynTryCall<Self::Call> {
+        DynTryCall {
+            allow_failure: true,
+            call: self.0,
+        }
+    }
+
+    fn from_dyn(try_call: DynTryCall<Self::Call>) -> Result<Self, MustNotFail> {
+        Ok(try_call.call.into())
+    }
+}
+
 #[derive(Clone, Debug)]
-pub struct TryCall<C: Call> {
+pub struct DynTryCall<C: Call> {
     pub allow_failure: bool,
     pub call: C,
 }
 
-impl<C: Call> TryCall<C> {
-    pub fn can_fail(call: C) -> Self {
-        Self {
-            allow_failure: true,
-            call,
-        }
-    }
-
-    pub fn must(call: C) -> Self {
-        Self {
-            allow_failure: false,
-            call,
-        }
-    }
-}
-
-impl<C: Call> TryCall<C> {
+impl<C: Call> DynTryCall<C> {
     const ALLOW_FAILURE: u8 = 1 << 7;
 
     pub fn encode(self) -> (u8, bytes::Bytes, C::Meta) {
@@ -514,14 +580,14 @@ impl<C: Call> TryCall<C> {
         }
         (cmd, input, meta)
     }
-    pub fn encode_raw(self) -> (TryCall<RawCall>, C::Meta) {
+    pub fn encode_raw(self) -> (DynTryCall<RawCall>, C::Meta) {
         let Self {
             allow_failure,
             call,
         } = self;
         let (call, meta) = call.encode_raw();
         (
-            TryCall {
+            DynTryCall {
                 allow_failure,
                 call,
             },
@@ -535,8 +601,8 @@ impl<C: Call> TryCall<C> {
             call: C::decode((cmd & !Self::ALLOW_FAILURE).try_into()?, input)?,
         })
     }
-    pub fn decode_raw(c: TryCall<RawCall>) -> Result<Self, AbiError> {
-        let TryCall {
+    pub fn decode_raw(c: DynTryCall<RawCall>) -> Result<Self, AbiError> {
+        let DynTryCall {
             allow_failure,
             call,
         } = c;
@@ -551,7 +617,7 @@ impl<C: Call> TryCall<C> {
     }
 }
 
-pub type Calls<C> = Vec<TryCall<C>>;
+pub type Calls<C> = Vec<DynTryCall<C>>;
 pub type DynCalls = Calls<DynCall>;
 
 #[derive(Clone)]
@@ -600,8 +666,8 @@ impl From<Create2> for DynCall {
     }
 }
 
-impl FromIterator<TryCall<Self>> for DynCall {
-    fn from_iter<T: IntoIterator<Item = TryCall<Self>>>(calls: T) -> Self {
+impl FromIterator<DynTryCall<Self>> for DynCall {
+    fn from_iter<T: IntoIterator<Item = DynTryCall<Self>>>(calls: T) -> Self {
         Self::Group(calls.into_iter().collect())
     }
 }
@@ -620,7 +686,7 @@ pub enum DynCallOutput {
     Balance(<GetBalanceOf as Call>::Ok),
     Transferred,
     ContractCreated(<Create as Call>::Ok),
-    Group(<Calls<DynCall> as Call>::Ok),
+    Group(<DynCalls as Call>::Ok),
 }
 
 pub enum DynCallReverted {

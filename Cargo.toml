@@ -26,10 +26,15 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["ws", "ipc"]
+default = ["ws", "ipc", "pancake_swap"]
 ipc = ["ethers/ipc"]
 ws = ["ethers/ws"]
-pancake_swap = ["legacy", "contracts/pancake_toaster", "contracts/pancake_swap"]
+pancake_swap = [
+    "legacy",
+    "contracts/pancake_toaster",
+    "contracts/pancake_swap",
+    "contracts/erc20",
+]
 
 legacy = ["contracts/legacy", "ethers/legacy"]
 

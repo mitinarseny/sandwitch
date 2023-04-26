@@ -10,7 +10,8 @@ use ethers::{
     providers::{JsonRpcClient, Middleware, Provider, ProviderError, PubsubClient},
     signers::{LocalWallet, Signer},
     types::{
-        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Filter, TxHash, U256,
+        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Bytes, Filter, TxHash,
+        U256,
     },
     utils::keccak256,
 };
@@ -18,7 +19,7 @@ use futures::{
     future::{self, Aborted, Fuse, FusedFuture, FutureExt, TryFutureExt},
     select_biased,
     stream::{self, FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
-    try_join,
+    try_join, Future,
 };
 // use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 use serde::Deserialize;
@@ -126,7 +127,7 @@ where
         self.address
     }
 
-    pub async fn run(mut self, cancel: CancellationToken) -> anyhow::Result<()> {
+    pub async fn run(self, cancel: CancellationToken) -> anyhow::Result<()> {
         let mut send_txs = FuturesUnordered::new();
 
         let r = {
@@ -162,7 +163,7 @@ where
                         info!("cancelled");
                         break Ok(());
                     },
-                    (block, received_at) = blocks.select_next_some() => Self::new_head_span(&block).in_scope(|| {
+                    (block, received_at) = blocks.select_next_some() => Self::new_head_received_span(&block).in_scope(|| {
                         debug!("new head received");
 
                         if !process_pending_block.is_terminated() {
@@ -179,34 +180,29 @@ where
                         }
 
 
-                        let abort_processing_at =
+                        let deadline =
                             next_block_at_estimator.estimate_next_block_at(received_at)
                             - self.latency() // reserve time to send txs to the node
                             - self.tx_propagation_delay; // reserve time for txs to propagate through the network
 
                         process_pending_block.set(
+                            // don't send txs the after deadline even if new head hasn't been received
                             timeout_at(
-                                abort_processing_at,
-                                self.process_pending_block(block, abort_processing_at, Span::current())
+                                deadline,
+                                self.process_pending_block(block, deadline).in_current_span(),
                             )
                             .fuse(),
                         );
                     }),
-                    to_send = &mut process_pending_block => {
-                        let to_send = match to_send {
-                            Ok(to_send) => break_err!(to_send),
-                            Err(elapsed) => {
-                                warn!("{elapsed}");
-                                continue;
-                            },
-                        };
-                        if let Some((to_send, process_block_span)) = to_send {
-                            send_txs.extend(
-                                to_send
-                                    .into_iter()
-                                    .map(|tx| self.sign_and_send(tx, process_block_span.clone())),
-                            )
-                        }
+                    to_send = &mut process_pending_block => match to_send {
+                        Ok(to_send) => if let Some(to_send) = break_err!(to_send) {
+                            // TODO: debug! sending txs...
+                            send_txs.extend(to_send);
+                        },
+                        Err(elapsed) => {
+                            warn!("{elapsed}");
+                            continue;
+                        },
                     },
                     complete => return Ok(()),
                 };
@@ -233,9 +229,9 @@ where
         r
     }
 
-    fn new_head_span(block: &Block<TxHash>) -> Span {
+    fn new_head_received_span(block: &Block<TxHash>) -> Span {
         error_span!(
-            "new head",
+            "new_head_received",
             block_hash = ?block.hash.unwrap(),
             block_number = ?block.number.unwrap().as_u64(),
             parent_block_hash = ?block.parent_hash,
@@ -287,21 +283,14 @@ where
         self.client.as_ref().as_ref().latency()
     }
 
-    #[instrument(
-        follows_from = [new_head_span],
-        skip_all,
-        fields(
-            parent_block_hash,
-            block_number,
-        ),
-        err,
-    )]
+    #[instrument(skip_all, fields(parent_block_hash, block_number,), err)]
     async fn process_pending_block(
         &self,
         latest_block: Block<TxHash>,
         deadline: Instant,
-        new_head_span: impl Into<Option<tracing::Id>>,
-    ) -> anyhow::Result<Option<(Vec<TypedTransaction>, Span)>> {
+    ) -> anyhow::Result<
+        Option<impl Iterator<Item = impl Future<Output = anyhow::Result<TxHash>> + '_> + '_>,
+    > {
         let span = Span::current();
 
         let (next_nonce, pending_block) =
@@ -342,10 +331,32 @@ where
         debug!("pending block processed");
         // TODO: log to_send count
 
-        Ok(Some((
-            self.extract_txs_to_send(pending_block, next_nonce).await?,
-            span,
-        )))
+        let to_send = self.extract_txs_to_send(pending_block, next_nonce).await?;
+
+        let Some(wallet) = &self.wallet else {
+            warn!("unable to sign: wallet is not set");
+            return Ok(None);
+        };
+
+        Ok(Some(
+            to_send
+                .into_iter()
+                .map(|mut tx| {
+                    tx.set_chain_id(wallet.chain_id());
+                    let signature = wallet.sign_transaction_sync(&tx)?;
+                    anyhow::Ok(tx.rlp_signed(&signature))
+                    // TODO: debug! signed
+                })
+                .try_collect::<Vec<_>>()?
+                .into_iter()
+                .map(move |tx| {
+                    async move {
+                        let pending_tx = self.client.send_raw_transaction(tx).await?;
+                        Ok(pending_tx.tx_hash())
+                    } // TODO: instrument from, gas, nonce, tx_hash, gas_price?
+                    .instrument(span.clone())
+                }),
+        ))
     }
 
     async fn extract_txs_to_send(
@@ -403,42 +414,6 @@ where
                 .await?,
         );
         Ok(tx)
-    }
-
-    // TODO: instrument gas price / max_fee_*
-    #[instrument(
-        follows_from = [process_pending_block_span],
-        skip_all,
-        fields(
-            from = ?tx.from().unwrap(),
-            gas = ?tx.gas().unwrap(),
-            nonce = ?tx.nonce().unwrap(),
-            tx_hash,
-        ),
-        err,
-    )]
-    async fn sign_and_send(
-        &self,
-        mut tx: TypedTransaction,
-        process_pending_block_span: impl Into<Option<tracing::Id>>,
-    ) -> anyhow::Result<Option<TxHash>> {
-        // TODO: debug!("assigned nonce: {nonce}");
-        let Some(wallet) = &self.wallet else {
-            warn!("unable to sign: wallet is not set");
-            return Ok(None);
-        };
-        tx.set_chain_id(wallet.chain_id());
-        info!("sending tx");
-        let signature = wallet.sign_transaction_sync(&tx)?;
-        let raw = tx.rlp_signed(&signature);
-        let hash = keccak256(&raw).into();
-        Span::current().record("tx_hash", field::debug(hash));
-        let pending_tx = self.client.send_raw_transaction(raw).await?;
-        if pending_tx.tx_hash() != hash {
-            return Err(anyhow!("got wrong pending tx hash after send"));
-        }
-        info!("transaction sent");
-        Ok(Some(hash))
     }
 }
 

@@ -8,9 +8,9 @@ use ethers::{
 use thiserror::Error as ThisError;
 
 use super::{
-    calls::{Call, Calls, Cmd, RawCall, RawResult, TryCall},
+    calls::{Call, Calls, Cmd, DynTryCall, RawCall, RawResult},
     errors::{IndexTooBig, LengthMismatch, WrongCommand},
-    raw,
+    raw, TryCall,
 };
 
 #[derive(ThisError, Debug)]
@@ -35,7 +35,7 @@ pub trait MultiCall: Sized {
         let (calls, meta) = self.encode_calls();
         let (commands, inputs): (Vec<u8>, Vec<Bytes>) = calls
             .into_iter()
-            .map(TryCall::encode)
+            .map(DynTryCall::encode)
             .map(|(cmd, input, _meta)| (cmd, input.into()))
             .unzip();
         (
@@ -57,7 +57,7 @@ pub trait MultiCall: Sized {
             commands
                 .into_iter()
                 .zip(inputs.into_iter().map(|input| input.0))
-                .map(|(cmd, input)| TryCall::decode(cmd, input))
+                .map(|(cmd, input)| DynTryCall::decode(cmd, input))
                 .try_collect()?,
         )
     }
@@ -129,6 +129,8 @@ impl<C: MultiCall> Call for C {
     }
 }
 
+#[derive(ThisError, Debug)]
+#[error("[{0}]: {1}")]
 pub struct RevertedAt<R>(pub usize, pub R);
 
 impl TryFrom<raw::Reverted> for RevertedAt<bytes::Bytes> {
@@ -151,11 +153,11 @@ impl<C: Call> MultiCall for Calls<C> {
     type Reverted = RevertedAt<C::Reverted>;
 
     fn encode_calls(self) -> (Calls<RawCall>, Self::Meta) {
-        self.into_iter().map(TryCall::encode_raw).unzip()
+        self.into_iter().map(DynTryCall::encode_raw).unzip()
     }
 
     fn decode_calls(calls: Calls<RawCall>) -> Result<Self, AbiError> {
-        calls.into_iter().map(TryCall::decode_raw).try_collect()
+        calls.into_iter().map(DynTryCall::decode_raw).try_collect()
     }
 
     fn decode_ok(results: Vec<RawResult>, metas: &Self::Meta) -> Result<Self::Ok, AbiError> {
@@ -189,31 +191,38 @@ impl<C: Call> MultiCall for Calls<C> {
 macro_rules! tuple_multicall {
     (impl<$N:literal> MultiCall<Reverted = $vis:vis enum $reverted:ident>
         for ($( .$n:tt: $t:ident ),+$(,)?)) => {
-        #[derive(Debug)]
+        #[derive(ThisError, Debug)]
         $vis enum $reverted<$( $t ),+> {
             $(
+                #[error(".{}: {0}", $n)]
                 $t($t),
             )+
         }
 
-        impl<$( $t ),+> MultiCall for ($( TryCall<$t>, )+)
+        impl<$( $t ),+> MultiCall for ($( $t, )+)
         where
-            $( $t: Call ),+,
+            $( $t: TryCall ),+,
         {
-            type Meta = ($( $t::Meta ),+,);
-            type Ok = ($( Result<$t::Ok, $t::Reverted> ),+,);
-            type Reverted = $reverted<$( $t::Reverted ),+>;
+            type Meta = ($( <$t::Call as Call>::Meta ),+,);
+            type Ok = ($( Result<<$t::Call as Call>::Ok, $t::Reverted> ),+,);
+            type Reverted = $reverted<$( <$t::Call as Call>::Reverted ),+>;
 
             fn encode_calls(self) -> (Calls<RawCall>, Self::Meta) {
-                let calls = ($(self.$n.encode_raw(),)+);
+                let calls = ($(
+                    self.$n.into_dyn().encode_raw(),
+                )+);
                 ([$( calls.$n.0, )+].into(), ($(calls.$n.1,)+))
             }
 
             fn decode_calls(calls: Calls<RawCall>) -> Result<Self, AbiError> {
-                let mut calls = <[TryCall::<RawCall>; $N]>::try_from(calls)
+                let mut calls = <[DynTryCall::<RawCall>; $N]>::try_from(calls)
                     .map_err(|_| LengthMismatch)?
                     .into_iter();
-                Ok(($(TryCall::<$t>::decode_raw(calls.next().unwrap())?,)+))
+                Ok(($(
+                    $t::from_dyn(
+                        DynTryCall::<$t::Call>::decode_raw(calls.next().unwrap())?,
+                    )?,
+                )+))
             }
 
             fn decode_ok(results: Vec<RawResult>, metas: &Self::Meta) -> Result<Self::Ok, AbiError> {
@@ -222,8 +231,10 @@ macro_rules! tuple_multicall {
                     .into_iter();
                 Ok(($(
                     match results.next().unwrap() {
-                        Ok(output) => Ok($t::decode_ok(output, &metas.$n)?),
-                        Err(data) => Err($t::decode_reverted(data, &metas.$n)?),
+                        Ok(output) => Ok(<$t::Call as Call>::decode_ok(output, &metas.$n)?),
+                        Err(data) => Err($t::to_reverted(
+                            <$t::Call as Call>::decode_reverted(data, &metas.$n)?,
+                        )),
                     },
                 )+))
             }
@@ -232,7 +243,7 @@ macro_rules! tuple_multicall {
                 let RevertedAt(index, data) = r;
                 Ok(match index {
                     $(
-                        $n => <Self::Reverted>::$t(<$t as Call>::decode_reverted(data, &metas.$n)?),
+                        $n => <Self::Reverted>::$t(<$t::Call as Call>::decode_reverted(data, &metas.$n)?),
                     )+
                     _ => return Err(IndexTooBig.into()),
                 })

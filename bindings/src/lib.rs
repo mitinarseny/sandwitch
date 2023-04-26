@@ -27,6 +27,8 @@ pub(crate) mod prelude {
     }
     pub(crate) use tracked_abigen;
 
+    #[derive(ThisError, Debug)]
+    #[error("{0}")]
     pub struct RawReverted(String);
 
     impl AbiEncode for RawReverted {
@@ -57,7 +59,7 @@ pub(crate) mod prelude {
     }
 
     #[derive(ThisError, Debug)]
-    pub enum ContractError<M: Middleware, R> {
+    pub enum ContractError<M: Middleware> {
         /// Thrown when the ABI decoding fails
         #[error(transparent)]
         DecodingError(#[from] abi::Error),
@@ -76,11 +78,7 @@ pub(crate) mod prelude {
 
         /// Thrown when a provider call fails
         #[error(transparent)]
-        ProviderError(ProviderError),
-
-        /// Contract reverted
-        #[error("contract call reverted with: {0}")]
-        Revert(R),
+        ProviderError(#[from] ProviderError),
 
         /// Thrown during deployment if a constructor argument was passed in the `deploy`
         /// call but a constructor was not present in the ABI
@@ -91,50 +89,6 @@ pub(crate) mod prelude {
         /// receipt
         #[error("Contract was not deployed")]
         ContractNotDeployed,
-    }
-
-    impl<M, R> ContractError<M, R>
-    where
-        M: Middleware,
-    {
-        pub(crate) fn try_decode_revert_with<R2>(
-            self,
-            f: impl FnOnce(R) -> Result<R2, AbiError>,
-        ) -> ContractError<M, R2> {
-            match self {
-                Self::DecodingError(e) => ContractError::DecodingError(e),
-                Self::AbiError(e) => ContractError::AbiError(e),
-                Self::DetokenizationError(e) => ContractError::DetokenizationError(e),
-                Self::MiddlewareError(e) => ContractError::MiddlewareError(e),
-                Self::ProviderError(e) => ContractError::ProviderError(e),
-                Self::Revert(e) => f(e)
-                    .map(ContractError::Revert)
-                    .unwrap_or_else(ContractError::AbiError),
-                Self::ConstructorError => ContractError::ConstructorError,
-                Self::ContractNotDeployed => ContractError::ContractNotDeployed,
-            }
-        }
-    }
-
-    impl<M, R> From<RawContractError<M>> for ContractError<M, R>
-    where
-        M: Middleware,
-        R: AbiDecode,
-    {
-        fn from(err: RawContractError<M>) -> Self {
-            match err {
-                RawContractError::DecodingError(e) => Self::DecodingError(e),
-                RawContractError::AbiError(e) => Self::AbiError(e),
-                RawContractError::DetokenizationError(e) => Self::DetokenizationError(e),
-                RawContractError::MiddlewareError { e } => Self::MiddlewareError(e),
-                RawContractError::ProviderError { e } => Self::ProviderError(e),
-                RawContractError::Revert(Bytes(data)) => {
-                    R::decode(data).map(Self::Revert).unwrap_or_else(Into::into)
-                }
-                RawContractError::ConstructorError => Self::ConstructorError,
-                RawContractError::ContractNotDeployed => Self::ContractNotDeployed,
-            }
-        }
     }
 
     pub struct TypedFunctionCall<B, M, C: EthTypedCall>(pub(crate) FunctionCall<B, M, C::Ok>);
@@ -178,58 +132,54 @@ pub(crate) mod prelude {
             self
         }
 
-        pub async fn call(&self) -> Result<C::Ok, ContractError<M, C::Reverted>> {
-            self.0.call().await.map_err(Into::into)
+        pub async fn call(&self) -> Result<Result<C::Ok, C::Reverted>, ContractError<M>> {
+            Ok(match self.0.call().await {
+                Ok(output) => Ok(output),
+                Err(err) => Err(Self::try_decode_reverted(err)?),
+            })
         }
 
-        pub async fn estimate_gas(&self) -> Result<U256, ContractError<M, C::Reverted>> {
-            self.0.estimate_gas().await.map_err(Into::into)
+        pub async fn estimate_gas(&self) -> Result<Result<U256, C::Reverted>, ContractError<M>> {
+            Ok(match self.0.estimate_gas().await {
+                Ok(gas) => Ok(gas),
+                Err(err) => Err(Self::try_decode_reverted(err)?),
+            })
         }
 
         pub async fn send(&self) -> Result<TxHash, M::Error> {
             let pending_tx = self.0.send().await.map_err(|e| match e {
                 RawContractError::MiddlewareError { e } => e,
-                _ => unreachable!(),
+                _ => unreachable!(), // TODO
             })?;
             Ok(pending_tx.tx_hash())
         }
+
+        fn try_decode_reverted(err: RawContractError<M>) -> Result<C::Reverted, ContractError<M>> {
+            Err(match err {
+                RawContractError::DecodingError(e) => ContractError::DecodingError(e),
+                RawContractError::AbiError(e) => ContractError::AbiError(e),
+                RawContractError::DetokenizationError(e) => ContractError::DetokenizationError(e),
+                RawContractError::MiddlewareError { e } => ContractError::MiddlewareError(e),
+                RawContractError::ProviderError { e } => ContractError::ProviderError(e),
+                RawContractError::Revert(Bytes(data)) => {
+                    return Ok(<C::Reverted as AbiDecode>::decode(data)?)
+                }
+                RawContractError::ConstructorError => ContractError::ConstructorError,
+                RawContractError::ContractNotDeployed => ContractError::ContractNotDeployed,
+            })
+        }
     }
 }
-pub use prelude::EthTypedCall;
-
-// #[cfg(feature = "erc20")]
-pub mod erc20 {
-    use crate::prelude::*;
-    tracked_abigen!(ERC20, "contracts/out/ERC20.sol/ERC20.json");
-
-    impl EthTypedCall for ApproveCall {
-        type Ok = maybe::OkOrNone;
-        type Reverted = RawReverted;
-    }
-}
+pub use self::prelude::{EthTypedCall, ContractError};
 
 #[cfg(feature = "multicall")]
 pub mod multicall;
 
+#[cfg(feature = "erc20")]
+pub mod erc20;
+
 #[cfg(feature = "pancake_swap")]
-pub mod pancake_swap {
-    use crate::prelude::*;
-    tracked_abigen!(
-        PancakeRouter,
-        "contracts/out/IPancakeRouter02.sol/IPancakeRouter02.json"
-    );
-}
+pub mod pancake_swap;
 
 #[cfg(feature = "pancake_toaster")]
-pub mod pancake_toaster {
-    use crate::prelude::*;
-    tracked_abigen!(
-        PancakeToaster,
-        "contracts/out/PancakeToaster.sol/PancakeToaster.json"
-    );
-
-    impl EthTypedCall for FrontRunSwapCall {
-        type Ok = FrontRunSwapReturn;
-        type Reverted = PancakeToasterErrors;
-    }
-}
+pub mod pancake_toaster;
