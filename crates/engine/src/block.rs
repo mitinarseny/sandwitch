@@ -1,7 +1,7 @@
 use core::{cmp::Reverse, iter::Map, mem, slice};
 use std::sync::Arc;
 
-use contracts::{
+use sandwitch_contracts::{
     multicall::{
         Call, Calls, DynTryCall, MultiCall, MultiCallContract, MultiCallErrors, MultiFunctionCall,
         RawCall,

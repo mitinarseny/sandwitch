@@ -2,16 +2,12 @@ use core::pin::pin;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
-use contracts::{
-    multicall::{MultiCall, MultiCallContract},
-    EthTypedCall,
-};
 use ethers::{
     providers::{JsonRpcClient, Middleware, Provider, ProviderError, PubsubClient},
     signers::{LocalWallet, Signer},
     types::{
-        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Bytes, Filter, TxHash,
-        U256,
+        transaction::eip2718::TypedTransaction, Address, Block, BlockId, BlockNumber, Bytes,
+        Filter, TxHash, U256,
     },
     utils::keccak256,
 };
@@ -21,9 +17,12 @@ use futures::{
     stream::{self, FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
     try_join, Future,
 };
+use sandwitch_contracts::{
+    multicall::{MultiCall, MultiCallContract},
+    EthTypedCall,
+};
 // use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
-use serde::Deserialize;
-use serde_with::{serde_as, DurationMilliSeconds};
+
 use tokio::{
     self,
     time::{error::Elapsed, sleep_until, timeout_at, Duration, Instant},
@@ -34,30 +33,17 @@ use tracing::{debug, error, error_span, field, info, instrument, warn, Instrumen
 use crate::{
     abort::FutureExt as AbortFutureExt,
     block::{PendingBlock, PendingBlockFactory, PrioritizedMultiCall},
-    monitors::PendingBlockMonitor,
-    providers::{LatencyProvider, TimeoutProvider},
+    config::Config,
+    monitor::PendingBlockMonitor,
+    providers::LatencyProvider,
     timed::StreamExt as TimedStreamExt,
     transactions::TransactionRequest,
 };
 
-#[serde_as]
-#[derive(Deserialize, Debug)]
-pub struct EngineConfig {
-    #[serde(rename = "block_interval_ms")]
-    #[serde_as(as = "DurationMilliSeconds")]
-    pub block_interval: Duration,
-
-    #[serde(rename = "tx_propagation_delay_ms")]
-    #[serde_as(as = "DurationMilliSeconds")]
-    pub tx_propagation_delay: Duration,
-
-    pub multicall: Address,
-}
-
 // TODO: use Signer Middleware
 pub type MiddlewareStack<P> = Provider<LatencyProvider<P>>;
 
-pub(crate) struct Engine<P, M>
+pub struct Engine<P, M>
 where
     P: JsonRpcClient,
     M: PendingBlockMonitor<MiddlewareStack<P>>,
@@ -84,9 +70,9 @@ where
     P::Error: Send + Sync + 'static,
     M: PendingBlockMonitor<MiddlewareStack<P>>,
 {
-    pub(crate) async fn new(
+    pub async fn new(
         client: impl Into<Arc<MiddlewareStack<P>>>,
-        cfg: EngineConfig,
+        cfg: Config,
         wallet: impl Into<Option<LocalWallet>>,
         monitor: M,
     ) -> anyhow::Result<Self> {
@@ -238,16 +224,19 @@ where
         )
     }
 
-    async fn get_next_nonce_at(&self, block: &Block<TxHash>) -> anyhow::Result<Option<U256>> {
+    async fn get_next_nonce_at(
+        &self,
+        block_id: impl Into<BlockId>,
+    ) -> anyhow::Result<Option<U256>> {
         let (nonce_at_block, pending_nonce) = try_join!(
             self.client
-                .get_transaction_count(self.account(), Some(block.number.unwrap().into())),
+                .get_transaction_count(self.account(), Some(block_id.into())),
             self.client
                 .get_transaction_count(self.account(), Some(BlockNumber::Pending.into())),
         )?;
         if pending_nonce < nonce_at_block {
             return Err(anyhow!(
-                "pending txs count appears to be less than at some mined block"
+                "pending txs count can not be greater than at already mined block"
             ));
         }
         if pending_nonce > nonce_at_block {
@@ -261,6 +250,13 @@ where
             return Ok(None);
         }
         Ok(Some(nonce_at_block))
+    }
+
+    async fn get_my_balance_at(&self, block_id: impl Into<BlockId>) -> anyhow::Result<U256> {
+        self.client
+            .get_balance(self.account(), Some(block_id.into()))
+            .await
+            .map_err(Into::into)
     }
 
     async fn get_pending_block(&self) -> anyhow::Result<PendingBlock<'_, MiddlewareStack<P>>> {
@@ -293,16 +289,23 @@ where
     > {
         let span = Span::current();
 
-        let (next_nonce, pending_block) =
-            try_join!(self.get_next_nonce_at(&latest_block), async {
+        let latest_block_number = latest_block.number.unwrap();
+
+        let (next_nonce, my_balance, pending_block) = try_join!(
+            self.get_next_nonce_at(latest_block_number),
+            self.get_my_balance_at(latest_block_number),
+            async {
                 sleep_until(deadline - Duration::from_secs(3)).await;
                 debug!("requesting pending block...");
                 self.get_pending_block().await
-            })?;
+            }
+        )?;
 
         let Some(next_nonce) = next_nonce else {
             return Ok(None);
         };
+
+        // TODO: use my_balance to check if we have enough ETH to pay for gas
 
         span.record("parent_block_hash", field::debug(pending_block.parent_hash))
             .record("block_number", pending_block.number.unwrap().as_u64());

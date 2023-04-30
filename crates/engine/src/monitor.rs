@@ -1,17 +1,15 @@
+use std::{sync::Arc, vec};
+
 use ethers::providers::Middleware;
 use futures::{
     future::{self, BoxFuture, FutureExt},
     stream::{FuturesUnordered, TryStreamExt},
 };
 use impl_tools::autoimpl;
-use std::{sync::Arc, vec};
 
-use crate::{block::PendingBlock, transactions::Transaction};
+use crate::block::{PendingBlock, TxWithLogs};
 
-#[cfg(feature = "pancake_swap")]
-mod pancake_swap;
-
-#[autoimpl(for<T: trait + ?Sized> &T,Arc<T>, Box<T>)]
+#[autoimpl(for<T: trait + ?Sized> &T, Arc<T>, Box<T>)]
 pub trait PendingBlockMonitor<M: Middleware> {
     fn process_pending_block<'a>(
         &'a self,
@@ -98,6 +96,12 @@ where
 
 pub struct TxMonitor<M>(M);
 
+impl<M> From<M> for TxMonitor<M> {
+    fn from(m: M) -> Self {
+        Self(m)
+    }
+}
+
 impl<MW, M> PendingBlockMonitor<MW> for TxMonitor<M>
 where
     MW: Middleware,
@@ -118,17 +122,17 @@ where
 }
 
 pub trait PendingTxMonitor {
-    fn process_pending_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn process_pending_tx<'a>(&'a self, tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
 impl PendingTxMonitor for () {
-    fn process_pending_tx<'a>(&'a self, _tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn process_pending_tx<'a>(&'a self, _tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>> {
         future::ok(()).boxed()
     }
 }
 
 impl<M: PendingTxMonitor> PendingTxMonitor for MultiMonitor<M> {
-    fn process_pending_tx<'a>(&'a self, tx: &'a Transaction) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn process_pending_tx<'a>(&'a self, tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>> {
         self.0
             .iter()
             .map(|m| m.process_pending_tx(tx))

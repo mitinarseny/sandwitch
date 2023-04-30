@@ -1,51 +1,29 @@
-use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration, vec::Vec};
+use core::time::Duration;
 
-use anyhow::anyhow;
+use std::sync::Arc;
+
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    providers::{Ipc, JsonRpcClient, Middleware, Provider, PubsubClient, Ws},
+    providers::{JsonRpcClient, Middleware, Provider, PubsubClient},
     signers::LocalWallet,
-    types::Address,
     utils::secret_key_to_address,
 };
-use futures::try_join;
-#[allow(unused_imports)]
 use futures::{
-    future::{self, FutureExt, LocalBoxFuture, TryFutureExt},
-    stream::{FuturesUnordered, TryStreamExt},
+    future::{self, LocalBoxFuture, TryFutureExt},
+    stream::FuturesUnordered,
+    try_join, FutureExt, TryStreamExt,
 };
 use metrics::register_counter;
-use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
-use url::Url;
 
-use crate::{
-    engine::{Engine, EngineConfig, MiddlewareStack},
-    monitors::{MultiMonitor, PendingBlockMonitor},
-    providers::{LatencyProvider, TimeoutProvider},
+use sandwitch_engine::{
+    monitor::{MultiMonitor, PendingBlockMonitor},
+    providers::LatencyProvider,
+    Engine, MiddlewareStack,
 };
 
-// #[cfg(feature = "pancake_swap")]
-// use crate::monitors::pancake_swap::{PancakeSwap, PancakeSwapConfig};
-
-#[derive(Deserialize, Debug)]
-pub struct Config {
-    pub network: NetworkConfig,
-    pub engine: EngineConfig,
-    pub monitors: MonitorsConfig,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct NetworkConfig {
-    pub node: Url,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct MonitorsConfig {
-    // #[cfg(feature = "pancake_swap")]
-    // pub pancake_swap: Option<PancakeSwapConfig>,
-}
+use crate::{providers::timeout::TimeoutProvider, Config, MonitorsConfig};
 
 pub struct App<P, M>
 where
@@ -120,12 +98,22 @@ where
     #[allow(unused_variables)]
     async fn make_monitors(
         client: impl Into<Arc<MiddlewareStack<TimeoutProvider<P>>>>,
-        config: MonitorsConfig,
+        cfg: MonitorsConfig,
     ) -> anyhow::Result<
         MultiMonitor<Box<dyn PendingBlockMonitor<MiddlewareStack<TimeoutProvider<P>>>>>,
     > {
         let client = client.into();
-        let monitors = FuturesUnordered::<LocalBoxFuture<_>>::new();
+        let ms = FuturesUnordered::<LocalBoxFuture<_>>::new();
+
+        #[cfg(feature = "tx_logger")]
+        if cfg.tx_logger.enabled {
+            ms.push(
+                future::ok(Box::new(sandwitch_engine::monitor::TxMonitor::from(
+                    sandwitch_monitor_logger::LogMonitor,
+                )) as Box<dyn PendingBlockMonitor<_>>)
+                .boxed_local(),
+            );
+        }
 
         // #[cfg(feature = "pancake_swap")]
         // if let Some(cfg) = config.pancake_swap {
@@ -136,7 +124,7 @@ where
         //     );
         // }
 
-        monitors.try_collect().await
+        ms.try_collect().await
     }
 }
 

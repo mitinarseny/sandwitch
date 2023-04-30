@@ -6,6 +6,18 @@ datasources:
     access: proxy
     uid: prometheus
     url: http://${PROMETHEUS_ADDR}
+    isDefault: false
+    version: 1
+    editable: false
+
+  - name: Tempo
+    type: tempo
+    access: proxy
+    orgId: 1
+    url: http://${TEMPO_ADDR}
+    basicAuth: false
     isDefault: true
     version: 1
     editable: false
+    apiVersion: 1
+    uid: tempo

@@ -2,39 +2,62 @@ services:
   sandwitch:
     build: .
     command:
-      - '-vv' # info log level
+      - '--otlp-endpoint'
+      - 'http://otel-collector:4317'
+      - '-vvvvv' # info log level
     stop_signal: SIGINT
     stop_grace_period: '30s'
     volumes:
       - './sandwitch.toml:/etc/sandwitch/sandwitch.toml:ro'
-      - './accounts:/etc/sandwitch/accounts:ro'
+    depends_on:
+      - otel-collector
     healthcheck:
       disable: true # metrics are collected by prometheus
 
-  prometheus:
-    image: 'prom/prometheus:latest'
+  otel-collector:
+    image: 'otel/opentelemetry-collector:latest'
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--log.level=warn'
+      - '--config'
+      - '/etc/otel-collector.yaml'
+      - '--set'
+      - 'exporters.otlp.endpoint=tempo:4317'
     volumes:
-      - './prometheus.yml:/etc/prometheus/prometheus.yml:ro'
+      - './otel-collector.yaml:/etc/otel-collector.yaml:ro'
     depends_on:
-      - sandwitch
-    logging:
-      driver: none
-    restart: unless-stopped
+      - tempo
+
+  tempo:
+    image: 'grafana/tempo:latest'
+    command:
+      - '-config.file'
+      - '/etc/tempo.yaml'
+      - '-log.level'
+      - 'warn'
+    volumes:
+      - './tempo.yaml:/etc/tempo.yaml:ro'
+      - '/var/lib/tempo'
 
   grafana:
     image: 'grafana/grafana-oss:latest'
     environment:
-      PROMETHEUS_ADDR: 'prometheus:9090'
+      TEMPO_ADDR: 'tempo:9090'
     volumes:
       - './grafana.ini:/etc/grafana/grafana.ini:ro'
       - './grafana/datasources/:/etc/grafana/provisioning/datasources/:ro'
       - './grafana/dashboards/:/etc/grafana/provisioning/dashboards/:ro'
     depends_on:
-      - prometheus
+      - tempo
     ports:
       - '3000:3000/tcp'
     logging:
       driver: none
+  # prometheus:
+  #   image: 'prom/prometheus:latest'
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--log.level=warn'
+  #   volumes:
+  #     - './prometheus.yml:/etc/prometheus/prometheus.yml:ro'
+  #   logging:
+  #     driver: none
+  #   restart: unless-stopped

@@ -1,0 +1,19 @@
+[package]
+name = "sandwitch-monitor-pancake-swap"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sandwitch-engine.workspace = true
+
+anyhow.workspace = true
+ethers = { workspace = true, features = ["legacy"] }
+futures.workspace = true
+
+[dependencies.sandwitch-contracts]
+workspace = true
+features = [
+    "pancake_swap",
+    "pancake_toaster",
+    "erc20",
+]

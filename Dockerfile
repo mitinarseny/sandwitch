@@ -1,42 +1,51 @@
+# syntax=docker/dockerfile:1.4
 FROM rust:latest AS env
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+  && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/apt \
+  apt update \
+  && apt install --yes --no-install-recommends \
+  protobuf-compiler
+RUN wget -qO- "https://github.com/mozilla/sccache/releases/download/v0.4.2/sccache-v0.4.2-$(uname -m)-unknown-linux-musl.tar.gz" \
+  | tar xzC /usr/local/bin/ --strip-components 1 "sccache-v0.4.2-$(uname -m)-unknown-linux-musl/sccache" \
+  && chmod +x /usr/local/bin/sccache
+ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+ENV SCCACHE_DIR=/var/cache/sccache
 WORKDIR /app
-RUN cargo install --git https://github.com/foundry-rs/foundry foundry-cli --bin forge --locked
 
 FROM env AS contracts
-COPY ./foundry.toml ./remappings.txt ./
-COPY ./contracts/ ./contracts/
-RUN forge build
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=${SCCACHE_DIR} \
+  cargo install \
+  --git https://github.com/foundry-rs/foundry foundry-cli \
+  --profile local \
+  --bin forge \
+  --locked
+COPY --link ./foundry.toml ./remappings.txt ./
+COPY --link ./contracts/ ./contracts/
+RUN --mount=type=cache,target=./contracts/cache forge build
 
 FROM env AS builder
-COPY ./rust-toolchain.toml ./
-RUN rustup set profile minimal \
+COPY --link ./rust-toolchain.toml ./
+RUN --mount=type=cache,target=/usr/local/rustup \
+  rustup set profile minimal \
   && rustup show active-toolchain
-# build dependencies
-RUN cargo init --quiet --lib \
-  && cargo new --quiet --lib ./bindings
-COPY ./Cargo.toml ./Cargo.lock ./
-COPY ./bindings/Cargo.toml ./bindings/
-RUN cargo check --release
-RUN cargo build --release
-# build contract bindings
-COPY ./bindings/ ./bindings/
-RUN mkdir -p ./contracts/out
-COPY --from=contracts ./contracts/out/ ./contracts/out/
-RUN cargo build --release
-# build binaries
-COPY ./src/ ./src/
-RUN cargo build --release --bin sandwitch
+COPY --link . .
+COPY --from=contracts --link /app/contracts/out/ ./contracts/out/
+RUN --mount=type=cache,target=/usr/local/rustup \
+  --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=${SCCACHE_DIR} \
+  --mount=type=cache,target=./target \
+  cargo build --locked --release --bin sandwitch \
+  && mv ./target/release/sandwitch /usr/local/bin/
 
 FROM gcr.io/distroless/cc
-COPY --from=builder /app/target/release/sandwitch /usr/local/bin/
+COPY --from=builder /usr/local/bin/sandwitch /usr/local/bin/
+VOLUME [ "/etc/sandwitch" ]
 ENTRYPOINT [\
   "/usr/local/bin/sandwitch",\
-  "--metrics-host", "0.0.0.0",\
-  "--metrics-port", "9000",\
-  "--config", "/etc/sandwitch/sandwitch.toml",\
-  "--accounts-dir", "/etc/sandwitch/accounts"\
+  "--config", "/etc/sandwitch/sandwitch.toml"\
   ]
 EXPOSE 9000/tcp
-VOLUME ["/etc/sandwitch/accounts"]
 HEALTHCHECK --interval=15s --timeout=5s \
   CMD curl -sf http://127.0.0.1:9000/metrics || exit 1

@@ -1,7 +1,4 @@
-use ethers::types::{
-    transaction::{eip2718::TypedTransaction, eip2930::AccessList},
-    Address, Bytes, NameOrAddress, OtherFields, Signature, TxHash, H256, U256,
-};
+use ethers::types::{transaction::eip2930::AccessList, Address, Bytes, OtherFields, H256, U256};
 use thiserror::Error as ThisError;
 
 #[cfg(not(feature = "legacy"))]

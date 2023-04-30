@@ -1,9 +1,17 @@
+#![feature(is_some_and)]
+
+use std::collections::HashMap;
+
 use ethers::{
-    abi::AbiDecode,
+    abi::{AbiDecode, RawLog},
+    contract::EthEvent,
     providers::Middleware,
-    types::{Address, U256},
+    types::{Address, H256, U256},
 };
-use futures::{future::{self, BoxFuture, FutureExt}, try_join};
+use futures::{
+    future::{self, BoxFuture, FutureExt},
+    try_join,
+};
 
 // use contracts::{
 //     pancake_swap::i_pancake_router_02::{
@@ -33,16 +41,20 @@ use futures::{future::{self, BoxFuture, FutureExt}, try_join};
 //
 // use self::{pair::Pair, router::Router};
 
-use contracts::{
+use sandwitch_contracts::{
     erc20::ApproveCall,
-    multicall::{ContractCall, DynTryCall, Call},
-    pancake_swap::PancakeRouterCalls,
-    pancake_toaster::{BackRunSwapAllCall, FrontRunSwapExtCall, FrontRunSwapExtReturn, PancakeToaster},
+    multicall::{Call, ContractCall},
+    pancake_swap::{pair::SyncFilter, router::PancakeRouterCalls},
+    pancake_toaster::{
+        BackRunSwapAllCall, FrontRunSwapExtCall, FrontRunSwapExtReturn, PancakeToaster,
+    },
 };
 
-use crate::transactions::Transaction;
-
-use super::{PendingBlock, PendingBlockMonitor};
+use sandwitch_engine::{
+    block::{PendingBlock, TxWithLogs},
+    monitor::PendingBlockMonitor,
+    transactions::Transaction,
+};
 
 pub(crate) struct PancakeSwapMonitor<M: Middleware> {
     router: Address,
@@ -58,114 +70,148 @@ impl<M: Middleware + 'static> PendingBlockMonitor<M> for PancakeSwapMonitor<M> {
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         async move {
             for adjacent_txs in block.iter_adjacent_txs() {
-                for tx in &adjacent_txs {
-                    if !tx.to.is_some_and(|to| to == self.router) {
-                        continue;
-                    }
-                    // TODO: check all logs and extract deltas
-                    let Some(swap) = Swap::from_tx(&tx) else {
-                        continue;
-                    };
-                    // TODO: check that base_token is included only once
-                    let Some(index_in) = swap.path.iter().position(|token| *token == self.base_token) else {
-                        continue;
-                    };
-                    if index_in == swap.path.len() - 1 {
-                        // we need base token to be not the last one
-                        continue;
-                    }
-                    // TODO: check if all tokens are in whitelist?
-
-                    let (token_in, token_out) = (swap.path[index_in], swap.path[index_in + 1]); // TODO
-
-                    let front_run = block.first_in_block_candidate((
-                        ContractCall::new(
+                // let tokens_out_deltas = HashMap::new();
+                let token_out_deltas = self.token_out_deltas(&adjacent_txs)?;
+                for (token_out, (reserve_before, reserve_after)) in token_out_deltas {}
+                let front_run = block.first_in_block_candidate((
+                    ContractCall::new(
+                        self.base_token,
+                        ApproveCall {
+                            spender: self.toaster.address(),
+                            amount: U256::MAX, // TODO: cache already approved tokens
+                        },
+                    )
+                    .must(),
+                    ContractCall::new(
+                        self.toaster.address(),
+                        FrontRunSwapExtCall {
+                            from: block.account(),
+                            amount_in: swap.amount_in,
+                            amount_out: swap.amount_out,
+                            eth_in: swap.eth_in,
+                            path: swap.path,
+                            index_in: index_in.into(),
+                        },
+                    )
+                    .must(),
+                    // TODO: add in backwards direction
+                ));
+                let back_run = adjacent_txs.back_run_candidate((
+                    ContractCall::new(
+                        token_out,
+                        ApproveCall {
+                            spender: self.toaster.address(),
+                            amount: U256::MAX, // TODO
+                        },
+                    )
+                    .must(),
+                    ContractCall::new(
+                        self.toaster.address(),
+                        BackRunSwapAllCall {
                             token_in,
-                            ApproveCall {
-                                spender: self.toaster.address(),
-                                amount: U256::MAX, // TODO: cache already approved tokens
-                            },
-                        ).must(),
-                        ContractCall::new(
-                            self.toaster.address(),
-                            FrontRunSwapExtCall {
-                                from: block.account(),
-                                amount_in: swap.amount_in,
-                                amount_out: swap.amount_out,
-                                eth_in: swap.eth_in,
-                                path: swap.path,
-                                index_in: index_in.into(),
-                            },
-                        ).must(),
-                        // TODO: add in backwards direction
-                    ));
-                    let back_run = adjacent_txs.back_run_candidate((
-                        ContractCall::new(
                             token_out,
-                            ApproveCall {
-                                spender: self.toaster.address(),
-                                amount: U256::MAX, // TODO
-                            },
-                        ).must(),
-                        ContractCall::new(
-                            self.toaster.address(),
-                            BackRunSwapAllCall {
-                                token_in,
-                                token_out,
-                            },
-                        ).must(),
-                    ));
+                        },
+                    )
+                    .must(),
+                ));
 
-                    let (
-                        Ok((_approved, Ok(FrontRunSwapExtReturn {
-                            his_amount_in,
-                            his_amount_out,
-                            our_amount_in: front_run_amount_in,
-                            our_amount_out: front_run_amount_out,
-                            new_reserve_in: reserve_in_after_front_run,
-                            new_reserve_out: reserve_out_after_front_run,
-                        }))),
-                        Ok(front_run_cost),
-                        Ok(back_run_cost),
-                    ) = try_join!(
-                        front_run.call(),
-                        front_run.estimate_fee(),
-                        back_run.estimate_fee(),
-                    )? else {
-                        // someone reverted
-                        continue;
-                    };
+                let (
+                    Ok((Ok(_approved), Ok(FrontRunSwapExtReturn {
+                        his_amount_in,
+                        his_amount_out,
+                        our_amount_in: front_run_amount_in,
+                        our_amount_out: front_run_amount_out,
+                        new_reserve_in: reserve_in_after_front_run,
+                        new_reserve_out: reserve_out_after_front_run,
+                    }))),
+                    Ok(front_run_cost),
+                    Ok(back_run_cost),
+                ) = try_join!(
+                    front_run.call(),
+                    front_run.estimate_fee(),
+                    back_run.estimate_fee(),
+                )? else {
+                    // someone reverted
+                    continue;
+                };
 
+                // TODO: prifit calculations
 
-                    
-                    // TODO: prifit calculations
+                let reserve_in_after_patty = reserve_in_after_front_run + his_amount_in;
+                let reserve_out_after_patty = reserve_out_after_front_run - his_amount_out;
 
-                    // front_run.add_to_send();
+                let back_run_amount_out = get_amount_out(
+                    front_run_amount_out,
+                    reserve_in_after_patty,
+                    reserve_out_after_patty,
+                );
 
-                    let reserve_in_after_patty = reserve_in_after_front_run + his_amount_in;
-                    let reserve_out_after_patty = reserve_out_after_front_run - his_amount_out;
-
-                    let back_run_amount_out = get_amount_out(front_run_amount_out, reserve_in_after_patty, reserve_out_after_patty);
-
-                    // let delta = back_run_amount_out - front_run_amount_in;
-                    // let cost = {
-                    //     let (front_run_cost, back_run_cost) = try_join!(
-                    //         front_run.estimate_fee(),
-                    //         back_run.estimate_fee(),
-                    //     )?;
-                    //     front_run_cost + back_run_cost
-                    // };
-                    // if delta > cost {
-                    //     block.add_to_send([front_run.into(), back_run.into()]).await;
-                    // }
-                    // let Ok()
+                let delta = back_run_amount_out - front_run_amount_in;
+                let cost = front_run_cost + back_run_cost;
+                if delta > cost {
+                    block.add_to_send([front_run.into(), back_run.into()]).await;
                 }
-
             }
             Ok(())
         }
         .boxed()
     }
+}
+
+impl<M: Middleware + 'static> PancakeSwapMonitor<M> {
+    fn token_out_deltas(
+        &self,
+        txs: &[TxWithLogs],
+    ) -> anyhow::Result<HashMap<Address, (Reserves, Reserves)>> {
+        let mut reserves = HashMap::new();
+        for tx in txs {
+            if !tx.to.is_some_and(|to| to == self.router) {
+                continue;
+            }
+            // TODO: check all logs and extract deltas
+            let Some(swap) = Swap::from_tx(&tx) else {
+                continue;
+            };
+            // TODO: check that base_token is included only once
+            let Some(index_in) = swap.path.iter().position(|token| *token == self.base_token) else {
+                continue;
+            };
+            if index_in == swap.path.len() - 1 {
+                // we need base token to be not the last one
+                continue;
+            }
+            // TODO: check if all tokens are in whitelist?
+
+            let token_out = swap.path[index_in + 1]; // TODO
+            let pair = pair_address(self.base_token, token_out);
+
+            let sync_topic_0: H256 = SyncFilter::signature();
+
+            let sync_log = tx
+                .logs
+                .iter()
+                .rfind(|l| {
+                    l.address == pair && l.topics.first().is_some_and(|t| *t == sync_topic_0)
+                })
+                .unwrap()
+                .clone();
+            let sync = SyncFilter::decode_log(&RawLog {
+                topics: sync_log.topics,
+                data: sync_log.data.to_vec(),
+            })?;
+            reserves.entry(token_out).or_insert(todo!());
+        }
+        Ok(reserves)
+    }
+}
+
+fn pair_address(token0: Address, token1: Address) -> Address {
+    todo!()
+}
+
+struct Reserves {
+    reserve_in: U256,
+    reserve_out: U256,
 }
 
 const BIP: u64 = 1_0000;

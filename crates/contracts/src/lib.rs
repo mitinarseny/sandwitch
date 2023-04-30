@@ -21,7 +21,7 @@ pub(crate) mod prelude {
     macro_rules! tracked_abigen {
         ($name:ident, $path:literal $(, $other:expr)*) => {
             const _: &'static str = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"), "/../", $path));
+                env!("CARGO_MANIFEST_DIR"), "/../../", $path));
             ::ethers::contract::abigen!($name, $path $(, $other)*);
         };
     }
@@ -170,7 +170,7 @@ pub(crate) mod prelude {
         }
     }
 }
-pub use self::prelude::{EthTypedCall, ContractError};
+pub use self::prelude::{ContractError, EthTypedCall};
 
 #[cfg(feature = "multicall")]
 pub mod multicall;

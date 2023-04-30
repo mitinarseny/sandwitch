@@ -153,6 +153,7 @@ impl<C: Call> MultiCall for Calls<C> {
     type Reverted = RevertedAt<C::Reverted>;
 
     fn encode_calls(self) -> (Calls<RawCall>, Self::Meta) {
+        // TODO: also return meta if failure was allowed
         self.into_iter().map(DynTryCall::encode_raw).unzip()
     }
 
@@ -168,6 +169,7 @@ impl<C: Call> MultiCall for Calls<C> {
             .into_iter()
             .zip(metas)
             .map(|(r, meta)| {
+                // TODO: check if falire was allowed
                 Ok(match r {
                     Ok(output) => Ok(C::decode_ok(output, meta)?),
                     Err(output) => Err(C::decode_reverted(output, meta)?),

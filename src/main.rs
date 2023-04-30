@@ -5,13 +5,13 @@ use anyhow::{anyhow, Context};
 use clap::{Parser, ValueHint};
 use ethers::core::k256::ecdsa::SigningKey;
 use impl_tools::autoimpl;
-use metrics::register_counter;
-use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
+use opentelemetry_otlp::WithExportConfig;
 use serde::Deserialize;
-use tokio::{fs, main, net, signal::ctrl_c};
+use tokio::{fs, main, signal::ctrl_c};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, metadata::LevelFilter};
-use tracing_subscriber::{prelude::*, Registry};
+use tracing_opentelemetry::OpenTelemetryLayer;
+use tracing_subscriber::{layer::Identity, prelude::*, Registry};
 use url::Url;
 
 use sandwitch::{App, Config as AppConfig};
@@ -32,23 +32,9 @@ struct CliArgs {
     #[arg(long, env = "SANDWITCH_KEYSTORE_PASSWORD")]
     keystore_password: Option<String>,
 
-    #[arg(
-        long,
-        value_hint = ValueHint::Hostname,
-        value_name = "HOST",
-        default_value_t = String::from("127.0.0.1"),
-    )]
-    /// Host for Prometheus metrics
-    metrics_host: String,
-
-    #[arg(
-        long,
-        value_parser = clap::value_parser!(u16).range(1..),
-        value_name = "PORT",
-        default_value_t = 9000,
-    )]
-    /// Port for Prometheus metrics
-    metrics_port: u16,
+    #[arg(long, value_name = "HOST:PORT")]
+    /// Endpoint for OTLP metrics
+    otlp_endpoint: Option<String>,
 
     #[arg(
         short, long,
@@ -96,12 +82,9 @@ async fn main() -> anyhow::Result<()> {
             LevelFilter::DEBUG,
             LevelFilter::TRACE,
         ][(args.verbose.min(4)) as usize],
+        args.otlp_endpoint,
     )
     .with_context(|| "failed to init tracing subscriber")?;
-
-    install_prometheus_metrics_recoder_and_exporter(args.metrics_host, args.metrics_port)
-        .await
-        .with_context(|| "failed to install prometheus metrics recorder/exporter")?;
 
     info!("connecting to node...");
     let client = connect(&config.network.node).await?;
@@ -129,48 +112,66 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_tracing_subscriber(level: LevelFilter) -> anyhow::Result<()> {
-    // TODO: opentelemetry, graphana tempo
+fn init_tracing_subscriber(
+    level: LevelFilter,
+    otlp_endpoint: impl Into<Option<String>>,
+) -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(
         Registry::default().with(
             tracing_subscriber::fmt::layer()
-                .map_event_format(|f| f.pretty().with_source_location(false)) // TODO: remove
+                .map_event_format(|f| f.pretty().with_source_location(false))
                 .with_filter(
                     tracing_subscriber::EnvFilter::new(
-                        "h2=info,hyper=info,tokio_util=info,ethers_providers=info",
+                        "h2=info,hyper=info,tokio_util=info,ethers_providers=info,\
+                        tonic=info,tower=info",
                     )
                     .add_directive(level.into()),
-                ),
+                )
+                .and_then(if let Some(endpoint) = otlp_endpoint.into() {
+                    OpenTelemetryLayer::new(
+                        opentelemetry_otlp::new_pipeline()
+                            .tracing()
+                            .with_exporter(
+                                opentelemetry_otlp::new_exporter()
+                                    .tonic()
+                                    .with_endpoint(endpoint),
+                            )
+                            .install_batch(opentelemetry::runtime::Tokio)?,
+                    )
+                    .boxed()
+                } else {
+                    Identity::new().boxed()
+                }),
         ),
     )?;
     Ok(())
 }
 
-async fn install_prometheus_metrics_recoder_and_exporter(
-    host: impl AsRef<str>,
-    port: u16,
-) -> anyhow::Result<()> {
-    let host = host.as_ref();
-    PrometheusBuilder::new()
-        .with_http_listener(
-            net::lookup_host((host, port))
-                .await
-                .with_context(|| format!("failed to lookup host: {host}:{port}",))?
-                .next()
-                .unwrap(),
-        )
-        .set_buckets_for_metric(
-            Matcher::Suffix("_duration".to_string()),
-            &[
-                0.01, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.225, 0.25, 0.275, 0.3, 0.35,
-                0.4, 0.5, 0.6, 0.7, 0.8, 1.,
-            ],
-        )
-        .unwrap()
-        .install()?;
-    register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
-    Ok(())
-}
+// async fn install_prometheus_metrics_recoder_and_exporter(
+//     host: impl AsRef<str>,
+//     port: u16,
+// ) -> anyhow::Result<()> {
+//     let host = host.as_ref();
+//     PrometheusBuilder::new()
+//         .with_http_listener(
+//             net::lookup_host((host, port))
+//                 .await
+//                 .with_context(|| format!("failed to lookup host: {host}:{port}",))?
+//                 .next()
+//                 .unwrap(),
+//         )
+//         .set_buckets_for_metric(
+//             Matcher::Suffix("_duration".to_string()),
+//             &[
+//                 0.01, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.225, 0.25, 0.275, 0.3, 0.35,
+//                 0.4, 0.5, 0.6, 0.7, 0.8, 1.,
+//             ],
+//         )
+//         .unwrap()
+//         .install()?;
+//     register_counter!("sandwitch_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
+//     Ok(())
+// }
 
 #[cfg(all(feature = "ws", not(feature = "ipc")))]
 type connect = connect_ws;
@@ -194,10 +195,12 @@ async fn connect_ipc(url: &Url) -> anyhow::Result<ethers::providers::Ipc> {
 #[cfg(all(feature = "ipc", feature = "ws"))]
 async fn connect(
     url: &Url,
-) -> anyhow::Result<sandwitch::providers::OneOf<ethers::providers::Ws, ethers::providers::Ipc>> {
+) -> anyhow::Result<
+    sandwitch::providers::one_of::OneOf<ethers::providers::Ws, ethers::providers::Ipc>,
+> {
     Ok(match url.scheme() {
-        "wss" => sandwitch::providers::OneOf::P1(connect_ws(url).await?),
-        "file" => sandwitch::providers::OneOf::P2(connect_ipc(url).await?),
+        "wss" => sandwitch::providers::one_of::OneOf::P1(connect_ws(url).await?),
+        "file" => sandwitch::providers::one_of::OneOf::P2(connect_ipc(url).await?),
         _ => return Err(anyhow!("invalid node url: {url}")),
     })
 }

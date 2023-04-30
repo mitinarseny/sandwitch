@@ -1,5 +1,5 @@
 [package]
-name = "contracts"
+name = "sandwitch-contracts"
 version.workspace = true
 edition.workspace = true
 

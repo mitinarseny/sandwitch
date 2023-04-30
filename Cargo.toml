@@ -1,72 +1,41 @@
 [workspace]
-members = ["./bindings"]
+members = [
+    "./crates/contracts",
+    "./crates/engine",
+    "./crates/monitors/*",
+]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+sandwitch-contracts = { path = "./crates/contracts", default-features = false, features = ["multicall"] }
+sandwitch-engine = { path = "./crates/engine", default-features = false }
+sandwitch-monitor-logger = { path = "./crates/monitors/logger", default-features = false }
+sandwitch-monitor-pancake-swap = { path = "./crates/monitors/pancake_swap", default-features = false }
+
+anyhow = "1"
 bytes = { version = "1.4", features = ["serde"] }
-contracts = { path = "./bindings" }
+futures = "0.3"
 impl-tools = "0.8.0"
 itertools = "0.10"
+metrics = "0.20"
+pin-project = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "2.3"
 thiserror = "1"
+tokio-util = "0.7"
+tracing = "0.1"
+url = { version = "2.2", features = ["serde"] }
 
 [workspace.dependencies.ethers]
 version = "=2.0.3"
 default-features = false
 features = ["abigen", "rustls"]
 
-[package]
-name = "sandwitch"
-version.workspace = true
-edition.workspace = true
-
-[features]
-default = ["ws", "ipc", "pancake_swap"]
-ipc = ["ethers/ipc"]
-ws = ["ethers/ws"]
-pancake_swap = [
-    "legacy",
-    "contracts/pancake_toaster",
-    "contracts/pancake_swap",
-    "contracts/erc20",
-]
-
-legacy = ["contracts/legacy", "ethers/legacy"]
-
-[dependencies]
-anyhow = "1"
-bytes.workspace = true
-clap = { version = "4.0", features = ["derive", "env"] }
-contracts = { workspace = true, features = ["multicall"] }
-ethers.workspace = true
-eth-keystore = "0.5.0"
-fixed-vec-deque = "0.1"
-futures = "0.3"
-itertools.workspace = true
-impl-tools.workspace = true
-lazy_static = "1.4"
-metrics = "0.20"
-metrics-exporter-prometheus = { version = "0.11", default-features = false, features = ["http-listener"] }
-nalgebra = "0.32"
-pin-project = "1"
-serde.workspace = true
-serde_json.workspace = true
-serde_with.workspace = true
-smartcore = "0.3"
-thiserror.workspace = true
-tokio-stream = { version = "0.1", features = ["fs", "sync"] }
-tokio-util = "0.7"
-toml = "0.7.3"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url = { version = "2.2", features = ["serde"] }
-
-[dependencies.tokio]
+[workspace.dependencies.tokio]
 version = "1"
 default-features = false
 features = [
@@ -76,3 +45,54 @@ features = [
     "rt-multi-thread",
     "signal",
 ]
+
+[package]
+name = "sandwitch"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["ws", "ipc", "tx_logger"]
+ipc = ["ethers/ipc"]
+ws = ["ethers/ws"]
+
+tx_logger = ["sandwitch-monitor-logger"]
+
+pancake_swap = [
+    "legacy",
+    "sandwitch-monitor-pancake-swap",
+]
+
+legacy = ["sandwitch-engine/legacy", "ethers/legacy"]
+
+[dependencies]
+sandwitch-engine.workspace = true
+sandwitch-monitor-logger = { workspace = true, optional = true }
+sandwitch-monitor-pancake-swap = { workspace = true, optional = true }
+
+anyhow.workspace = true
+bytes.workspace = true
+clap = { version = "4.0", features = ["derive", "env"] }
+ethers.workspace = true
+eth-keystore = "0.5.0"
+futures.workspace = true
+itertools.workspace = true
+impl-tools.workspace = true
+lazy_static = "1.4"
+metrics.workspace = true
+metrics-exporter-prometheus = { version = "0.11", default-features = false, features = ["http-listener"] }
+opentelemetry = { version = "0.18", features = ["rt-tokio"] }
+opentelemetry-otlp = "0.11"
+pin-project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream = { version = "0.1", features = ["fs", "sync"] }
+tokio-util.workspace = true
+toml = "0.7.3"
+tracing.workspace = true
+tracing-opentelemetry = "0.18"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url.workspace = true

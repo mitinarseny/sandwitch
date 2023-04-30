@@ -502,9 +502,9 @@ pub trait TryCall: Sized {
 }
 
 #[derive(Clone)]
-pub struct MustCall<C>(pub C);
+pub struct MustCall<C: Call>(pub C);
 
-impl<C> From<C> for MustCall<C> {
+impl<C: Call> From<C> for MustCall<C> {
     fn from(call: C) -> Self {
         Self(call)
     }
@@ -535,9 +535,9 @@ impl<C: Call> TryCall for MustCall<C> {
 }
 
 #[derive(Clone)]
-pub struct MaybeCall<C>(pub C);
+pub struct MaybeCall<C: Call>(pub C);
 
-impl<C> From<C> for MaybeCall<C> {
+impl<C: Call> From<C> for MaybeCall<C> {
     fn from(call: C) -> Self {
         Self(call)
     }

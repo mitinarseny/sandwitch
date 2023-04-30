@@ -17,6 +17,9 @@ block_interval_ms = 12_000
 tx_propagation_delay_ms = 200
 multicall = "0x0000000000000000000000000000000000000000"
 
+[monitors.tx_logger]
+enabled = false
+
 [monitors.pancake_swap]
 router = "0x10ed43c718714eb63d5aa57b78b54704e256024e" # bsc mainnet
 #router = "0x9ac64cc6e4415144c455bd8e4837fea55603e5c3" # test net
