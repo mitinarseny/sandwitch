@@ -7,6 +7,5 @@ sandwitch.toml
 target/
 contracts/cache
 prometheus.yml
-grafana.ini
 grafana/
 accounts/

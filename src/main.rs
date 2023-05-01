@@ -2,16 +2,17 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context};
-use clap::{Parser, ValueHint};
+use clap::{Args, Parser, ValueHint};
 use ethers::core::k256::ecdsa::SigningKey;
 use impl_tools::autoimpl;
+use opentelemetry::{sdk::Resource, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
 use serde::Deserialize;
 use tokio::{fs, main, signal::ctrl_c};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, metadata::LevelFilter};
+use tracing::{info, Level, Subscriber};
 use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{layer::Identity, prelude::*, Registry};
+use tracing_subscriber::{filter::Targets, prelude::*, Layer, Registry};
 use url::Url;
 
 use sandwitch::{App, Config as AppConfig};
@@ -32,16 +33,67 @@ struct CliArgs {
     #[arg(long, env = "SANDWITCH_KEYSTORE_PASSWORD")]
     keystore_password: Option<String>,
 
+    #[command(flatten)]
+    logging: LoggingArgs,
+}
+
+#[derive(Args)]
+struct LoggingArgs {
     #[arg(long, value_name = "HOST:PORT")]
     /// Endpoint for OTLP metrics
     otlp_endpoint: Option<String>,
-
     #[arg(
         short, long,
         action = clap::ArgAction::Count,
     )]
     /// Increase verbosity (error (deafult) -> warn -> info -> debug -> trace)
     verbose: u8,
+}
+
+impl LoggingArgs {
+    fn make_subscriber(self) -> anyhow::Result<impl Subscriber> {
+        Ok(Registry::default().with(
+            tracing_subscriber::fmt::layer()
+                .map_event_format(|f| f.pretty().with_source_location(false))
+                .with_filter(Targets::from_iter([(
+                    env!("CARGO_PKG_NAME"),
+                    [
+                        Level::ERROR,
+                        Level::WARN,
+                        Level::INFO,
+                        Level::DEBUG,
+                        Level::TRACE,
+                    ][(self.verbose.min(4)) as usize],
+                )]))
+                .and_then(if let Some(endpoint) = self.otlp_endpoint {
+                    Some(
+                        OpenTelemetryLayer::new(
+                            opentelemetry_otlp::new_pipeline()
+                                .tracing()
+                                .with_exporter(
+                                    opentelemetry_otlp::new_exporter()
+                                        .tonic()
+                                        .with_endpoint(endpoint),
+                                )
+                                .with_trace_config(
+                                    opentelemetry::sdk::trace::config()
+                                        .with_resource(Resource::new([KeyValue::new(
+                                        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                                        env!("CARGO_PKG_NAME"),
+                                    )])),
+                                )
+                                .install_batch(opentelemetry::runtime::Tokio)?,
+                        )
+                        .with_filter(Targets::from_iter([
+                            (env!("CARGO_PKG_NAME"), Level::TRACE),
+                            ("ethers_providers::rpc::provider", Level::TRACE),
+                        ])),
+                    )
+                } else {
+                    None
+                }),
+        ))
+    }
 }
 
 #[derive(Deserialize)]
@@ -74,17 +126,7 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
 
-    init_tracing_subscriber(
-        [
-            LevelFilter::ERROR,
-            LevelFilter::WARN,
-            LevelFilter::INFO,
-            LevelFilter::DEBUG,
-            LevelFilter::TRACE,
-        ][(args.verbose.min(4)) as usize],
-        args.otlp_endpoint,
-    )
-    .with_context(|| "failed to init tracing subscriber")?;
+    tracing::subscriber::set_global_default(args.logging.make_subscriber()?)?;
 
     info!("connecting to node...");
     let client = connect(&config.network.node).await?;
@@ -109,41 +151,6 @@ async fn main() -> anyhow::Result<()> {
     app.run(cancel.child_token()).await?;
 
     info!("shutdown");
-    Ok(())
-}
-
-fn init_tracing_subscriber(
-    level: LevelFilter,
-    otlp_endpoint: impl Into<Option<String>>,
-) -> anyhow::Result<()> {
-    tracing::subscriber::set_global_default(
-        Registry::default().with(
-            tracing_subscriber::fmt::layer()
-                .map_event_format(|f| f.pretty().with_source_location(false))
-                .with_filter(
-                    tracing_subscriber::EnvFilter::new(
-                        "h2=info,hyper=info,tokio_util=info,ethers_providers=info,\
-                        tonic=info,tower=info",
-                    )
-                    .add_directive(level.into()),
-                )
-                .and_then(if let Some(endpoint) = otlp_endpoint.into() {
-                    OpenTelemetryLayer::new(
-                        opentelemetry_otlp::new_pipeline()
-                            .tracing()
-                            .with_exporter(
-                                opentelemetry_otlp::new_exporter()
-                                    .tonic()
-                                    .with_endpoint(endpoint),
-                            )
-                            .install_batch(opentelemetry::runtime::Tokio)?,
-                    )
-                    .boxed()
-                } else {
-                    Identity::new().boxed()
-                }),
-        ),
-    )?;
     Ok(())
 }
 

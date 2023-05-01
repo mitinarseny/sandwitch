@@ -6,29 +6,31 @@ use ethers::{
     providers::{JsonRpcClient, Middleware, Provider, ProviderError, PubsubClient},
     signers::{LocalWallet, Signer},
     types::{
-        transaction::eip2718::TypedTransaction, Address, Block, BlockId, BlockNumber, Bytes,
-        Filter, TxHash, U256,
+        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Filter, TxHash, U256,
     },
-    utils::keccak256,
 };
 use futures::{
-    future::{self, Aborted, Fuse, FusedFuture, FutureExt, TryFutureExt},
+    future::{self, Aborted, Fuse, FusedFuture, Future, FutureExt},
     select_biased,
-    stream::{self, FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
-    try_join, Future,
+    stream::{FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
+    try_join,
 };
-use sandwitch_contracts::{
-    multicall::{MultiCall, MultiCallContract},
-    EthTypedCall,
-};
+
 // use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
 
 use tokio::{
     self,
-    time::{error::Elapsed, sleep_until, timeout_at, Duration, Instant},
+    time::{sleep_until, timeout_at, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, field, info, instrument, warn, Instrument, Span};
+use tracing::{
+    debug, error, error_span, field, info, info_span, instrument, warn, Instrument, Span,
+};
+
+use sandwitch_contracts::{
+    multicall::{MultiCall, MultiCallContract},
+    EthTypedCall,
+};
 
 use crate::{
     abort::FutureExt as AbortFutureExt,
@@ -126,7 +128,7 @@ where
                 .with_context(|| "failed to subscribe to new blocks")?
                 .timed()
                 .fuse();
-            debug!("subscribed to new blocks");
+            debug!("listening to new blocks");
 
             let mut process_pending_block = pin!(Fuse::terminated());
 
@@ -224,13 +226,11 @@ where
         )
     }
 
-    async fn get_next_nonce_at(
-        &self,
-        block_id: impl Into<BlockId>,
-    ) -> anyhow::Result<Option<U256>> {
+    #[instrument(skip(self), fields(%block_number))]
+    async fn get_next_nonce_at(&self, block_number: BlockNumber) -> anyhow::Result<Option<U256>> {
         let (nonce_at_block, pending_nonce) = try_join!(
             self.client
-                .get_transaction_count(self.account(), Some(block_id.into())),
+                .get_transaction_count(self.account(), Some(block_number.into())),
             self.client
                 .get_transaction_count(self.account(), Some(BlockNumber::Pending.into())),
         )?;
@@ -252,13 +252,15 @@ where
         Ok(Some(nonce_at_block))
     }
 
-    async fn get_my_balance_at(&self, block_id: impl Into<BlockId>) -> anyhow::Result<U256> {
+    #[instrument(skip(self), fields(%block_number))]
+    async fn get_my_balance_at(&self, block_number: BlockNumber) -> anyhow::Result<U256> {
         self.client
-            .get_balance(self.account(), Some(block_id.into()))
+            .get_balance(self.account(), Some(block_number.into()))
             .await
             .map_err(Into::into)
     }
 
+    #[instrument(skip_all)]
     async fn get_pending_block(&self) -> anyhow::Result<PendingBlock<'_, MiddlewareStack<P>>> {
         let log_filter = Filter::new().select(BlockNumber::Pending);
         let (block, logs) = try_join!(
@@ -289,13 +291,15 @@ where
     > {
         let span = Span::current();
 
-        let latest_block_number = latest_block.number.unwrap();
+        let latest_block_number: BlockNumber = latest_block.number.unwrap().into();
 
         let (next_nonce, my_balance, pending_block) = try_join!(
             self.get_next_nonce_at(latest_block_number),
             self.get_my_balance_at(latest_block_number),
             async {
-                sleep_until(deadline - Duration::from_secs(3)).await;
+                sleep_until(deadline - Duration::from_secs(3))
+                    .instrument(info_span!("wait_before_request_pending"))
+                    .await;
                 debug!("requesting pending block...");
                 self.get_pending_block().await
             }
@@ -362,6 +366,7 @@ where
         ))
     }
 
+    #[instrument(skip_all)]
     async fn extract_txs_to_send(
         &self,
         processed_block: PendingBlock<'_, MiddlewareStack<P>>,

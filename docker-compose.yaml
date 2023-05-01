@@ -3,48 +3,52 @@ services:
     build: .
     command:
       - '--otlp-endpoint'
-      - 'http://otel-collector:4317'
+      - 'http://tempo:4317'
       - '-vvvvv' # info log level
     stop_signal: SIGINT
     stop_grace_period: '30s'
     volumes:
       - './sandwitch.toml:/etc/sandwitch/sandwitch.toml:ro'
     depends_on:
-      - otel-collector
+      - tempo
     healthcheck:
       disable: true # metrics are collected by prometheus
 
-  otel-collector:
-    image: 'otel/opentelemetry-collector:latest'
-    command:
-      - '--config'
-      - '/etc/otel-collector.yaml'
-      - '--set'
-      - 'exporters.otlp.endpoint=tempo:4317'
-    volumes:
-      - './otel-collector.yaml:/etc/otel-collector.yaml:ro'
-    depends_on:
-      - tempo
+  # otel-collector:
+  #   image: 'otel/opentelemetry-collector:latest'
+  #   command:
+  #     - '--config'
+  #     - '/etc/otel-collector.yaml'
+  #     - '--set'
+  #     - 'exporters.otlp.endpoint=tempo:4317'
+  #   volumes:
+  #     - './otel-collector.yaml:/etc/otel-collector.yaml:ro'
+  #   depends_on:
+  #     - tempo
 
   tempo:
     image: 'grafana/tempo:latest'
     command:
-      - '-config.file'
-      - '/etc/tempo.yaml'
+      - '-config.file=/etc/tempo.yaml'
+      - '-server.http-listen-port=3200'
       - '-log.level'
       - 'warn'
     volumes:
       - './tempo.yaml:/etc/tempo.yaml:ro'
       - '/var/lib/tempo'
+    ports:
+      - '3200/tcp' # tempo
+      - '4317/tcp' # otlp grpc
 
   grafana:
-    image: 'grafana/grafana-oss:latest'
+    image: 'grafana/grafana-oss:9.5.0'
     environment:
-      TEMPO_ADDR: 'tempo:9090'
+      TEMPO_ADDR: 'tempo:3200'
     volumes:
-      - './grafana.ini:/etc/grafana/grafana.ini:ro'
+      - './grafana/grafana.ini:/etc/grafana/grafana.ini:ro'
       - './grafana/datasources/:/etc/grafana/provisioning/datasources/:ro'
-      - './grafana/dashboards/:/etc/grafana/provisioning/dashboards/:ro'
+      - './grafana/dashboards-provisioning:/etc/grafana/provisioning/dashboards:ro'
+      - './grafana/dashboards:/var/lib/grafana/dashboards:ro'
     depends_on:
       - tempo
     ports:

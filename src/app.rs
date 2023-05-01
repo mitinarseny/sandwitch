@@ -9,9 +9,9 @@ use ethers::{
     utils::secret_key_to_address,
 };
 use futures::{
-    future::{self, LocalBoxFuture, TryFutureExt},
+    future::{LocalBoxFuture, TryFutureExt},
     stream::FuturesUnordered,
-    try_join, FutureExt, TryStreamExt,
+    try_join, TryStreamExt,
 };
 use metrics::register_counter;
 use tokio_util::sync::CancellationToken;

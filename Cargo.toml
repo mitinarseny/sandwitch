@@ -52,15 +52,15 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["ws", "ipc", "tx_logger"]
+default = ["ws", "ipc"]
 ipc = ["ethers/ipc"]
 ws = ["ethers/ws"]
 
-tx_logger = ["sandwitch-monitor-logger"]
+tx_logger = ["dep:sandwitch-monitor-logger"]
 
 pancake_swap = [
     "legacy",
-    "sandwitch-monitor-pancake-swap",
+    "dep:sandwitch-monitor-pancake-swap",
 ]
 
 legacy = ["sandwitch-engine/legacy", "ethers/legacy"]
@@ -83,6 +83,7 @@ metrics.workspace = true
 metrics-exporter-prometheus = { version = "0.11", default-features = false, features = ["http-listener"] }
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }
 opentelemetry-otlp = "0.11"
+opentelemetry-semantic-conventions = "0.10"
 pin-project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
