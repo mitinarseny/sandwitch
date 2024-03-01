@@ -17,3 +17,12 @@ pub mod pair {
         "contracts/out/IPancakePair.sol/IPancakePair.json"
     );
 }
+
+pub mod factory {
+    use super::*;
+
+    tracked_abigen!(
+        PancakeFactory,
+        "contracts/out/IPancakeFactory.sol/IPancakeFactory.json"
+    );
+}

@@ -1,13 +1,6 @@
 use core::{cmp::Reverse, iter::Map, mem, slice};
 use std::sync::Arc;
 
-use sandwitch_contracts::{
-    multicall::{
-        Call, Calls, DynTryCall, MultiCall, MultiCallContract, MultiCallErrors, MultiFunctionCall,
-        RawCall,
-    },
-    ContractError,
-};
 use ethers::{
     providers::Middleware,
     types::{Address, Block, BlockNumber, Log, TxHash, U256},
@@ -15,9 +8,83 @@ use ethers::{
 use futures::lock::Mutex;
 use impl_tools::autoimpl;
 use itertools::Itertools;
+use sandwitch_contracts::{
+    multicall::{
+        Call, Calls, DynTryCall, MultiCall, MultiCallContract, MultiCallErrors, MultiFunctionCall,
+        RawCall,
+    },
+    ContractError,
+};
 use thiserror::Error as ThisError;
 
 use crate::transactions::{InvalidTransaction, Transaction};
+
+#[derive(Debug)]
+#[autoimpl(Deref using self.block)]
+pub struct ProcessingBlock<M, TX = Transaction> {
+    pub(crate) block: Block<TX>,
+    pub(crate) to_send: ToSend,
+    account: Address,
+    multicall: Arc<MultiCallContract<Arc<M>, M>>,
+    first_priority_fee_per_gas: U256,
+}
+
+impl<M, TX> ProcessingBlock<M, TX> {
+    pub fn account(&self) -> Address {
+        self.account
+    }
+
+    fn base_fee_per_gas(&self) -> U256 {
+        self.block.base_fee_per_gas.unwrap_or(0.into())
+    }
+
+    pub async fn add_to_send(&self, calls: impl IntoIterator<Item = PrioritizedMultiCall>) {
+        self.to_send.add_to_send(calls).await
+    }
+
+    pub fn first_in_block(&self, calls: impl MultiCall) -> PrioritizedMultiCall {
+        PrioritizedMultiCall::new(calls, self.first_priority_fee_per_gas)
+    }
+}
+
+impl<M, TX> ProcessingBlock<M, TX>
+where
+    M: Middleware,
+{
+    fn candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+        priority_fee_per_gas: U256,
+    ) -> CandidateToSend<'_, M, C, TX> {
+        CandidateToSend {
+            function_call: self
+                .multicall
+                .multicall(calls.clone())
+                .block(BlockNumber::Pending)
+                .priority_fee_per_gas(priority_fee_per_gas),
+            call: PrioritizedMultiCall::new(calls, priority_fee_per_gas),
+            block: &self,
+        }
+    }
+
+    pub fn first_in_block_candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+    ) -> CandidateToSend<'_, M, C, TX> {
+        self.candidate(calls, self.first_priority_fee_per_gas)
+    }
+}
+
+pub type PendingBlock<M> = ProcessingBlock<M, TxWithLogs>;
+
+impl<M> PendingBlock<M> {
+    pub fn iter_adjacent_txs(&self) -> impl Iterator<Item = AdjacentPendingTxsWithLogs<'_, M>> {
+        self.block
+            .transactions
+            .group_by(|l, r| l.fees.priority_fee() == r.fees.priority_fee())
+            .map(move |txs| AdjacentPendingTxsWithLogs { txs, block: &self })
+    }
+}
 
 #[derive(Default)]
 pub struct PriorityFeeEstimator;
@@ -53,11 +120,13 @@ impl<M> PendingBlockFactory<M> {
         }
     }
 
-    pub async fn new_pending_block(
+    // pub async fn make_block(&self, block: Block<TxHash>) -> ProcessingBlock<M, TxHash> {}
+
+    pub async fn make_pending_block(
         &self,
         block: Block<ethers::types::Transaction>,
         logs: impl IntoIterator<Item = Log>,
-    ) -> Result<PendingBlock<'_, M>, InvalidPendingBlock> {
+    ) -> Result<PendingBlock<M>, InvalidPendingBlock> {
         // TODO: ensure all logs are from the same block as `block`
         let Block {
             hash,
@@ -82,6 +151,8 @@ impl<M> PendingBlockFactory<M> {
             mix_hash,
             nonce,
             base_fee_per_gas,
+            withdrawals,
+            withdrawals_root,
             other,
         } = block;
 
@@ -105,7 +176,7 @@ impl<M> PendingBlockFactory<M> {
             })
             .try_collect()?;
 
-        Ok(PendingBlock {
+        Ok(ProcessingBlock {
             first_priority_fee_per_gas: self
                 .fees
                 .lock()
@@ -134,11 +205,13 @@ impl<M> PendingBlockFactory<M> {
                 mix_hash,
                 nonce,
                 base_fee_per_gas,
+                withdrawals,
+                withdrawals_root,
                 other,
             },
             to_send: Default::default(),
             account: self.account,
-            multicall: &self.multicall,
+            multicall: self.multicall.clone(),
         })
     }
 }
@@ -183,14 +256,6 @@ impl<C: Call> Extend<C> for MultiCallGroups {
     }
 }
 
-impl<C: Call> FromIterator<C> for MultiCallGroups {
-    fn from_iter<T: IntoIterator<Item = C>>(calls: T) -> Self {
-        let mut this = Self::default();
-        this.extend(calls);
-        this
-    }
-}
-
 impl IntoIterator for MultiCallGroups {
     type Item = RawCall;
     type IntoIter =
@@ -228,7 +293,7 @@ pub struct TxWithLogs {
 #[autoimpl(Deref<Target = [TxWithLogs]> using self.txs)]
 pub struct AdjacentPendingTxsWithLogs<'a, M> {
     txs: &'a [TxWithLogs],
-    block: &'a PendingBlock<'a, M>,
+    block: &'a PendingBlock<M>,
 }
 
 impl<'a, M> AdjacentPendingTxsWithLogs<'a, M> {
@@ -253,12 +318,18 @@ impl<'a, M> AdjacentPendingTxsWithLogs<'a, M> {
 }
 
 impl<'a, M: Middleware> AdjacentPendingTxsWithLogs<'a, M> {
-    pub fn front_run_candidate<C: MultiCall + Clone>(&self, calls: C) -> CandidateToSend<'_, M, C> {
+    pub fn front_run_candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+    ) -> CandidateToSend<'_, M, C, TxWithLogs> {
         self.block
             .candidate(calls, self.before_priority_fee_per_gas())
     }
 
-    pub fn back_run_candidate<C: MultiCall + Clone>(&self, calls: C) -> CandidateToSend<'_, M, C> {
+    pub fn back_run_candidate<C: MultiCall + Clone>(
+        &self,
+        calls: C,
+    ) -> CandidateToSend<'_, M, C, TxWithLogs> {
         self.block.candidate(calls, self.priority_fee_per_gas())
     }
 }
@@ -273,7 +344,7 @@ impl<'a, M> IntoIterator for &'a AdjacentPendingTxsWithLogs<'a, M> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ToSend(Mutex<Vec<PrioritizedMultiCall>>);
 
 impl ToSend {
@@ -281,16 +352,21 @@ impl ToSend {
         self.0.lock().await.extend(calls)
     }
 
-    pub fn join_adjacent(self) -> Vec<PrioritizedMultiCall> {
+    pub fn reduce(self) -> Vec<PrioritizedMultiCall> {
         let mut calls: Vec<_> = self
             .0
             .into_inner()
             .into_iter()
             .group_by(|t| t.priority_fee_per_gas)
             .into_iter()
-            .map(|(priority_fee, group)| PrioritizedMultiCall {
-                calls: group.map(|g| g.calls).concat(),
-                priority_fee_per_gas: priority_fee,
+            .filter_map(|(priority_fee_per_gas, group)| {
+                Some(PrioritizedMultiCall {
+                    calls: group.map(|g| g.calls).reduce(|mut r, l| {
+                        r.extend(l.calls.into_iter().map(DynTryCall::into_call));
+                        r
+                    })?,
+                    priority_fee_per_gas,
+                })
             })
             .collect();
         calls.sort_unstable_by_key(|p| Reverse(p.priority_fee_per_gas));
@@ -298,19 +374,19 @@ impl ToSend {
     }
 }
 
-pub struct CandidateToSend<'a, M, C: MultiCall> {
+pub struct CandidateToSend<'a, M, C: MultiCall, TX> {
     call: PrioritizedMultiCall,
     function_call: MultiFunctionCall<Arc<M>, M, C>,
-    block: &'a PendingBlock<'a, M>,
+    block: &'a ProcessingBlock<M, TX>,
 }
 
-impl<'a, M, C: MultiCall> From<CandidateToSend<'a, M, C>> for PrioritizedMultiCall {
-    fn from(candidate: CandidateToSend<'a, M, C>) -> Self {
+impl<'a, M, C: MultiCall, TX> From<CandidateToSend<'a, M, C, TX>> for PrioritizedMultiCall {
+    fn from(candidate: CandidateToSend<'a, M, C, TX>) -> Self {
         candidate.call
     }
 }
 
-impl<'a, M, C> CandidateToSend<'a, M, C>
+impl<'a, M, C, TX> CandidateToSend<'a, M, C, TX>
 where
     M: Middleware,
     C: MultiCall,
@@ -321,6 +397,7 @@ where
         self.function_call.call().await
     }
 
+    // TODO: this is based on this actual block, not latest one
     pub async fn estimate_fee(
         &self,
     ) -> Result<Result<U256, MultiCallErrors<C::Reverted>>, ContractError<M>> {
@@ -333,67 +410,5 @@ where
 
     pub async fn add_to_send(self) {
         self.block.add_to_send(Some(self.call)).await
-    }
-}
-
-#[autoimpl(Deref using self.block)]
-pub struct PendingBlock<'a, M> {
-    pub(crate) block: Block<TxWithLogs>,
-    pub(crate) to_send: ToSend,
-    account: Address, // TODO: get from client from multicall
-    multicall: &'a MultiCallContract<Arc<M>, M>,
-    first_priority_fee_per_gas: U256,
-}
-
-impl<'a, M> PendingBlock<'a, M> {
-    pub fn account(&self) -> Address {
-        self.account
-    }
-
-    fn base_fee_per_gas(&self) -> U256 {
-        self.block.base_fee_per_gas.unwrap_or(0.into())
-    }
-
-    pub async fn add_to_send(&self, calls: impl IntoIterator<Item = PrioritizedMultiCall>) {
-        self.to_send.add_to_send(calls).await
-    }
-
-    pub fn first_in_block(&self, calls: impl MultiCall) -> PrioritizedMultiCall {
-        PrioritizedMultiCall::new(calls, self.first_priority_fee_per_gas)
-    }
-
-    pub fn iter_adjacent_txs(&self) -> impl Iterator<Item = AdjacentPendingTxsWithLogs<'_, M>> {
-        self.block
-            .transactions
-            .group_by(|l, r| l.fees.priority_fee() == r.fees.priority_fee())
-            .map(move |txs| AdjacentPendingTxsWithLogs { txs, block: &self })
-    }
-}
-
-impl<'a, M> PendingBlock<'a, M>
-where
-    M: Middleware,
-{
-    fn candidate<C: MultiCall + Clone>(
-        &self,
-        calls: C,
-        priority_fee_per_gas: U256,
-    ) -> CandidateToSend<'_, M, C> {
-        CandidateToSend {
-            function_call: self
-                .multicall
-                .multicall(calls.clone())
-                .block(BlockNumber::Pending)
-                .priority_fee_per_gas(priority_fee_per_gas),
-            call: PrioritizedMultiCall::new(calls, priority_fee_per_gas),
-            block: &self,
-        }
-    }
-
-    pub fn first_in_block_candidate<C: MultiCall + Clone>(
-        &self,
-        calls: C,
-    ) -> CandidateToSend<'_, M, C> {
-        self.candidate(calls, self.first_priority_fee_per_gas)
     }
 }

@@ -93,6 +93,10 @@ where
     pub fn address(&self) -> Address {
         self.0.address()
     }
+
+    pub fn client(&self) -> &M {
+        self.0.client_ref()
+    }
 }
 
 impl<B, M> MultiCallContract<B, M>

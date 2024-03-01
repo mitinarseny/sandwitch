@@ -1,13 +1,14 @@
 use core::convert::Infallible;
 
 use ethers::{
-    abi::{AbiDecode, AbiError},
+    abi::{self, AbiDecode, AbiError},
     types::{Address, Selector, U256},
 };
+use thiserror::Error as ThisError;
 
 use super::{
-    errors::{InvalidLength, UnsupportedCommand, WrongCommand},
-    MustNotFail,
+    errors::{InvalidLength, WrongCommand},
+    MultiCall, MustNotFail,
 };
 use crate::prelude::*;
 
@@ -43,6 +44,16 @@ impl TryFrom<u8> for Cmd {
             9 => Self::Create2Value,
             _ => return Err(UnsupportedCommand(cmd)),
         })
+    }
+}
+
+#[derive(ThisError, Debug)]
+#[error("upsupported command: {0}")]
+pub struct UnsupportedCommand(pub u8);
+
+impl From<UnsupportedCommand> for AbiError {
+    fn from(e: UnsupportedCommand) -> Self {
+        Self::DecodingError(abi::Error::Other(e.to_string().into()))
     }
 }
 
@@ -515,7 +526,7 @@ impl<C: Call> TryCall for MustCall<C> {
     type Reverted = Infallible;
 
     fn to_reverted(_reverted: C::Reverted) -> Self::Reverted {
-        panic!("MustCall reverted");
+        panic!("{}", MustNotFail);
     }
 
     fn into_dyn(self) -> DynTryCall<Self::Call> {
@@ -614,6 +625,24 @@ impl<C: Call> DynTryCall<C> {
 
     pub fn into_call(self) -> C {
         self.call
+    }
+
+    pub fn reduce(self) -> DynTryCall<RawCall>
+    where
+        C: MultiCall,
+    {
+        let (calls, _meta) = self.call.encode_calls();
+        if calls.len() == 1 {
+            let mut call = calls.into_iter().next().unwrap();
+            call.allow_failure |= self.allow_failure;
+            call
+        } else {
+            let (call, _meta) = calls.encode_raw();
+            DynTryCall {
+                allow_failure: self.allow_failure,
+                call,
+            }
+        }
     }
 }
 

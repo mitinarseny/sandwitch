@@ -5,7 +5,7 @@ tracked_abigen!(
     "contracts/out/PancakeToaster.sol/PancakeToaster.json"
 );
 
-impl EthTypedCall for FrontRunSwapExtCall {
+impl EthTypedCall for FrontRunSwapCall {
     type Ok = FrontRunSwapExtReturn;
     type Reverted = PancakeToasterErrors;
 }

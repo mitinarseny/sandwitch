@@ -1,45 +1,85 @@
 use std::{sync::Arc, vec};
 
-use ethers::providers::Middleware;
+use async_trait::async_trait;
+use ethers::{providers::Middleware, types::TxHash};
 use futures::{
-    future::{self, BoxFuture, FutureExt},
     stream::{FuturesUnordered, TryStreamExt},
+    TryFuture, TryFutureExt,
 };
 use impl_tools::autoimpl;
 
-use crate::block::{PendingBlock, TxWithLogs};
+use tracing::instrument;
 
-#[autoimpl(for<T: trait + ?Sized> &T, Arc<T>, Box<T>)]
-pub trait PendingBlockMonitor<M: Middleware> {
-    fn process_pending_block<'a>(
-        &'a self,
-        block: &'a PendingBlock<'a, M>,
-    ) -> BoxFuture<'a, anyhow::Result<()>>;
+use crate::block::{PendingBlock, ProcessingBlock};
+
+#[async_trait]
+#[autoimpl(for<T: trait + ?Sized> &T, Box<T>, Arc<T>)]
+pub trait BlockMonitor<M: Middleware>: Send + Sync {
+    #[allow(unused_variables)]
+    async fn process_block(&self, block: &ProcessingBlock<M, TxHash>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn process_pending_block(&self, block: &PendingBlock<M>) -> anyhow::Result<()>;
 }
 
-impl<M: Middleware> PendingBlockMonitor<M> for () {
-    fn process_pending_block<'a>(
-        &'a self,
-        _block: &'a PendingBlock<M>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
-        future::ok(()).boxed()
+#[async_trait]
+impl<MW, M> BlockMonitor<MW> for Option<M>
+where
+    MW: Middleware,
+    M: BlockMonitor<MW>,
+{
+    async fn process_block(&self, block: &ProcessingBlock<MW, TxHash>) -> anyhow::Result<()> {
+        if let Some(m) = self {
+            return m.process_block(block).await;
+        }
+        Ok(())
+    }
+
+    async fn process_pending_block(&self, block: &PendingBlock<MW>) -> anyhow::Result<()> {
+        if let Some(m) = self {
+            return m.process_pending_block(block).await;
+        }
+        Ok(())
     }
 }
 
-// pub struct LogMonitor;
+pub struct NoopMonitor;
 
-// impl PendingBlockMonitor for LogMonitor {
-//     fn process_pending_block<'a>(
-//         &'a self,
-//         block: &'a PendingBlock,
-//     ) -> BoxFuture<'a, anyhow::Result<()>> {
-//         debug!("")
-//     }
-// }
+#[async_trait]
+impl<M: Middleware> BlockMonitor<M> for NoopMonitor {
+    #[instrument(skip_all, fields(monitor.name = "noop"))]
+    async fn process_block(&self, _block: &ProcessingBlock<M, TxHash>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    #[instrument(skip_all, fields(monitor.name = "noop"))]
+    async fn process_pending_block(&self, _block: &PendingBlock<M>) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
 
 #[autoimpl(Deref using self.0)]
 #[autoimpl(DerefMut using self.0)]
 pub struct MultiMonitor<M>(Vec<M>);
+
+impl<M> MultiMonitor<M> {
+    async fn try_join<'a, T, Fut>(
+        &'a self,
+        mut f: impl FnMut(&'a M) -> Fut,
+    ) -> Result<T, Fut::Error>
+    where
+        Fut: TryFuture,
+        T: Default + Extend<Fut::Ok>,
+    {
+        self.0
+            .iter()
+            .map(|m| f(m).into_future())
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .await
+    }
+}
 
 impl<M> Default for MultiMonitor<M> {
     fn default() -> Self {
@@ -76,71 +116,71 @@ impl<M> MultiMonitor<M> {
     }
 }
 
-impl<MW, M> PendingBlockMonitor<MW> for MultiMonitor<M>
+#[async_trait]
+impl<MW, M> BlockMonitor<MW> for MultiMonitor<M>
 where
     MW: Middleware,
-    M: PendingBlockMonitor<MW>,
+    M: BlockMonitor<MW>,
 {
-    fn process_pending_block<'a>(
-        &'a self,
-        block: &'a PendingBlock<'a, MW>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
-        self.0
-            .iter()
-            .map(|m| m.process_pending_block(block))
-            .collect::<FuturesUnordered<_>>()
-            .try_collect()
-            .boxed()
+    #[instrument(skip_all, fields(monitor.name = "multi"))]
+    async fn process_block(&self, block: &ProcessingBlock<MW, TxHash>) -> anyhow::Result<()> {
+        self.try_join(|m| m.process_block(block)).await
+    }
+
+    #[instrument(skip_all, fields(monitor.name = "multi"))]
+    async fn process_pending_block(&self, block: &PendingBlock<MW>) -> anyhow::Result<()> {
+        self.try_join(|m| m.process_pending_block(block)).await
     }
 }
 
-pub struct TxMonitor<M>(M);
+// pub struct TxMonitor<M>(M);
 
-impl<M> From<M> for TxMonitor<M> {
-    fn from(m: M) -> Self {
-        Self(m)
-    }
-}
+// impl<M> From<M> for TxMonitor<M> {
+//     fn from(m: M) -> Self {
+//         Self(m)
+//     }
+// }
 
-impl<MW, M> PendingBlockMonitor<MW> for TxMonitor<M>
-where
-    MW: Middleware,
-    M: PendingTxMonitor,
-{
-    fn process_pending_block<'a>(
-        &'a self,
-        block: &'a PendingBlock<'a, MW>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
-        block
-            .transactions
-            .iter()
-            .map(|tx| self.0.process_pending_tx(tx))
-            .collect::<FuturesUnordered<_>>()
-            .try_collect()
-            .boxed()
-    }
-}
+// impl<MW, M> PendingBlockMonitor<MW> for TxMonitor<M>
+// where
+//     MW: Middleware,
+//     M: PendingTxMonitor,
+// {
+//     #[instrument(skip_all)]
+//     fn process_pending_block<'a>(
+//         &'a self,
+//         block: &'a PendingBlock<'a, MW>,
+//     ) -> BoxFuture<'a, anyhow::Result<()>> {
+//         block
+//             .transactions
+//             .iter()
+//             .map(|tx| self.0.process_pending_tx(tx))
+//             .collect::<FuturesUnordered<_>>()
+//             .try_collect()
+//             .boxed()
+//     }
+// }
 
-pub trait PendingTxMonitor {
-    fn process_pending_tx<'a>(&'a self, tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>>;
-}
+// pub trait PendingTxMonitor {
+//     fn process_pending_tx<'a>(&'a self, tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>>;
+// }
 
-impl PendingTxMonitor for () {
-    fn process_pending_tx<'a>(&'a self, _tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>> {
-        future::ok(()).boxed()
-    }
-}
+// impl PendingTxMonitor for () {
+//     fn process_pending_tx<'a>(&'a self, _tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>> {
+//         future::ok(()).boxed()
+//     }
+// }
 
-impl<M: PendingTxMonitor> PendingTxMonitor for MultiMonitor<M> {
-    fn process_pending_tx<'a>(&'a self, tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>> {
-        self.0
-            .iter()
-            .map(|m| m.process_pending_tx(tx))
-            .collect::<FuturesUnordered<_>>()
-            .try_collect()
-            .boxed()
-    }
-}
+// impl<M: PendingTxMonitor> PendingTxMonitor for MultiMonitor<M> {
+//     fn process_pending_tx<'a>(&'a self, tx: &'a TxWithLogs) -> BoxFuture<'a, anyhow::Result<()>> {
+//         self.0
+//             .iter()
+//             .map(|m| m.process_pending_tx(tx))
+//             .collect::<FuturesUnordered<_>>()
+//             .try_collect()
+//             .boxed()
+//     }
+// }
 
 pub trait ContractCallMonitor {
     // TODO: we can use bloom filter to filter calls by logs

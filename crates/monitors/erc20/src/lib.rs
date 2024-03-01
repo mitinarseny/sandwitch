@@ -1,17 +1,18 @@
 #![feature(is_some_and)]
 
+mod pool;
+
 use std::collections::HashMap;
 
+use async_trait::async_trait;
 use ethers::{
     abi::{AbiDecode, RawLog},
     contract::EthEvent,
     providers::Middleware,
     types::{Address, H256, U256},
 };
-use futures::{
-    future::{self, BoxFuture, FutureExt},
-    try_join,
-};
+use futures::try_join;
+use tracing::instrument;
 
 // use contracts::{
 //     pancake_swap::i_pancake_router_02::{
@@ -41,6 +42,8 @@ use futures::{
 //
 // use self::{pair::Pair, router::Router};
 
+mod monitor;
+
 use sandwitch_contracts::{
     erc20::ApproveCall,
     multicall::{Call, ContractCall},
@@ -52,7 +55,7 @@ use sandwitch_contracts::{
 
 use sandwitch_engine::{
     block::{PendingBlock, TxWithLogs},
-    monitor::PendingBlockMonitor,
+    monitor::BlockMonitor,
     transactions::Transaction,
 };
 
@@ -62,60 +65,57 @@ pub(crate) struct PancakeSwapMonitor<M: Middleware> {
     base_token: Address,
 }
 
-// TODO: different middlewares
-impl<M: Middleware + 'static> PendingBlockMonitor<M> for PancakeSwapMonitor<M> {
-    fn process_pending_block<'a>(
-        &'a self,
-        block: &'a PendingBlock<'a, M>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
-        async move {
-            for adjacent_txs in block.iter_adjacent_txs() {
-                // let tokens_out_deltas = HashMap::new();
-                let token_out_deltas = self.token_out_deltas(&adjacent_txs)?;
-                for (token_out, (reserve_before, reserve_after)) in token_out_deltas {}
-                let front_run = block.first_in_block_candidate((
-                    ContractCall::new(
-                        self.base_token,
-                        ApproveCall {
-                            spender: self.toaster.address(),
-                            amount: U256::MAX, // TODO: cache already approved tokens
-                        },
-                    )
-                    .must(),
-                    ContractCall::new(
-                        self.toaster.address(),
-                        FrontRunSwapExtCall {
-                            from: block.account(),
-                            amount_in: swap.amount_in,
-                            amount_out: swap.amount_out,
-                            eth_in: swap.eth_in,
-                            path: swap.path,
-                            index_in: index_in.into(),
-                        },
-                    )
-                    .must(),
-                    // TODO: add in backwards direction
-                ));
-                let back_run = adjacent_txs.back_run_candidate((
-                    ContractCall::new(
+#[async_trait]
+impl<M: Middleware + 'static> BlockMonitor<M> for PancakeSwapMonitor<M> {
+    #[instrument(skip_all)]
+    async fn process_pending_block(&self, block: &PendingBlock<M>) -> anyhow::Result<()> {
+        for adjacent_txs in block.iter_adjacent_txs() {
+            // let tokens_out_deltas = HashMap::new();
+            let token_out_deltas = self.token_out_deltas(&adjacent_txs)?;
+            for (token_out, (reserve_before, reserve_after)) in token_out_deltas {}
+            let front_run = block.first_in_block_candidate((
+                ContractCall::new(
+                    self.base_token,
+                    ApproveCall {
+                        spender: self.toaster.address(),
+                        amount: U256::MAX, // TODO: cache already approved tokens
+                    },
+                )
+                .must(),
+                ContractCall::new(
+                    self.toaster.address(),
+                    FrontRunSwapExtCall {
+                        from: block.account(),
+                        amount_in: swap.amount_in,
+                        amount_out: swap.amount_out,
+                        eth_in: swap.eth_in,
+                        path: swap.path,
+                        index_in: index_in.into(),
+                    },
+                )
+                .must(),
+                // TODO: add in backwards direction
+            ));
+            let back_run = adjacent_txs.back_run_candidate((
+                ContractCall::new(
+                    token_out,
+                    ApproveCall {
+                        spender: self.toaster.address(),
+                        amount: U256::MAX, // TODO
+                    },
+                )
+                .must(),
+                ContractCall::new(
+                    self.toaster.address(),
+                    BackRunSwapAllCall {
+                        token_in,
                         token_out,
-                        ApproveCall {
-                            spender: self.toaster.address(),
-                            amount: U256::MAX, // TODO
-                        },
-                    )
-                    .must(),
-                    ContractCall::new(
-                        self.toaster.address(),
-                        BackRunSwapAllCall {
-                            token_in,
-                            token_out,
-                        },
-                    )
-                    .must(),
-                ));
+                    },
+                )
+                .must(),
+            ));
 
-                let (
+            let (
                     Ok((Ok(_approved), Ok(FrontRunSwapExtReturn {
                         his_amount_in,
                         his_amount_out,
@@ -135,26 +135,24 @@ impl<M: Middleware + 'static> PendingBlockMonitor<M> for PancakeSwapMonitor<M> {
                     continue;
                 };
 
-                // TODO: prifit calculations
+            // TODO: prifit calculations
 
-                let reserve_in_after_patty = reserve_in_after_front_run + his_amount_in;
-                let reserve_out_after_patty = reserve_out_after_front_run - his_amount_out;
+            let reserve_in_after_patty = reserve_in_after_front_run + his_amount_in;
+            let reserve_out_after_patty = reserve_out_after_front_run - his_amount_out;
 
-                let back_run_amount_out = get_amount_out(
-                    front_run_amount_out,
-                    reserve_in_after_patty,
-                    reserve_out_after_patty,
-                );
+            let back_run_amount_out = get_amount_out(
+                front_run_amount_out,
+                reserve_in_after_patty,
+                reserve_out_after_patty,
+            );
 
-                let delta = back_run_amount_out - front_run_amount_in;
-                let cost = front_run_cost + back_run_cost;
-                if delta > cost {
-                    block.add_to_send([front_run.into(), back_run.into()]).await;
-                }
+            let delta = back_run_amount_out - front_run_amount_in;
+            let cost = front_run_cost + back_run_cost;
+            if delta > cost {
+                block.add_to_send([front_run.into(), back_run.into()]).await;
             }
-            Ok(())
         }
-        .boxed()
+        Ok(())
     }
 }
 
@@ -209,10 +207,7 @@ fn pair_address(token0: Address, token1: Address) -> Address {
     todo!()
 }
 
-struct Reserves {
-    reserve_in: U256,
-    reserve_out: U256,
-}
+
 
 const BIP: u64 = 1_0000;
 
@@ -220,57 +215,6 @@ fn get_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256) -> U256 
     (reserve_out * amount_in) / (reserve_in * BIP + amount_in)
 }
 
-struct Swap {
-    amount_in: U256,
-    amount_out: U256,
-    eth_in: bool,
-    path: Vec<Address>,
-}
-
-impl Swap {
-    fn from_tx(tx: &Transaction) -> Option<Self> {
-        let inputs = PancakeRouterCalls::decode(&tx.input).ok()?;
-        Some(match inputs {
-            PancakeRouterCalls::SwapExactETHForTokens(s) => Self {
-                amount_in: tx.value,
-                amount_out: s.amount_out_min,
-                eth_in: true,
-                path: s.path,
-            },
-            PancakeRouterCalls::SwapETHForExactTokens(s) => Self {
-                amount_in: tx.value,
-                amount_out: s.amount_out,
-                eth_in: true,
-                path: s.path,
-            },
-            PancakeRouterCalls::SwapExactTokensForTokens(s) => Self {
-                amount_in: s.amount_in,
-                amount_out: s.amount_out_min,
-                eth_in: false,
-                path: s.path,
-            },
-            PancakeRouterCalls::SwapTokensForExactTokens(s) => Self {
-                amount_in: s.amount_in_max,
-                amount_out: s.amount_out,
-                eth_in: false,
-                path: s.path,
-            },
-            PancakeRouterCalls::SwapExactTokensForETH(s) => Self {
-                amount_in: s.amount_in,
-                amount_out: s.amount_out_min,
-                eth_in: false,
-                path: s.path,
-            },
-            PancakeRouterCalls::SwapTokensForExactETH(s) => Self {
-                amount_in: s.amount_in_max,
-                amount_out: s.amount_out,
-                eth_in: false,
-                path: s.path,
-            },
-            _ => return None,
-        })
-    }
-}
 
 // struct DecodedTransaction<'a, C: EthCall> {
 //     tx: &'a Transaction,

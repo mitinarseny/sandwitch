@@ -2,7 +2,7 @@
 members = [
     "./crates/contracts",
     "./crates/engine",
-    "./crates/monitors/*",
+    "./crates/monitors/erc20_new",
 ]
 
 [workspace.package]
@@ -12,14 +12,16 @@ edition = "2021"
 [workspace.dependencies]
 sandwitch-contracts = { path = "./crates/contracts", default-features = false, features = ["multicall"] }
 sandwitch-engine = { path = "./crates/engine", default-features = false }
-sandwitch-monitor-logger = { path = "./crates/monitors/logger", default-features = false }
-sandwitch-monitor-pancake-swap = { path = "./crates/monitors/pancake_swap", default-features = false }
+sandwitch-monitor-erc20 = { path = "./crates/monitors/erc20_new", default-features = false }
 
+async-trait = "0.1"
 anyhow = "1"
 bytes = { version = "1.4", features = ["serde"] }
 futures = "0.3"
+hex-literal = "0.4"
 impl-tools = "0.8.0"
 itertools = "0.10"
+lazy_static = "1.4"
 metrics = "0.20"
 pin-project = "1"
 serde = { version = "1", features = ["derive"] }
@@ -31,7 +33,7 @@ tracing = "0.1"
 url = { version = "2.2", features = ["serde"] }
 
 [workspace.dependencies.ethers]
-version = "=2.0.3"
+version = "=2.0.4"
 default-features = false
 features = ["abigen", "rustls"]
 
@@ -56,19 +58,16 @@ default = ["ws", "ipc"]
 ipc = ["ethers/ipc"]
 ws = ["ethers/ws"]
 
-tx_logger = ["dep:sandwitch-monitor-logger"]
-
 pancake_swap = [
     "legacy",
-    "dep:sandwitch-monitor-pancake-swap",
+    "dep:sandwitch-monitor-erc20",
 ]
 
 legacy = ["sandwitch-engine/legacy", "ethers/legacy"]
 
 [dependencies]
 sandwitch-engine.workspace = true
-sandwitch-monitor-logger = { workspace = true, optional = true }
-sandwitch-monitor-pancake-swap = { workspace = true, optional = true }
+sandwitch-monitor-erc20 = { workspace = true, optional = true }
 
 anyhow.workspace = true
 bytes.workspace = true
@@ -78,7 +77,7 @@ eth-keystore = "0.5.0"
 futures.workspace = true
 itertools.workspace = true
 impl-tools.workspace = true
-lazy_static = "1.4"
+lazy_static.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus = { version = "0.11", default-features = false, features = ["http-listener"] }
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }

@@ -1,4 +1,4 @@
-use core::pin::pin;
+use core::{any, pin::pin};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
@@ -12,8 +12,8 @@ use ethers::{
 use futures::{
     future::{self, Aborted, Fuse, FusedFuture, Future, FutureExt},
     select_biased,
-    stream::{FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
-    try_join,
+    stream::{FusedStream, FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
+    try_join, Stream,
 };
 
 // use metrics::{register_counter, register_gauge, register_histogram, Counter, Histogram};
@@ -28,15 +28,15 @@ use tracing::{
 };
 
 use sandwitch_contracts::{
-    multicall::{MultiCall, MultiCallContract},
-    EthTypedCall,
+    multicall::{Call, GetBalanceOf, MultiCall, MultiCallContract, MustCall},
+    ContractError, EthTypedCall,
 };
 
 use crate::{
     abort::FutureExt as AbortFutureExt,
-    block::{PendingBlock, PendingBlockFactory, PrioritizedMultiCall},
+    block::{PendingBlock, PendingBlockFactory, PrioritizedMultiCall, ProcessingBlock},
     config::Config,
-    monitor::PendingBlockMonitor,
+    monitor::BlockMonitor,
     providers::LatencyProvider,
     timed::StreamExt as TimedStreamExt,
     transactions::TransactionRequest,
@@ -48,7 +48,7 @@ pub type MiddlewareStack<P> = Provider<LatencyProvider<P>>;
 pub struct Engine<P, M>
 where
     P: JsonRpcClient,
-    M: PendingBlockMonitor<MiddlewareStack<P>>,
+    M: BlockMonitor<MiddlewareStack<P>>,
 {
     client: Arc<MiddlewareStack<P>>,
     multicall: Arc<MultiCallContract<Arc<MiddlewareStack<P>>, MiddlewareStack<P>>>,
@@ -61,16 +61,11 @@ where
     monitor: M,
 }
 
-// struct OnChainData<M> {
-//     multicall: Arc<MultiCallContract<Arc<M>, M>>,
-
-// }
-
 impl<P, M> Engine<P, M>
 where
     P: PubsubClient + 'static,
     P::Error: Send + Sync + 'static,
-    M: PendingBlockMonitor<MiddlewareStack<P>>,
+    M: BlockMonitor<MiddlewareStack<P>>,
 {
     pub async fn new(
         client: impl Into<Arc<MiddlewareStack<P>>>,
@@ -85,7 +80,8 @@ where
         let (owner, mining) = try_join!(
             future::ok(Address::zero()), // TODO
             // multicall.owner(),
-            client.mining(),
+            // client.mining(),
+            future::ok::<_, anyhow::Error>(true), // TODO: et_mining
         )?;
         if let Some(address) = wallet.as_ref().map(LocalWallet::address) {
             if address != owner {
@@ -126,8 +122,8 @@ where
                 .with_abort(&mut cancelled)
                 .await?
                 .with_context(|| "failed to subscribe to new blocks")?
-                .timed()
-                .fuse();
+                .fuse()
+                .timed();
             debug!("listening to new blocks");
 
             let mut process_pending_block = pin!(Fuse::terminated());
@@ -142,6 +138,8 @@ where
                     }
                 };
             }
+
+            // TODO: wtf with error?
             loop {
                 select_biased! {
                     sent_tx_hash = send_txs.select_next_some() => {
@@ -151,7 +149,7 @@ where
                         info!("cancelled");
                         break Ok(());
                     },
-                    (block, received_at) = blocks.select_next_some() => Self::new_head_received_span(&block).in_scope(|| {
+                    (block, received_at) = blocks.select_next_some() => Self::new_head_span(&block).in_scope(|| {
                         debug!("new head received");
 
                         if !process_pending_block.is_terminated() {
@@ -167,7 +165,6 @@ where
                             return;
                         }
 
-
                         let deadline =
                             next_block_at_estimator.estimate_next_block_at(received_at)
                             - self.latency() // reserve time to send txs to the node
@@ -177,7 +174,7 @@ where
                             // don't send txs the after deadline even if new head hasn't been received
                             timeout_at(
                                 deadline,
-                                self.process_pending_block(block, deadline).in_current_span(),
+                                self.delayed_process_pending_block(block, deadline).in_current_span(),
                             )
                             .fuse(),
                         );
@@ -217,17 +214,17 @@ where
         r
     }
 
-    fn new_head_received_span(block: &Block<TxHash>) -> Span {
-        error_span!(
-            "new_head_received",
-            block_hash = ?block.hash.unwrap(),
-            block_number = ?block.number.unwrap().as_u64(),
-            parent_block_hash = ?block.parent_hash,
-        )
+    #[instrument(name = "new_head", skip_all, fields(
+        block.hash = ?block.hash.unwrap(),
+        block.number = block.number.unwrap().as_u64(),
+        block.parent.hash = ?block.parent_hash,
+    ))]
+    fn new_head_span(block: &Block<TxHash>) -> Span {
+        Span::current()
     }
 
-    #[instrument(skip(self), fields(%block_number))]
-    async fn get_next_nonce_at(&self, block_number: BlockNumber) -> anyhow::Result<Option<U256>> {
+    #[instrument(skip_all, fields(block.number = block_number))]
+    async fn get_next_nonce_at(&self, block_number: u64) -> anyhow::Result<Option<U256>> {
         let (nonce_at_block, pending_nonce) = try_join!(
             self.client
                 .get_transaction_count(self.account(), Some(block_number.into())),
@@ -252,27 +249,41 @@ where
         Ok(Some(nonce_at_block))
     }
 
-    #[instrument(skip(self), fields(%block_number))]
-    async fn get_my_balance_at(&self, block_number: BlockNumber) -> anyhow::Result<U256> {
-        self.client
-            .get_balance(self.account(), Some(block_number.into()))
-            .await
-            .map_err(Into::into)
-    }
+    // #[instrument(skip_all, fields(block.number = block_number))]
+    // async fn get_my_balance_at(&self, block_number: u64) -> Result<U256, ProviderError> {
+    //     self.client
+    //         .get_balance(self.account(), Some(block_number.into()))
+    //         .await
+    //     // .map_err(Into::into)
+    // }
 
-    #[instrument(skip_all)]
-    async fn get_pending_block(&self) -> anyhow::Result<PendingBlock<'_, MiddlewareStack<P>>> {
+    // async fn get_my_and_multicall_balance_at(
+    //     &self,
+    //     block_number: u64,
+    // ) -> anyhow::Result<(U256, U256)> {
+    //     let a = self
+    //         .multicall
+    //         .multicall((GetBalanceOf::MsgSender.must(), GetBalanceOf::This.must()))
+    //         .block(block_number)
+    //         .call()
+    //         .await??;
+    //     Ok(())
+    // }
+
+    #[instrument(skip_all, err)]
+    async fn get_pending_block(&self) -> anyhow::Result<PendingBlock<MiddlewareStack<P>>> {
         let log_filter = Filter::new().select(BlockNumber::Pending);
         let (block, logs) = try_join!(
             self.client.get_block_with_txs(BlockNumber::Pending),
-            self.client.get_logs(&log_filter),
+            future::ok([])
+            // self.client.get_logs(&log_filter),
         )?;
         let Some(block) = block else {
             error!("pending block doest not exist");
             return Err(ProviderError::UnsupportedRPC.into());
         };
         self.pending_block_factory
-            .new_pending_block(block, logs)
+            .make_pending_block(block, logs)
             .await
             .map_err(Into::into)
     }
@@ -281,8 +292,8 @@ where
         self.client.as_ref().as_ref().latency()
     }
 
-    #[instrument(skip_all, fields(parent_block_hash, block_number,), err)]
-    async fn process_pending_block(
+    #[instrument(skip_all, fields(block.parent.hash, block.number), err)]
+    async fn delayed_process_pending_block(
         &self,
         latest_block: Block<TxHash>,
         deadline: Instant,
@@ -291,11 +302,12 @@ where
     > {
         let span = Span::current();
 
-        let latest_block_number: BlockNumber = latest_block.number.unwrap().into();
+        let latest_block_number = latest_block.number.unwrap().as_u64();
 
-        let (next_nonce, my_balance, pending_block) = try_join!(
+        let (next_nonce, pending_block) = try_join!(
             self.get_next_nonce_at(latest_block_number),
-            self.get_my_balance_at(latest_block_number),
+            // self.monitor.process_block()
+            // self.get_my_balance_at(latest_block_number),
             async {
                 sleep_until(deadline - Duration::from_secs(3))
                     .instrument(info_span!("wait_before_request_pending"))
@@ -310,15 +322,15 @@ where
         };
 
         // TODO: use my_balance to check if we have enough ETH to pay for gas
-
-        span.record("parent_block_hash", field::debug(pending_block.parent_hash))
-            .record("block_number", pending_block.number.unwrap().as_u64());
+        span.record("block.parent.hash", field::debug(pending_block.parent_hash))
+            .record("block.number", pending_block.number.unwrap().as_u64());
         if !latest_block
             .hash
             .is_some_and(|h| h == pending_block.parent_hash)
         {
             warn!("pending block is not a child of latest, skipping...");
-            return Ok(None);
+            // TODO
+            // return Ok(None);
         }
 
         debug!("processing pending block");
@@ -369,12 +381,12 @@ where
     #[instrument(skip_all)]
     async fn extract_txs_to_send(
         &self,
-        processed_block: PendingBlock<'_, MiddlewareStack<P>>,
+        processed_block: PendingBlock<MiddlewareStack<P>>,
         mut next_nonce: U256,
     ) -> anyhow::Result<Vec<TypedTransaction>> {
         processed_block
             .to_send
-            .join_adjacent()
+            .reduce()
             .into_iter()
             .map(|p| {
                 self.make_tx(p, &processed_block.block, {
@@ -388,6 +400,7 @@ where
             .await
     }
 
+    #[instrument(skip_all)]
     async fn make_tx<TX>(
         &self,
         p: PrioritizedMultiCall,
@@ -424,6 +437,11 @@ where
         Ok(tx)
     }
 }
+
+// struct BlockData {
+//     my_balance: U256,
+//     multicall_balance: U256,
+// }
 
 #[derive(Default)]
 struct NextBlockAtEstimator {

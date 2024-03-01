@@ -2,16 +2,6 @@ use ethers::abi::{self, AbiError};
 use thiserror::Error as ThisError;
 
 #[derive(ThisError, Debug)]
-#[error("upsupported command: {0}")]
-pub struct UnsupportedCommand(pub u8);
-
-impl From<UnsupportedCommand> for AbiError {
-    fn from(e: UnsupportedCommand) -> Self {
-        Self::DecodingError(abi::Error::Other(e.to_string().into()))
-    }
-}
-
-#[derive(ThisError, Debug)]
 #[error("wrong command")]
 pub struct WrongCommand;
 
